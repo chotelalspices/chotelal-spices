@@ -182,7 +182,7 @@ export default function AddEditUser() {
       } else {
         toast({
           title: 'User Created',
-          description: `${formData.fullName} has been added. A temporary password has been sent.`,
+          description: `${formData.fullName} has been added.`,
         });
       }
 
