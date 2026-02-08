@@ -178,13 +178,7 @@ export default function LoginPage() {
                 <button
                   type="button"
                   className="text-sm text-primary hover:underline"
-                  onClick={() =>
-                    toast({
-                      title: 'Password Reset',
-                      description:
-                        'Please contact your administrator to reset your password.',
-                    })
-                  }
+                  onClick={() => router.push('/forgot-password')}
                 >
                   Forgot Password?
                 </button>

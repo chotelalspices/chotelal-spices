@@ -454,7 +454,7 @@ export default function AddEditUser() {
               <AlertDialogDescription>
                 {isEditing
                   ? `Are you sure you want to update ${formData.fullName}'s details?`
-                  : `This will create a new user account for ${formData.fullName} with roles: ${formData.roles.join(', ')}. They will receive login credentials at ${formData.email}.`}
+                  : `This will create a new user account for ${formData.fullName} with roles: ${formData.roles.join(', ')}.`}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

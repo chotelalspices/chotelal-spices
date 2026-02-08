@@ -342,3 +342,17 @@ model DefaultValues {
   minimumStockAlertQuantity Float
   packagingLossVisibility   Boolean
 }
+
+//////////////////////////////////////////////////////
+// PASSWORD RESET MODULE
+//////////////////////////////////////////////////////
+
+model PasswordResetOTP {
+  id        String   @id @default(uuid())
+  email     String
+  otp       String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  
+  @@unique([email])
+}
