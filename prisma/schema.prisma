@@ -1,0 +1,344 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+//////////////////////////////////////////////////////
+// ENUMS
+//////////////////////////////////////////////////////
+
+enum Unit {
+  kg
+  gm
+}
+
+enum Status {
+  active
+  inactive
+}
+
+enum StockAction {
+  add
+  reduce
+}
+
+enum StockReason {
+  purchase
+  wastage
+  damage
+  correction
+  production
+}
+
+enum ProductionStatus {
+  draft
+  confirmed
+  ready_for_packaging
+}
+
+enum MaterialStatus {
+  sufficient
+  insufficient
+}
+
+enum UserRole {
+  admin
+  production
+  packaging
+  sales
+  research
+}
+
+enum ResearchStatus {
+  pending
+  approved
+  rejected
+}
+
+//////////////////////////////////////////////////////
+// USER MODULE
+//////////////////////////////////////////////////////
+
+model UserRoleAssignment {
+  id     String   @id @default(uuid())
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   UserRole
+  
+  @@unique([userId, role])
+}
+
+model User {
+  id                 String    @id @default(uuid())
+  fullName           String
+  email              String    @unique
+  phone              String?
+  status             Status
+  mustChangePassword Boolean
+  lastLogin          DateTime?
+  createdAt          DateTime  @default(now())
+  hashedPassword     String?
+
+  userRoles          UserRoleAssignment[]
+  stockMovements       StockMovement[]
+  productionBatches    ProductionBatch[]
+  plannedProductions   PlannedProduction[]
+  returnedProducts     ReturnedProduct[]
+  packagingSessions    PackagingSession[]
+  salesRecords         SalesRecord[]
+  researchFormulations ResearchFormulation[]
+}
+
+//////////////////////////////////////////////////////
+// INVENTORY MODULE
+//////////////////////////////////////////////////////
+
+model RawMaterial {
+  id           String   @id @default(uuid())
+  name         String
+  unit         Unit
+  costPerUnit  Float
+  minimumStock Float
+  status       Status
+  description  String?
+  createdAt    DateTime @default(now())
+
+  stockMovements         StockMovement[]
+  formulationIngredients FormulationIngredient[]
+  materialUsages         MaterialUsage[]
+  researchIngredients    ResearchIngredient[]
+}
+
+model StockMovement {
+  id            String      @id @default(uuid())
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  action        StockAction
+  quantity      Float
+  reason        StockReason
+  reference     String?
+  performedById String
+  performedBy   User        @relation(fields: [performedById], references: [id])
+  createdAt     DateTime    @default(now())
+}
+
+//////////////////////////////////////////////////////
+// FORMULATION MODULE
+//////////////////////////////////////////////////////
+
+model Formulation {
+  id              String   @id @default(uuid())
+  name            String
+  baseQuantity    Float
+  baseUnit        Unit
+  status          Status
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  defaultQuantity Float
+
+  ingredients        FormulationIngredient[]
+  productionBatches  ProductionBatch[]
+  plannedProductions PlannedProduction[]
+  returnedProducts   ReturnedProduct[]
+  finishedProducts   FinishedProduct[]
+}
+
+model FormulationIngredient {
+  id            String      @id @default(uuid())
+  formulationId String
+  formulation   Formulation @relation(fields: [formulationId], references: [id])
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  percentage    Float
+}
+
+//////////////////////////////////////////////////////
+// PRODUCTION MODULE
+//////////////////////////////////////////////////////
+
+model ProductionBatch {
+  id                String           @id @default(uuid())
+  batchNumber       String           @unique
+  formulationId     String
+  formulation       Formulation      @relation(fields: [formulationId], references: [id])
+  plannedQuantity   Float
+  availableQuantity Float?
+  unit              Unit
+  finalOutput       Float?
+  productionDate    DateTime
+  status            ProductionStatus
+  confirmedById     String?
+  confirmedBy       User?            @relation(fields: [confirmedById], references: [id])
+  confirmedAt       DateTime?
+  createdAt         DateTime         @default(now())
+
+  materialUsages    MaterialUsage[]
+  packagingSessions PackagingSession[]
+}
+
+model MaterialUsage {
+  id            String          @id @default(uuid())
+  batchId       String
+  batch         ProductionBatch @relation(fields: [batchId], references: [id])
+  rawMaterialId String
+  rawMaterial   RawMaterial     @relation(fields: [rawMaterialId], references: [id])
+  quantityUsed  Float
+  ratePerUnit   Float
+  cost          Float
+}
+
+model PlannedProduction {
+  id              String         @id @default(uuid())
+  formulationId   String
+  formulation     Formulation    @relation(fields: [formulationId], references: [id])
+  plannedQuantity Float
+  unit            Unit
+  plannedDate     DateTime
+  materialStatus  MaterialStatus
+  emailSent       Boolean
+  createdById     String
+  createdBy       User           @relation(fields: [createdById], references: [id])
+  createdAt       DateTime       @default(now())
+}
+
+model ReturnedProduct {
+  id               String      @id @default(uuid())
+  formulationId    String
+  formulation      Formulation @relation(fields: [formulationId], references: [id])
+  returnedQuantity Float
+  unit             Unit
+  returnReason     String
+  returnDate       DateTime
+  addedToStock     Boolean
+  createdById      String
+  createdBy        User        @relation(fields: [createdById], references: [id])
+  createdAt        DateTime    @default(now())
+}
+
+//////////////////////////////////////////////////////
+// PACKAGING MODULE
+//////////////////////////////////////////////////////
+
+model ContainerSize {
+  id            String         @id @default(uuid())
+  size          Int
+  label         String
+  packagedItems PackagedItem[]
+}
+
+model PackagingSession {
+  id            String          @id @default(uuid())
+  batchId       String
+  batch         ProductionBatch @relation(fields: [batchId], references: [id])
+  date          DateTime
+  packagingLoss Float
+  remarks       String?
+  performedById String
+  performedBy   User            @relation(fields: [performedById], references: [id])
+
+  items PackagedItem[]
+}
+
+model PackagedItem {
+  id              String           @id @default(uuid())
+  sessionId       String
+  session         PackagingSession @relation(fields: [sessionId], references: [id])
+  containerId     String
+  container       ContainerSize    @relation(fields: [containerId], references: [id])
+  numberOfPackets Int
+  totalWeight     Float
+}
+
+//////////////////////////////////////////////////////
+// SALES MODULE
+//////////////////////////////////////////////////////
+
+model FinishedProduct {
+  id                 String      @id @default(uuid())
+  name               String
+  quantity           Float
+  unit               Unit
+  availableInventory Float?
+  formulationId      String
+  formulation        Formulation @relation(fields: [formulationId], references: [id])
+  createdAt          DateTime    @default(now())
+
+  salesRecords SalesRecord[]
+}
+
+model SalesRecord {
+  id             String          @id @default(uuid())
+  productId      String
+  product        FinishedProduct @relation(fields: [productId], references: [id])
+  quantitySold   Float
+  unit           Unit
+  productionCost Float?
+  discount       Float?
+  sellingPrice   Float
+  profit         Float?
+  remarks        String?
+  saleDate       DateTime
+  createdById    String
+  createdBy      User            @relation(fields: [createdById], references: [id])
+  createdAt      DateTime        @default(now())
+}
+
+//////////////////////////////////////////////////////
+// RESEARCH MODULE
+//////////////////////////////////////////////////////
+
+model ResearchFormulation {
+  id              String         @id @default(uuid())
+  tempName        String
+  researcher      String
+  researchDate    DateTime
+  baseQuantity    Float
+  baseUnit        Unit
+  notes           String
+  status          ResearchStatus
+  reviewedById    String?
+  reviewedBy      User?          @relation(fields: [reviewedById], references: [id])
+  reviewedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime       @default(now())
+
+  ingredients ResearchIngredient[]
+}
+
+model ResearchIngredient {
+  id            String              @id @default(uuid())
+  researchId    String
+  research      ResearchFormulation @relation(fields: [researchId], references: [id])
+  rawMaterialId String
+  rawMaterial   RawMaterial         @relation(fields: [rawMaterialId], references: [id])
+  percentage    Float
+}
+
+//////////////////////////////////////////////////////
+// SETTINGS MODULE
+//////////////////////////////////////////////////////
+
+model BusinessSettings {
+  id             String  @id @default(uuid())
+  businessName   String
+  logoUrl        String?
+  currency       String
+  currencySymbol String
+}
+
+model DefaultValues {
+  id                        String  @id @default(uuid())
+  baseFormulationQuantity   Float
+  minimumStockAlertQuantity Float
+  packagingLossVisibility   Boolean
+}
