@@ -19,6 +19,9 @@ export interface SalesRecord {
   productName: string;
   batchId?: string;
   batchNumber?: string;
+  clientName?: string;
+  voucherNo?: string;
+  voucherType?: string;
   quantitySold: number;
   unit: 'kg' | 'gm';
   sellingPricePerUnit: number;

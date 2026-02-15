@@ -26,6 +26,8 @@ import {
   IndianRupee,
   AlertCircle,
   Loader2,
+  User,
+  Hash,
 } from 'lucide-react';
 
 import { toast } from 'sonner';
@@ -33,7 +35,6 @@ import { toast } from 'sonner';
 import {
   calculateProfit,
   formatCurrency,
-  formatQuantity,
 } from '@/data/salesData';
 
 interface FinishedProduct {
@@ -43,7 +44,7 @@ interface FinishedProduct {
   formulationName: string;
   batchId?: string | null;
   batchNumber?: string | null;
-  availableQuantity: number; // in packets
+  availableQuantity: number;
   unit: 'packets';
   productionCostPerPacket: number;
   containerSize?: number | null;
@@ -64,165 +65,232 @@ export default function SalesEntry() {
   const [products, setProducts] = useState<FinishedProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
+  /* ── form state ── */
   const [selectedProductId, setSelectedProductId] = useState('');
   const [quantitySold, setQuantitySold] = useState('');
   const [sellingPrice, setSellingPrice] = useState('');
   const [discount, setDiscount] = useState('');
-  const [saleDate, setSaleDate] = useState(
-    new Date().toISOString().split('T')[0]
-  );
+  const [saleDate, setSaleDate] = useState(new Date().toISOString().split('T')[0]);
   const [remarks, setRemarks] = useState('');
 
-  // Fetch products on mount
+  /* ── NEW: client fields ── */
+  const [clientName, setClientName] = useState('');
+  const [voucherNo, setVoucherNo] = useState('');
+  const [voucherType, setVoucherType] = useState('');
+
+  /* ── fetch products ── */
   useEffect(() => {
     const fetchProducts = async () => {
       try {
         setLoading(true);
-        const response = await fetch('/api/sales/products');
-        if (!response.ok) {
-          throw new Error('Failed to fetch products');
-        }
-        const data = await response.json();
-        setProducts(data);
-      } catch (error) {
-        console.error('Error fetching products:', error);
+        const res = await fetch('/api/sales/products');
+        if (!res.ok) throw new Error('Failed to fetch products');
+        setProducts(await res.json());
+      } catch {
         toast.error('Failed to load products. Please try again.');
       } finally {
         setLoading(false);
       }
     };
-
     fetchProducts();
   }, []);
 
-  const selectedProduct = useMemo(() => {
-    return selectedProductId
-      ? products.find((p) => p.id === selectedProductId)
-      : undefined;
-  }, [selectedProductId, products]);
+  /* ── derived values ── */
+  const selectedProduct = useMemo(
+    () => (selectedProductId ? products.find((p) => p.id === selectedProductId) : undefined),
+    [selectedProductId, products]
+  );
 
-  const availableProducts = useMemo(() => {
-    return products.filter((fp) => fp.availableQuantity > 0);
-  }, [products]);
+  const availableProducts = useMemo(
+    () => products.filter((p) => p.availableQuantity > 0),
+    [products]
+  );
 
   const parsedQuantity = parseFloat(quantitySold) || 0;
-  const parsedPrice = parseFloat(sellingPrice) || 0;
-  const parsedDiscount = parseFloat(discount) || 0;
+  const parsedPrice   = parseFloat(sellingPrice)  || 0;
+  const parsedDiscount = parseFloat(discount)     || 0;
 
-  // Quantity is in packets (must be whole number)
-  const quantityInPackets = Number.isInteger(parsedQuantity) ? parsedQuantity : Math.floor(parsedQuantity);
-  
-  // Check if this is a free product (price is 0)
-  const isFreeProduct = parsedPrice === 0;
-  
-  const totalAmount = quantityInPackets * parsedPrice;
+  const quantityInPackets = Number.isInteger(parsedQuantity)
+    ? parsedQuantity
+    : Math.floor(parsedQuantity);
+
+  const isFreeProduct  = parsedPrice === 0;
+  const totalAmount    = quantityInPackets * parsedPrice;
   const discountAmount = isFreeProduct ? 0 : totalAmount * (parsedDiscount / 100);
-  const finalAmount = totalAmount - discountAmount;
+  const finalAmount    = totalAmount - discountAmount;
 
   const profit = selectedProduct && !isFreeProduct
-    ? calculateProfit(
-        quantityInPackets,
-        parsedPrice,
-        selectedProduct.productionCostPerPacket
-      )
+    ? calculateProfit(quantityInPackets, parsedPrice, selectedProduct.productionCostPerPacket)
     : 0;
-
   const finalProfit = isFreeProduct ? 0 : profit - discountAmount;
 
-  const isQuantityValid = selectedProduct
-    ? quantityInPackets > 0 &&
-      quantityInPackets <= selectedProduct.availableQuantity &&
-      Number.isInteger(parsedQuantity)
-    : false;
+  const isQuantityValid =
+    selectedProduct
+      ? quantityInPackets > 0 &&
+        quantityInPackets <= selectedProduct.availableQuantity &&
+        Number.isInteger(parsedQuantity)
+      : false;
 
-  const isPriceValid = parsedPrice >= 0;
+  const isPriceValid  = parsedPrice >= 0;
+  const isFormValid   = selectedProductId && isQuantityValid && isPriceValid && saleDate;
 
-  const isFormValid =
-    selectedProductId &&
-    isQuantityValid &&
-    isPriceValid &&
-    saleDate;
-
+  /* ── submit ── */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!isFormValid) {
+    if (!isFormValid || !selectedProduct) {
       toast.error('Please fill all required fields correctly');
-      return;
-    }
-
-    if (!selectedProduct) {
-      toast.error('Please select a product');
       return;
     }
 
     try {
       setSubmitting(true);
-
-      const response = await fetch('/api/sales/records', {
+      const res = await fetch('/api/sales/records', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           productId: selectedProductId,
-          quantitySold: quantityInPackets, // packets
+          quantitySold: quantityInPackets,
           sellingPrice: parsedPrice,
           discount: isFreeProduct ? 0 : parsedDiscount,
-          productionCost: selectedProduct ? quantityInPackets * selectedProduct.productionCostPerPacket : null,
+          productionCost: quantityInPackets * selectedProduct.productionCostPerPacket,
           profit: finalProfit,
           saleDate,
           remarks: remarks || undefined,
+          // ── client info ──
+          clientName: clientName.trim() || undefined,
+          voucherNo:  voucherNo.trim()  || undefined,
+          voucherType: voucherType.trim() || undefined,
         }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create sales record');
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to create sales record');
       }
 
       toast.success('Sale recorded successfully', {
-        description: `${quantityInPackets} packet${quantityInPackets !== 1 ? 's' : ''} of ${selectedProduct.name} ${isFreeProduct ? 'given away for free' : `sold for ${formatCurrency(finalAmount)}${parsedDiscount > 0 ? ` (${parsedDiscount}% discount)` : ''}`}`,
+        description: `${quantityInPackets} packet${quantityInPackets !== 1 ? 's' : ''} of ${selectedProduct.name} ${
+          isFreeProduct
+            ? 'given away for free'
+            : `sold for ${formatCurrency(finalAmount)}${parsedDiscount > 0 ? ` (${parsedDiscount}% discount)` : ''}`
+        }`,
       });
 
       router.push('/sales');
-    } catch (error) {
-      console.error('Error creating sales record:', error);
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : 'Failed to record sale. Please try again.'
-      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to record sale. Please try again.');
     } finally {
       setSubmitting(false);
     }
   };
 
+  /* ================================================================
+     RENDER
+  ================================================================ */
   return (
     <AppLayout>
       <div className="max-w-2xl mx-auto">
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => router.push('/sales')}
-            className="shrink-0"
-          >
+          <Button variant="ghost" size="icon" onClick={() => router.push('/sales')} className="shrink-0">
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">
-              Sales Entry
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Record a new sale
-            </p>
+            <h1 className="text-2xl font-bold">Sales Entry</h1>
+            <p className="text-sm text-muted-foreground">Record a new sale</p>
           </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Product Selection */}
+
+          {/* ── Client Info ── */}
+          <Card>
+            <CardHeader className="pb-4">
+              <CardTitle className="text-base flex items-center gap-2">
+                <User className="h-4 w-4 text-primary" />
+                Client Details
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Client Name</Label>
+                <Input
+                  placeholder="e.g. Shree Datt Masala Centre (Bhosari-Pune)"
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                  disabled={submitting}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-1">
+                    <Hash className="h-3.5 w-3.5 text-muted-foreground" />
+                    Voucher No.
+                  </Label>
+                  <Input
+                    placeholder="e.g. CM247"
+                    value={voucherNo}
+                    onChange={(e) => setVoucherNo(e.target.value)}
+                    disabled={submitting}
+                    className="font-mono"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Voucher Type</Label>
+                  <Select
+                    value={voucherType}
+                    onValueChange={setVoucherType}
+                    disabled={submitting}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Sales GST">Sales GST</SelectItem>
+                      <SelectItem value="Sales">Sales</SelectItem>
+                      <SelectItem value="Credit Note">Credit Note</SelectItem>
+                      <SelectItem value="Other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Preview band — mirrors the header row in summary/upload */}
+              {clientName.trim() && (
+                <div className="rounded-lg bg-primary/5 border border-primary/15 px-4 py-3 flex items-center gap-3">
+                  <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+                    <User className="h-3.5 w-3.5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-sm">{clientName}</p>
+                    <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                        {saleDate}
+                      </span>
+                      {voucherType && (
+                        <>
+                          <span className="text-muted-foreground/40">|</span>
+                          <span>{voucherType}</span>
+                        </>
+                      )}
+                      {voucherNo.trim() && (
+                        <>
+                          <span className="text-muted-foreground/40">|</span>
+                          <span className="font-mono">{voucherNo}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* ── Product Selection ── */}
           <Card>
             <CardHeader className="pb-4">
               <CardTitle className="text-base flex items-center gap-2">
@@ -237,56 +305,42 @@ export default function SalesEntry() {
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-1 gap-4">
-                    <div className="space-y-2">
-                      <Label>Masala / Product Name *</Label>
-                      <Select
-                        value={selectedProductId}
-                        onValueChange={setSelectedProductId}
-                        disabled={loading || submitting}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select product" />
-                        </SelectTrigger>
-                        <SelectContent className="bg-popover">
-                          {availableProducts.length === 0 ? (
-                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              No products available
-                            </div>
-                          ) : (
-                            availableProducts.map((product) => (
-                              <SelectItem
-                                key={product.id}
-                                value={product.id}
-                              >
-                                {product.name}
-                              </SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  <div className="space-y-2">
+                    <Label>Masala / Product Name *</Label>
+                    <Select
+                      value={selectedProductId}
+                      onValueChange={setSelectedProductId}
+                      disabled={loading || submitting}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select product" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableProducts.length === 0 ? (
+                          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                            No products available
+                          </div>
+                        ) : (
+                          availableProducts.map((product) => (
+                            <SelectItem key={product.id} value={product.id}>
+                              {product.name}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   {selectedProduct && (
                     <div className="p-3 rounded-lg bg-muted/50 border">
                       <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">
-                          Available Quantity
-                        </span>
-                        <span className="font-semibold">
-                          {selectedProduct.availableQuantity} packets
-                        </span>
+                        <span className="text-sm text-muted-foreground">Available Quantity</span>
+                        <span className="font-semibold">{selectedProduct.availableQuantity} packets</span>
                       </div>
                       <div className="flex justify-between mt-1">
-                        <span className="text-sm text-muted-foreground">
-                          Production Cost
-                        </span>
+                        <span className="text-sm text-muted-foreground">Production Cost</span>
                         <span className="font-semibold">
-                          {formatCurrency(
-                            selectedProduct.productionCostPerPacket
-                          )}
-                          /packet
+                          {formatCurrency(selectedProduct.productionCostPerPacket)}/packet
                         </span>
                       </div>
                     </div>
@@ -296,7 +350,7 @@ export default function SalesEntry() {
             </CardContent>
           </Card>
 
-          {/* Sale Details */}
+          {/* ── Sale Details ── */}
           <Card>
             <CardHeader className="pb-4">
               <CardTitle className="text-base flex items-center gap-2">
@@ -306,6 +360,7 @@ export default function SalesEntry() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Quantity */}
                 <div className="space-y-2">
                   <Label>Number of Packets *</Label>
                   <div className="relative">
@@ -314,9 +369,7 @@ export default function SalesEntry() {
                       step="1"
                       min="1"
                       value={quantitySold}
-                      onChange={(e) =>
-                        setQuantitySold(e.target.value)
-                      }
+                      onChange={(e) => setQuantitySold(e.target.value)}
                       disabled={submitting}
                       className={
                         parsedQuantity > 0 && !isQuantityValid
@@ -328,11 +381,8 @@ export default function SalesEntry() {
                       packets
                     </span>
                   </div>
-
-                  {parsedQuantity > 0 &&
-                    selectedProduct &&
-                    (quantityInPackets > selectedProduct.availableQuantity ||
-                      !Number.isInteger(parsedQuantity)) && (
+                  {parsedQuantity > 0 && selectedProduct &&
+                    (quantityInPackets > selectedProduct.availableQuantity || !Number.isInteger(parsedQuantity)) && (
                       <p className="text-xs text-destructive flex items-center gap-1">
                         <AlertCircle className="h-3 w-3" />
                         {!Number.isInteger(parsedQuantity)
@@ -342,25 +392,23 @@ export default function SalesEntry() {
                     )}
                 </div>
 
+                {/* Price */}
                 <div className="space-y-2">
                   <Label>Selling Price per Packet *</Label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                      ₹
-                    </span>
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">₹</span>
                     <Input
                       type="number"
                       step="0.01"
                       value={sellingPrice}
-                      onChange={(e) =>
-                        setSellingPrice(e.target.value)
-                      }
+                      onChange={(e) => setSellingPrice(e.target.value)}
                       disabled={submitting}
                       className="pl-8"
                     />
                   </div>
                 </div>
 
+                {/* Discount */}
                 <div className="space-y-2">
                   <Label>Discount (%)</Label>
                   <div className="relative">
@@ -370,18 +418,15 @@ export default function SalesEntry() {
                       min="0"
                       max="100"
                       value={discount}
-                      onChange={(e) =>
-                        setDiscount(e.target.value)
-                      }
+                      onChange={(e) => setDiscount(e.target.value)}
                       disabled={submitting}
                       className="pr-12"
                     />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                      %
-                    </span>
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">%</span>
                   </div>
                 </div>
 
+                {/* Date */}
                 <div className="space-y-2">
                   <Label>Sale Date *</Label>
                   <div className="relative">
@@ -389,9 +434,7 @@ export default function SalesEntry() {
                     <Input
                       type="date"
                       value={saleDate}
-                      onChange={(e) =>
-                        setSaleDate(e.target.value)
-                      }
+                      onChange={(e) => setSaleDate(e.target.value)}
                       disabled={submitting}
                       className="pl-10"
                     />
@@ -403,9 +446,7 @@ export default function SalesEntry() {
                 <Label>Remarks</Label>
                 <Textarea
                   value={remarks}
-                  onChange={(e) =>
-                    setRemarks(e.target.value)
-                  }
+                  onChange={(e) => setRemarks(e.target.value)}
                   disabled={submitting}
                   rows={2}
                 />
@@ -413,58 +454,40 @@ export default function SalesEntry() {
             </CardContent>
           </Card>
 
-          {/* Summary */}
+          {/* ── Summary ── */}
           {parsedQuantity > 0 && (
             <Card className="border-primary/20 bg-primary/5">
               <CardContent className="pt-6">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="text-center p-3 bg-background rounded-lg">
-                    <p className="text-xs text-muted-foreground">
-                      Total Amount
-                    </p>
-                    <p className="text-lg font-bold">
-                      {formatCurrency(totalAmount)}
-                    </p>
+                    <p className="text-xs text-muted-foreground">Total Amount</p>
+                    <p className="text-lg font-bold">{formatCurrency(totalAmount)}</p>
                   </div>
 
                   {parsedDiscount > 0 && !isFreeProduct && (
                     <div className="text-center p-3 bg-background rounded-lg">
-                      <p className="text-xs text-muted-foreground">
-                        Discount
-                      </p>
+                      <p className="text-xs text-muted-foreground">Discount</p>
                       <p className="text-lg font-bold text-green-600">
-                        -{formatCurrency(discountAmount)}
+                        −{formatCurrency(discountAmount)}
                       </p>
                     </div>
                   )}
 
                   <div className="text-center p-3 bg-background rounded-lg">
                     <p className="text-xs text-muted-foreground">
-                      {isFreeProduct ? 'Type' : (parsedDiscount > 0 ? 'Final Amount' : 'Total Amount')}
+                      {isFreeProduct ? 'Type' : parsedDiscount > 0 ? 'Final Amount' : 'Total Amount'}
                     </p>
                     {isFreeProduct ? (
-                      <Badge variant="secondary" className="bg-blue-100 text-blue-800">
-                        FREE
-                      </Badge>
+                      <Badge variant="secondary" className="bg-blue-100 text-blue-800">FREE</Badge>
                     ) : (
-                      <p className="text-lg font-bold text-primary">
-                        {formatCurrency(finalAmount)}
-                      </p>
+                      <p className="text-lg font-bold text-primary">{formatCurrency(finalAmount)}</p>
                     )}
                   </div>
 
                   {!isFreeProduct && (
                     <div className="text-center p-3 bg-background rounded-lg col-span-2 md:col-span-1">
-                      <p className="text-xs text-muted-foreground">
-                        Profit
-                      </p>
-                      <p
-                        className={`text-lg font-bold ${
-                          finalProfit >= 0
-                            ? 'text-green-600'
-                            : 'text-destructive'
-                        }`}
-                      >
+                      <p className="text-xs text-muted-foreground">Profit</p>
+                      <p className={`text-lg font-bold ${finalProfit >= 0 ? 'text-green-600' : 'text-destructive'}`}>
                         {formatCurrency(finalProfit)}
                       </p>
                     </div>
@@ -474,7 +497,7 @@ export default function SalesEntry() {
             </Card>
           )}
 
-          {/* Actions */}
+          {/* ── Actions ── */}
           <div className="flex flex-col-reverse sm:flex-row gap-3 pb-8">
             <Button
               type="button"
@@ -486,15 +509,9 @@ export default function SalesEntry() {
             </Button>
             <Button type="submit" disabled={!isFormValid || submitting || loading}>
               {submitting ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Saving...
-                </>
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving…</>
               ) : (
-                <>
-                  <Save className="h-4 w-4 mr-2" />
-                  Save Sale
-                </>
+                <><Save className="h-4 w-4 mr-2" />Save Sale</>
               )}
             </Button>
           </div>

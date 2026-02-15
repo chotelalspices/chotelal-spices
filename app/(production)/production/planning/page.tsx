@@ -12,6 +12,11 @@ import {
   AlertTriangle,
   Mail,
   Loader2,
+  Plus,
+  Trash2,
+  PackagePlus,
+  ChevronRight,
+  FlaskConical,
 } from "lucide-react";
 
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -35,6 +40,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 
 import {
@@ -46,6 +59,9 @@ import { formatDate } from "@/data/sampleData";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Formulation } from "@/data/formulationData";
 
+/* ================================================================
+   TYPES
+================================================================ */
 interface PlannedProduction {
   id: string;
   formulationId: string;
@@ -61,15 +77,45 @@ interface PlannedProduction {
   createdAt: string;
 }
 
+// A plan that's been staged locally before final submission
+interface StagedPlan {
+  localId: string; // temp ID for UI
+  formulationId: string;
+  formulationName: string;
+  plannedQuantity: number;
+  numberOfLots: number;
+  finalQuantity: number;
+  unit: "kg" | "gm";
+  plannedDate: string;
+}
+
+// Aggregated material requirement across all staged plans
+interface AggregatedRequirement {
+  rawMaterialId: string;
+  rawMaterialName: string;
+  unit: string;
+  totalRequired: number;
+  availableStock: number;
+  stockStatus: "sufficient" | "insufficient";
+  // breakdown by plan
+  planBreakdown: { formulationName: string; required: number }[];
+}
+
+/* ================================================================
+   COMPONENT
+================================================================ */
 export default function ProductionPlanning() {
   const router = useRouter();
   const isMobile = useIsMobile();
   const { toast } = useToast();
+
+  /* ---------- server data ---------- */
   const [activeFormulations, setActiveFormulations] = useState<Formulation[]>([]);
-  const [plannedProductions, setPlannedProductions] = useState<PlannedProduction[]>([]);
+  const [savedPlans, setSavedPlans] = useState<PlannedProduction[]>([]);
   const [isLoadingFormulations, setIsLoadingFormulations] = useState(true);
   const [isLoadingPlans, setIsLoadingPlans] = useState(true);
 
+  /* ---------- form state ---------- */
   const [formData, setFormData] = useState({
     formulationId: "",
     plannedQuantity: "",
@@ -77,196 +123,241 @@ export default function ProductionPlanning() {
     plannedDate: "",
   });
 
-  const [availabilityResult, setAvailabilityResult] = useState<{
-    checked: boolean;
-    sufficient: boolean;
-    insufficientMaterials: string[];
-    requirements: MaterialRequirement[];
-  } | null>(null);
+  /* ---------- staged (cart) plans ---------- */
+  const [stagedPlans, setStagedPlans] = useState<StagedPlan[]>([]);
 
+  /* ---------- review / submit state ---------- */
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [aggregatedRequirements, setAggregatedRequirements] = useState<AggregatedRequirement[]>([]);
+  const [isCheckingMaterials, setIsCheckingMaterials] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Fetch formulations
+  /* ---------- "add more?" dialog ---------- */
+  const [showAddMoreDialog, setShowAddMoreDialog] = useState(false);
+
+  /* ================================================================
+     FETCH
+  ================================================================ */
   useEffect(() => {
     const fetchFormulations = async () => {
       try {
         setIsLoadingFormulations(true);
-        const response = await fetch("/api/formulations");
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch formulations");
-        }
-
-        const data = await response.json();
+        const res = await fetch("/api/formulations");
+        if (!res.ok) throw new Error();
+        const data = await res.json();
         setActiveFormulations(data.filter((f: Formulation) => f.status === "active"));
-      } catch (error) {
-        console.error("Error fetching formulations:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load formulations. Please try again.",
-          variant: "destructive",
-        });
+      } catch {
+        toast({ title: "Error", description: "Failed to load formulations.", variant: "destructive" });
       } finally {
         setIsLoadingFormulations(false);
       }
     };
-
     fetchFormulations();
   }, [toast]);
 
-  // Fetch planned productions
   useEffect(() => {
-    const fetchPlannedProductions = async () => {
+    const fetchSavedPlans = async () => {
       try {
         setIsLoadingPlans(true);
-        const response = await fetch("/api/production/planning");
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch planned productions");
-        }
-
-        const data = await response.json();
-        setPlannedProductions(data);
-      } catch (error) {
-        console.error("Error fetching planned productions:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load planned productions. Please try again.",
-          variant: "destructive",
-        });
+        const res = await fetch("/api/production/planning");
+        if (!res.ok) throw new Error();
+        setSavedPlans(await res.json());
+      } catch {
+        toast({ title: "Error", description: "Failed to load production plans.", variant: "destructive" });
       } finally {
         setIsLoadingPlans(false);
       }
     };
-
-    fetchPlannedProductions();
+    fetchSavedPlans();
   }, [toast]);
 
-  const selectedFormulation = activeFormulations.find(
-    (f) => f.id === formData.formulationId
-  );
+  /* ================================================================
+     DERIVED VALUES
+  ================================================================ */
+  const selectedFormulation = activeFormulations.find((f) => f.id === formData.formulationId);
+  const finalQuantity =
+    formData.plannedQuantity && formData.numberOfLots
+      ? Number(formData.plannedQuantity) * Number(formData.numberOfLots)
+      : 0;
 
-  const finalQuantity = formData.plannedQuantity && formData.numberOfLots
-    ? Number(formData.plannedQuantity) * Number(formData.numberOfLots)
-    : 0;
+  const alreadyStagedIds = stagedPlans.map((p) => p.formulationId);
 
-  const handleCheckAvailability = async () => {
-    if (!selectedFormulation || !formData.plannedQuantity) return;
+  const canAddPlan =
+    !!formData.formulationId &&
+    !!formData.plannedQuantity &&
+    Number(formData.plannedQuantity) > 0 &&
+    Number(formData.numberOfLots) > 0 &&
+    !!formData.plannedDate;
+
+  /* ================================================================
+     HANDLERS — form
+  ================================================================ */
+  const resetForm = () =>
+    setFormData({ formulationId: "", plannedQuantity: "", numberOfLots: "1", plannedDate: "" });
+
+  const handleAddToPlan = () => {
+    if (!canAddPlan || !selectedFormulation) return;
+
+    const newPlan: StagedPlan = {
+      localId: Date.now().toString(),
+      formulationId: formData.formulationId,
+      formulationName: selectedFormulation.name,
+      plannedQuantity: Number(formData.plannedQuantity),
+      numberOfLots: Number(formData.numberOfLots),
+      finalQuantity,
+      unit: selectedFormulation.baseUnit,
+      plannedDate: formData.plannedDate,
+    };
+
+    setStagedPlans((prev) => [...prev, newPlan]);
+    resetForm();
+
+    // Ask if user wants to add more
+    setShowAddMoreDialog(true);
+  };
+
+  const removeStagedPlan = (localId: string) =>
+    setStagedPlans((prev) => prev.filter((p) => p.localId !== localId));
+
+  /* ================================================================
+     HANDLERS — review & submit
+  ================================================================ */
+  const handleReviewAll = async () => {
+    if (stagedPlans.length === 0) return;
+    setIsCheckingMaterials(true);
+    setShowReviewModal(true);
 
     try {
-      const response = await fetch(
-        `/api/production/materials?formulationId=${selectedFormulation.id}&plannedQuantity=${finalQuantity}`
-      );
+      // Fetch requirements for every staged plan and merge them
+      const allRequirementsMap = new Map<string, AggregatedRequirement>();
 
-      if (!response.ok) {
-        throw new Error("Failed to fetch material requirements");
+      for (const plan of stagedPlans) {
+        const res = await fetch(
+          `/api/production/materials?formulationId=${plan.formulationId}&plannedQuantity=${plan.finalQuantity}`
+        );
+        if (!res.ok) continue;
+        const reqs: MaterialRequirement[] = await res.json();
+
+        reqs.forEach((req) => {
+          const existing = allRequirementsMap.get(req.rawMaterialId);
+          if (existing) {
+            existing.totalRequired += req.requiredQuantity;
+            existing.planBreakdown.push({
+              formulationName: plan.formulationName,
+              required: req.requiredQuantity,
+            });
+            // Re-evaluate status with aggregated quantity
+            existing.stockStatus =
+              existing.totalRequired > existing.availableStock
+                ? "insufficient"
+                : "sufficient";
+          } else {
+            allRequirementsMap.set(req.rawMaterialId, {
+              rawMaterialId: req.rawMaterialId,
+              rawMaterialName: req.rawMaterialName,
+              unit: req.unit,
+              totalRequired: req.requiredQuantity,
+              availableStock: req.availableStock,
+              stockStatus:
+                req.requiredQuantity > req.availableStock
+                  ? "insufficient"
+                  : "sufficient",
+              planBreakdown: [
+                {
+                  formulationName: plan.formulationName,
+                  required: req.requiredQuantity,
+                },
+              ],
+            });
+          }
+        });
       }
 
-      const requirements: MaterialRequirement[] = await response.json();
-      const insufficient = hasInsufficientStock(requirements);
-      const insufficientMaterials = requirements
-        .filter((req) => req.stockStatus === "insufficient")
-        .map((req) => req.rawMaterialName);
-
-      setAvailabilityResult({
-        checked: true,
-        sufficient: !insufficient,
-        insufficientMaterials,
-        requirements,
-      });
-    } catch (error) {
-      console.error("Error checking availability:", error);
-      toast({
-        title: "Error",
-        description: "Failed to check material availability. Please try again.",
-        variant: "destructive",
-      });
+      setAggregatedRequirements(Array.from(allRequirementsMap.values()));
+    } catch {
+      toast({ title: "Error", description: "Failed to check material availability.", variant: "destructive" });
+    } finally {
+      setIsCheckingMaterials(false);
     }
   };
 
-  const canSubmit =
-    formData.formulationId &&
-    formData.plannedQuantity &&
-    Number(formData.plannedQuantity) > 0 &&
-    formData.numberOfLots &&
-    Number(formData.numberOfLots) > 0 &&
-    formData.plannedDate &&
-    availabilityResult?.checked;
+  const insufficientMaterials = aggregatedRequirements.filter(
+    (r) => r.stockStatus === "insufficient"
+  );
 
-  const handleSubmit = async () => {
-    if (!canSubmit || !selectedFormulation) return;
-
+  const handleConfirmSubmit = async () => {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch("/api/production/planning", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          formulationId: formData.formulationId,
-          plannedQuantity: Number(formData.plannedQuantity),
-          numberOfLots: Number(formData.numberOfLots),
-          finalQuantity: finalQuantity,
-          unit: selectedFormulation.baseUnit,
-          plannedDate: formData.plannedDate,
-          materialStatus: availabilityResult?.sufficient
-            ? "sufficient"
-            : "insufficient",
-        }),
-      });
+      // Save every staged plan
+      for (const plan of stagedPlans) {
+        const materialStatus =
+          aggregatedRequirements.some(
+            (r) =>
+              r.stockStatus === "insufficient" &&
+              r.planBreakdown.some((b) => b.formulationName === plan.formulationName)
+          )
+            ? "insufficient"
+            : "sufficient";
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to create production plan");
+        await fetch("/api/production/planning", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            formulationId: plan.formulationId,
+            plannedQuantity: plan.plannedQuantity,
+            numberOfLots: plan.numberOfLots,
+            finalQuantity: plan.finalQuantity,
+            unit: plan.unit,
+            plannedDate: plan.plannedDate,
+            materialStatus,
+          }),
+        });
       }
 
-      const planData = await response.json();
-
-      toast({
-        title: "Production Plan Created",
-        description: `Production of ${formData.plannedQuantity} ${selectedFormulation.baseUnit} × ${formData.numberOfLots} lots = ${finalQuantity} ${selectedFormulation.baseUnit} ${selectedFormulation.name} scheduled for ${formData.plannedDate}. Email notification sent to Admin & Packaging teams.`,
-      });
-
-      // Refresh planned productions list
-      const plansResponse = await fetch("/api/production/planning");
-      if (plansResponse.ok) {
-        const plansData = await plansResponse.json();
-        setPlannedProductions(plansData);
+      // Send ONE consolidated email for insufficient materials only
+      if (insufficientMaterials.length > 0) {
+        await fetch("/api/production/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            plans: stagedPlans,
+            insufficientMaterials,
+          }),
+        });
       }
 
-      // Reset form
-      handleReset();
-    } catch (error) {
-      console.error("Error creating production plan:", error);
       toast({
-        title: "Error",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to create production plan. Please try again.",
-        variant: "destructive",
+        title: "Production Plans Saved",
+        description: `${stagedPlans.length} plan(s) saved.${
+          insufficientMaterials.length > 0
+            ? ` Email sent to Admin with ${insufficientMaterials.length} insufficient material(s).`
+            : " All materials are sufficient — no email needed."
+        }`,
       });
+
+      // Refresh saved list
+      const res = await fetch("/api/production/planning");
+      if (res.ok) setSavedPlans(await res.json());
+
+      // Reset everything
+      setStagedPlans([]);
+      setAggregatedRequirements([]);
+      setShowReviewModal(false);
+    } catch {
+      toast({ title: "Error", description: "Failed to save production plans.", variant: "destructive" });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleReset = () => {
-    setFormData({
-      formulationId: "",
-      plannedQuantity: "",
-      numberOfLots: "1",
-      plannedDate: "",
-    });
-    setAvailabilityResult(null);
-  };
-
+  /* ================================================================
+     RENDER
+  ================================================================ */
   return (
     <AppLayout>
       <div className="space-y-6">
-        {/* Header */}
+        {/* ── Header ── */}
         <div className="page-header">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" asChild>
@@ -280,118 +371,109 @@ export default function ProductionPlanning() {
                 Production Planning
               </h1>
               <p className="text-muted-foreground mt-1">
-                Plan future production and check material availability
+                Plan multiple productions and review material requirements in one go
               </p>
             </div>
           </div>
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
-          {/* Planning Form */}
+          {/* ── Left: Add-Plan Form ── */}
           <Card>
             <CardHeader>
-              <CardTitle>New Production Plan</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <PackagePlus className="h-5 w-5 text-primary" />
+                Add Production Plan
+              </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Masala Selection */}
+            <CardContent className="space-y-5">
+              {/* Masala */}
               <div className="space-y-2">
                 <Label>Masala Name *</Label>
                 <Select
                   value={formData.formulationId}
                   onValueChange={(value) => {
-                    const formulation = activeFormulations.find((f) => f.id === value);
-                    setFormData({ 
-                      ...formData, 
+                    const f = activeFormulations.find((f) => f.id === value);
+                    setFormData({
+                      ...formData,
                       formulationId: value,
-                      plannedQuantity: formulation?.defaultQuantity?.toString() || ''
+                      plannedQuantity: f?.defaultQuantity?.toString() || "",
                     });
-                    setAvailabilityResult(null);
                   }}
                   disabled={isLoadingFormulations}
                 >
                   <SelectTrigger>
                     <SelectValue
-                      placeholder={
-                        isLoadingFormulations ? "Loading..." : "Select masala..."
-                      }
+                      placeholder={isLoadingFormulations ? "Loading..." : "Select masala…"}
                     />
                   </SelectTrigger>
                   <SelectContent>
                     {activeFormulations.map((f) => (
-                      <SelectItem key={f.id} value={f.id}>
+                      <SelectItem
+                        key={f.id}
+                        value={f.id}
+                        disabled={alreadyStagedIds.includes(f.id)}
+                      >
                         {f.name}
+                        {alreadyStagedIds.includes(f.id) && (
+                          <span className="ml-2 text-xs text-muted-foreground">(added)</span>
+                        )}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* Planned Quantity */}
+              {/* Planned Qty */}
               <div className="space-y-2">
                 <Label>Planned Quantity *</Label>
                 <div className="flex gap-2">
                   <Input
                     type="number"
                     value={formData.plannedQuantity}
-                    onChange={(e) => {
-                      setFormData({
-                        ...formData,
-                        plannedQuantity: e.target.value,
-                      });
-                      setAvailabilityResult(null);
-                    }}
+                    onChange={(e) =>
+                      setFormData({ ...formData, plannedQuantity: e.target.value })
+                    }
                     min="1"
                     step="0.1"
                   />
-                  <div className="flex items-center px-4 bg-muted rounded-md text-sm font-medium">
+                  <div className="flex items-center px-4 bg-muted rounded-md text-sm font-medium min-w-[48px] justify-center">
                     {selectedFormulation?.baseUnit || "kg"}
                   </div>
                 </div>
               </div>
 
-              {/* Number of Lots */}
+              {/* Lots */}
               <div className="space-y-2">
                 <Label>Number of Lots *</Label>
                 <Select
                   value={formData.numberOfLots}
-                  onValueChange={(value) => {
-                    setFormData({ ...formData, numberOfLots: value });
-                    setAvailabilityResult(null);
-                  }}
+                  onValueChange={(v) => setFormData({ ...formData, numberOfLots: v })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select number of lots" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {[1, 2, 3, 4, 5].map((num) => (
-                      <SelectItem key={num} value={num.toString()}>
-                        {num}
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <SelectItem key={n} value={n.toString()}>
+                        {n} {n === 1 ? "lot" : "lots"}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* Final Quantity */}
-              <div className="space-y-2">
-                <Label>Final Production Quantity</Label>
-                <div className="flex gap-2">
-                  <Input
-                    type="number"
-                    value={finalQuantity.toFixed(2)}
-                    readOnly
-                    className="bg-muted"
-                  />
-                  <div className="flex items-center px-4 bg-muted rounded-md text-sm font-medium">
-                    {selectedFormulation?.baseUnit || "kg"}
-                  </div>
+              {/* Final qty readout */}
+              {finalQuantity > 0 && (
+                <div className="rounded-lg bg-muted/50 px-4 py-3 flex justify-between text-sm">
+                  <span className="text-muted-foreground">Final production quantity</span>
+                  <span className="font-semibold">
+                    {finalQuantity.toFixed(2)} {selectedFormulation?.baseUnit || "kg"}
+                  </span>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  Calculated as: Planned Quantity × Number of Lots
-                </p>
-              </div>
+              )}
 
-              {/* Planned Date */}
+              {/* Date */}
               <div className="space-y-2">
                 <Label>Planned Date *</Label>
                 <div className="relative">
@@ -400,10 +482,7 @@ export default function ProductionPlanning() {
                     type="date"
                     value={formData.plannedDate}
                     onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        plannedDate: e.target.value,
-                      })
+                      setFormData({ ...formData, plannedDate: e.target.value })
                     }
                     className="pl-10"
                     min={new Date().toISOString().split("T")[0]}
@@ -413,156 +492,88 @@ export default function ProductionPlanning() {
 
               <Button
                 type="button"
-                variant="outline"
-                className="w-full"
-                onClick={handleCheckAvailability}
-                disabled={
-                  !formData.formulationId ||
-                  !formData.plannedQuantity ||
-                  isLoadingFormulations
-                }
+                className="w-full gap-2"
+                onClick={handleAddToPlan}
+                disabled={!canAddPlan}
               >
-                Check Material Availability
+                <Plus className="h-4 w-4" />
+                Add to Plan
               </Button>
-
-              {/* Availability Result */}
-              {availabilityResult?.checked && (
-                <div
-                  className={`rounded-lg p-4 ${
-                    availabilityResult.sufficient
-                      ? "bg-green-50 border border-green-200"
-                      : "bg-destructive/10 border border-destructive/20"
-                  }`}
-                >
-                  <div className="flex gap-3">
-                    {availabilityResult.sufficient ? (
-                      <CheckCircle className="h-5 w-5 text-green-600" />
-                    ) : (
-                      <AlertTriangle className="h-5 w-5 text-destructive" />
-                    )}
-                    <div>
-                      <p className="font-medium">
-                        {availabilityResult.sufficient
-                          ? "All Materials Available"
-                          : "Insufficient Materials"}
-                      </p>
-                      {availabilityResult.sufficient ? (
-                        <div className="flex items-center gap-2 text-sm text-blue-600 mt-2">
-                          <Mail className="h-4 w-4" />
-                          Email notification will be sent to Admin & Packaging teams
-                        </div>
-                      ) : (
-                        <>
-                          <p className="text-sm text-muted-foreground">
-                            Missing:{" "}
-                            {availabilityResult.insufficientMaterials.join(", ")}
-                          </p>
-                          <div className="flex items-center gap-2 text-sm text-blue-600 mt-2">
-                            <Mail className="h-4 w-4" />
-                            Email notification will be sent to Admin & Packaging teams
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex gap-3">
-                <Button variant="outline" onClick={handleReset} className="flex-1">
-                  Reset
-                </Button>
-                <Button
-                  onClick={handleSubmit}
-                  disabled={!canSubmit || isSubmitting}
-                  className="flex-1 gap-2"
-                >
-                  <Save className="h-4 w-4" />
-                  {isSubmitting ? "Saving..." : "Save Plan"}
-                </Button>
-              </div>
             </CardContent>
           </Card>
 
-          {/* Material Requirements Preview */}
-          {availabilityResult && availabilityResult.requirements && availabilityResult.requirements.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Material Requirements</CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                {isMobile ? (
-                  <div className="divide-y">
-                    {availabilityResult.requirements.map((req) => (
-                      <div key={req.rawMaterialId} className="p-4">
-                        <div className="flex justify-between">
-                          <p className="font-medium">{req.rawMaterialName}</p>
-                          <Badge
-                            variant={
-                              req.stockStatus === "sufficient"
-                                ? "default"
-                                : "destructive"
-                            }
-                          >
-                            {req.stockStatus === "sufficient" ? "OK" : "Low"}
-                          </Badge>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
-                          <div>
-                            Required: {req.requiredQuantity.toFixed(2)}{" "}
-                            {req.unit}
-                          </div>
-                          <div>
-                            Available: {req.availableStock.toFixed(2)} {req.unit}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Material</TableHead>
-                        <TableHead className="text-right">Required</TableHead>
-                        <TableHead className="text-right">Available</TableHead>
-                        <TableHead className="text-center">Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {availabilityResult.requirements.map((req) => (
-                        <TableRow key={req.rawMaterialId}>
-                          <TableCell className="font-medium">
-                            {req.rawMaterialName}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {req.requiredQuantity.toFixed(2)} {req.unit}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {req.availableStock.toFixed(2)} {req.unit}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <Badge
-                              variant={
-                                req.stockStatus === "sufficient"
-                                  ? "default"
-                                  : "destructive"
-                              }
-                            >
-                              {req.stockStatus}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+          {/* ── Right: Staged Plans ── */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <FlaskConical className="h-5 w-5 text-primary" />
+                Planned Productions
+                {stagedPlans.length > 0 && (
+                  <Badge variant="secondary" className="ml-1">
+                    {stagedPlans.length}
+                  </Badge>
                 )}
-              </CardContent>
-            </Card>
-          )}
+              </CardTitle>
+              {stagedPlans.length > 0 && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="gap-2"
+                  onClick={handleReviewAll}
+                >
+                  Review & Submit
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              )}
+            </CardHeader>
+            <CardContent className="p-0">
+              {stagedPlans.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-14 text-center text-muted-foreground gap-2 px-4">
+                  <PackagePlus className="h-10 w-10 opacity-30" />
+                  <p className="text-sm">No plans added yet.</p>
+                  <p className="text-xs">Fill the form on the left and click "Add to Plan".</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Masala</TableHead>
+                      <TableHead className="text-right">Qty × Lots</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {stagedPlans.map((plan) => (
+                      <TableRow key={plan.localId}>
+                        <TableCell className="font-medium">{plan.formulationName}</TableCell>
+                        <TableCell className="text-right text-sm">
+                          <span className="font-semibold">{plan.finalQuantity.toFixed(0)}</span>
+                          <span className="text-muted-foreground ml-1">{plan.unit}</span>
+                          <span className="text-muted-foreground text-xs block">
+                            {plan.plannedQuantity} × {plan.numberOfLots} lot(s)
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-sm">{formatDate(plan.plannedDate)}</TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeStagedPlan(plan.localId)}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Upcoming Plans */}
+        {/* ── Saved Plans History ── */}
         <Card>
           <CardHeader>
             <CardTitle>Upcoming Production Plans</CardTitle>
@@ -572,7 +583,7 @@ export default function ProductionPlanning() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Masala</TableHead>
-                  <TableHead className="text-right">Planned Qty</TableHead>
+                  <TableHead className="text-right">Final Qty</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Email</TableHead>
@@ -581,38 +592,32 @@ export default function ProductionPlanning() {
               <TableBody>
                 {isLoadingPlans ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8">
+                    <TableCell colSpan={5} className="text-center py-8">
                       <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />
                     </TableCell>
                   </TableRow>
-                ) : plannedProductions.length === 0 ? (
+                ) : savedPlans.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                       No planned productions found
                     </TableCell>
                   </TableRow>
                 ) : (
-                  plannedProductions.map((plan) => (
+                  savedPlans.map((plan) => (
                     <TableRow key={plan.id}>
                       <TableCell>{plan.formulationName}</TableCell>
                       <TableCell className="text-right">
-                        {plan.plannedQuantity} {plan.unit}
+                        {plan.finalQuantity} {plan.unit}
                       </TableCell>
                       <TableCell>{formatDate(plan.plannedDate)}</TableCell>
                       <TableCell>
                         <Badge
-                          variant={
-                            plan.materialStatus === "sufficient"
-                              ? "default"
-                              : "destructive"
-                          }
+                          variant={plan.materialStatus === "sufficient" ? "default" : "destructive"}
                         >
                           {plan.materialStatus}
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        {/* {plan.emailSent && (
-                        )} */}
                         <Mail className="h-4 w-4 text-amber-600" />
                       </TableCell>
                     </TableRow>
@@ -623,6 +628,234 @@ export default function ProductionPlanning() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ================================================================
+          "Add More?" Dialog
+      ================================================================ */}
+      <Dialog open={showAddMoreDialog} onOpenChange={setShowAddMoreDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Plan Added!</DialogTitle>
+            <DialogDescription>
+              {stagedPlans.length} production plan{stagedPlans.length > 1 ? "s" : ""} in queue.
+              Would you like to add another?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex gap-2 sm:flex-row flex-col">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => {
+                setShowAddMoreDialog(false);
+                handleReviewAll();
+              }}
+            >
+              No, Review & Submit
+            </Button>
+            <Button
+              className="flex-1 gap-2"
+              onClick={() => setShowAddMoreDialog(false)}
+            >
+              <Plus className="h-4 w-4" />
+              Add Another
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ================================================================
+          Review Modal
+      ================================================================ */}
+      <Dialog open={showReviewModal} onOpenChange={setShowReviewModal}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Review Production Plans</DialogTitle>
+            <DialogDescription>
+              Reviewing material requirements across all {stagedPlans.length} planned production(s).
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Plans Summary */}
+          <div className="space-y-3">
+            <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+              Production Plans ({stagedPlans.length})
+            </h3>
+            <div className="grid gap-2">
+              {stagedPlans.map((plan) => (
+                <div
+                  key={plan.localId}
+                  className="flex items-center justify-between rounded-lg border px-4 py-3"
+                >
+                  <div>
+                    <p className="font-medium">{plan.formulationName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDate(plan.plannedDate)} · {plan.plannedQuantity} {plan.unit} × {plan.numberOfLots} lot(s)
+                    </p>
+                  </div>
+                  <span className="font-semibold text-sm">
+                    {plan.finalQuantity.toFixed(0)} {plan.unit}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Material Requirements */}
+          <div className="space-y-3 mt-2">
+            <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+              Combined Material Requirements
+            </h3>
+
+            {isCheckingMaterials ? (
+              <div className="flex items-center justify-center py-10 gap-3 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                Checking availability across all plans…
+              </div>
+            ) : aggregatedRequirements.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                No requirements found.
+              </p>
+            ) : (
+              <>
+                {/* Insufficient banner */}
+                {insufficientMaterials.length > 0 ? (
+                  <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 flex gap-3">
+                    <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-destructive">
+                        {insufficientMaterials.length} material{insufficientMaterials.length > 1 ? "s" : ""} insufficient
+                      </p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {insufficientMaterials.map((m) => m.rawMaterialName).join(", ")}
+                      </p>
+                      <div className="flex items-center gap-2 text-sm text-blue-600 mt-2">
+                        <Mail className="h-4 w-4" />
+                        A single email with the full list will be sent to Admin on submit.
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg bg-green-50 border border-green-200 p-4 flex gap-3">
+                    <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0" />
+                    <div>
+                      <p className="font-medium text-green-700">All materials sufficient</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        No email notification required.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Table — only show insufficient rows, collapsed sufficient */}
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Material</TableHead>
+                      <TableHead className="text-right">Required</TableHead>
+                      <TableHead className="text-right">Available</TableHead>
+                      <TableHead className="text-right">Shortfall</TableHead>
+                      <TableHead className="text-center">Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {/* Insufficient first */}
+                    {aggregatedRequirements
+                      .sort((a, b) =>
+                        a.stockStatus === "insufficient" ? -1 : 1
+                      )
+                      .map((req) => {
+                        const shortfall =
+                          req.totalRequired - req.availableStock;
+                        return (
+                          <TableRow
+                            key={req.rawMaterialId}
+                            className={
+                              req.stockStatus === "insufficient"
+                                ? "bg-destructive/5"
+                                : ""
+                            }
+                          >
+                            <TableCell className="font-medium">
+                              {req.rawMaterialName}
+                              {/* per-plan breakdown tooltip */}
+                              {req.planBreakdown.length > 1 && (
+                                <div className="text-xs text-muted-foreground mt-0.5">
+                                  {req.planBreakdown.map((b) => (
+                                    <span key={b.formulationName} className="mr-2">
+                                      {b.formulationName}: {b.required.toFixed(2)} {req.unit}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {req.totalRequired.toFixed(2)} {req.unit}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {req.availableStock.toFixed(2)} {req.unit}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {req.stockStatus === "insufficient" ? (
+                                <span className="text-destructive font-semibold">
+                                  −{shortfall.toFixed(2)} {req.unit}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground text-sm">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Badge
+                                variant={
+                                  req.stockStatus === "sufficient"
+                                    ? "default"
+                                    : "destructive"
+                                }
+                              >
+                                {req.stockStatus === "sufficient" ? "OK" : "Short"}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </TableBody>
+                </Table>
+              </>
+            )}
+          </div>
+
+          <DialogFooter className="flex gap-3 pt-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowReviewModal(false)}
+              disabled={isSubmitting}
+            >
+              Back to Edit
+            </Button>
+            <Button
+              onClick={handleConfirmSubmit}
+              disabled={isCheckingMaterials || isSubmitting}
+              className="gap-2 min-w-[160px]"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4" />
+                  Confirm & Submit
+                  {insufficientMaterials.length > 0 && (
+                    <Badge variant="destructive" className="ml-1">
+                      {insufficientMaterials.length} alerts
+                    </Badge>
+                  )}
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }
