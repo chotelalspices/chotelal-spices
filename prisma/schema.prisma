@@ -272,25 +272,50 @@ model FinishedProduct {
   formulationId      String
   formulation        Formulation @relation(fields: [formulationId], references: [id])
   createdAt          DateTime    @default(now())
-
+  labels         ProductLabel[]
   salesRecords SalesRecord[]
 }
 
+model Label {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  products  ProductLabel[]
+}
+
+model ProductLabel {
+  productId String
+  labelId   String
+
+  product   FinishedProduct @relation(fields: [productId], references: [id])
+  label     Label           @relation(fields: [labelId], references: [id])
+
+  @@id([productId, labelId])
+}
+
 model SalesRecord {
-  id             String          @id @default(uuid())
-  productId      String
-  product        FinishedProduct @relation(fields: [productId], references: [id])
-  quantitySold   Float
-  unit           Unit
-  productionCost Float?
-  discount       Float?
-  sellingPrice   Float
-  profit         Float?
-  remarks        String?
-  saleDate       DateTime
-  createdById    String
-  createdBy      User            @relation(fields: [createdById], references: [id])
-  createdAt      DateTime        @default(now())
+  id              String   @id @default(uuid())
+  productId       String
+
+  // ✅ CLIENT / VOUCHER FIELDS
+  clientName      String?
+  voucherNo       String?
+  voucherType     String?
+
+  quantitySold    Int
+  sellingPrice    Float
+  discount        Float
+  productionCost  Float
+  profit          Float
+  remarks         String?
+  saleDate        DateTime
+  unit            String
+  createdById     String
+  createdAt       DateTime @default(now())
+
+  product     FinishedProduct @relation(fields: [productId], references: [id])
+  createdBy  User            @relation(fields: [createdById], references: [id])
 }
 
 //////////////////////////////////////////////////////

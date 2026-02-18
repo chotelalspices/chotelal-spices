@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
+/**
+ * GET: Fetch all products for a formulation (with labels)
+ */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -10,14 +13,27 @@ export async function GET(
 
     const products = await prisma.finishedProduct.findMany({
       where: {
-        formulationId: formulationId,
+        formulationId,
+      },
+      include: {
+        labels: {
+          include: {
+            label: true,
+          },
+        },
       },
       orderBy: {
         createdAt: 'desc',
       },
     });
 
-    return NextResponse.json(products);
+    // Flatten labels for frontend
+    const formattedProducts = products.map((product) => ({
+      ...product,
+      labels: product.labels.map((pl) => pl.label.name),
+    }));
+
+    return NextResponse.json(formattedProducts);
   } catch (error) {
     console.error('Error fetching products:', error);
     return NextResponse.json(
@@ -27,6 +43,9 @@ export async function GET(
   }
 }
 
+/**
+ * POST: Create product with labels
+ */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -35,16 +54,47 @@ export async function POST(
     const { id: formulationId } = await params;
     const body = await request.json();
 
-    const newProduct = await prisma.finishedProduct.create({
+    const labels: string[] = body.labels
+      ? body.labels
+          .split(',')
+          .map((l: string) => l.trim().toLowerCase())
+          .filter(Boolean)
+      : [];
+
+    const product = await prisma.finishedProduct.create({
       data: {
         name: body.name,
         quantity: body.quantity,
         unit: body.unit,
-        formulationId: formulationId,
+        formulationId,
+
+        labels: {
+          create: labels.map((labelName) => ({
+            label: {
+              connectOrCreate: {
+                where: { name: labelName },
+                create: { name: labelName },
+              },
+            },
+          })),
+        },
+      },
+      include: {
+        labels: {
+          include: {
+            label: true,
+          },
+        },
       },
     });
 
-    return NextResponse.json(newProduct, { status: 201 });
+    return NextResponse.json(
+      {
+        ...product,
+        labels: product.labels.map((l) => l.label.name),
+      },
+      { status: 201 }
+    );
   } catch (error) {
     console.error('Error creating product:', error);
     return NextResponse.json(

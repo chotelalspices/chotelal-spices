@@ -17,10 +17,19 @@ CREATE TYPE "ProductionStatus" AS ENUM ('draft', 'confirmed', 'ready_for_packagi
 CREATE TYPE "MaterialStatus" AS ENUM ('sufficient', 'insufficient');
 
 -- CreateEnum
-CREATE TYPE "UserRole" AS ENUM ('admin', 'staff');
+CREATE TYPE "UserRole" AS ENUM ('admin', 'production', 'packaging', 'sales', 'research');
 
 -- CreateEnum
 CREATE TYPE "ResearchStatus" AS ENUM ('pending', 'approved', 'rejected');
+
+-- CreateTable
+CREATE TABLE "UserRoleAssignment" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "role" "UserRole" NOT NULL,
+
+    CONSTRAINT "UserRoleAssignment_pkey" PRIMARY KEY ("id")
+);
 
 -- CreateTable
 CREATE TABLE "User" (
@@ -28,7 +37,6 @@ CREATE TABLE "User" (
     "fullName" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "phone" TEXT,
-    "role" "UserRole" NOT NULL,
     "status" "Status" NOT NULL,
     "mustChangePassword" BOOLEAN NOT NULL,
     "lastLogin" TIMESTAMP(3),
@@ -75,6 +83,7 @@ CREATE TABLE "Formulation" (
     "status" "Status" NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "defaultQuantity" DOUBLE PRECISION NOT NULL,
 
     CONSTRAINT "Formulation_pkey" PRIMARY KEY ("id")
 );
@@ -95,6 +104,7 @@ CREATE TABLE "ProductionBatch" (
     "batchNumber" TEXT NOT NULL,
     "formulationId" TEXT NOT NULL,
     "plannedQuantity" DOUBLE PRECISION NOT NULL,
+    "availableQuantity" DOUBLE PRECISION,
     "unit" "Unit" NOT NULL,
     "finalOutput" DOUBLE PRECISION,
     "productionDate" TIMESTAMP(3) NOT NULL,
@@ -185,6 +195,8 @@ CREATE TABLE "FinishedProduct" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "quantity" DOUBLE PRECISION NOT NULL,
+    "unit" "Unit" NOT NULL,
+    "availableInventory" DOUBLE PRECISION,
     "formulationId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -195,9 +207,16 @@ CREATE TABLE "FinishedProduct" (
 CREATE TABLE "SalesRecord" (
     "id" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
+    "clientName" TEXT,
+    "voucherNo" TEXT,
+    "voucherType" TEXT,
     "quantitySold" DOUBLE PRECISION NOT NULL,
     "unit" "Unit" NOT NULL,
+    "productionCost" DOUBLE PRECISION,
+    "discount" DOUBLE PRECISION,
     "sellingPrice" DOUBLE PRECISION NOT NULL,
+    "profit" DOUBLE PRECISION,
+    "remarks" TEXT,
     "saleDate" TIMESTAMP(3) NOT NULL,
     "createdById" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -254,11 +273,31 @@ CREATE TABLE "DefaultValues" (
     CONSTRAINT "DefaultValues_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "PasswordResetOTP" (
+    "id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "otp" TEXT NOT NULL,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "PasswordResetOTP_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "UserRoleAssignment_userId_role_key" ON "UserRoleAssignment"("userId", "role");
+
 -- CreateIndex
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ProductionBatch_batchNumber_key" ON "ProductionBatch"("batchNumber");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PasswordResetOTP_email_key" ON "PasswordResetOTP"("email");
+
+-- AddForeignKey
+ALTER TABLE "UserRoleAssignment" ADD CONSTRAINT "UserRoleAssignment_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "StockMovement" ADD CONSTRAINT "StockMovement_rawMaterialId_fkey" FOREIGN KEY ("rawMaterialId") REFERENCES "RawMaterial"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

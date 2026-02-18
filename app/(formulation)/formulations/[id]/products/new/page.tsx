@@ -36,6 +36,7 @@ interface NewProduct {
   name: string;
   quantity: number;
   unit: 'kg' | 'gm';
+  labels: string; // comma-separated labels
 }
 
 export default function CreateProductPage() {
@@ -47,11 +48,12 @@ export default function CreateProductPage() {
   const [formulation, setFormulation] = useState<Formulation | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  
+
   const [formData, setFormData] = useState<NewProduct>({
     name: '',
     quantity: 0,
     unit: 'kg',
+    labels: '',
   });
 
   useEffect(() => {
@@ -59,7 +61,7 @@ export default function CreateProductPage() {
       try {
         setIsLoading(true);
         const response = await fetch(`/api/formulations/${formulationId}`);
-        
+
         if (!response.ok) {
           throw new Error('Failed to fetch formulation');
         }
@@ -83,8 +85,11 @@ export default function CreateProductPage() {
     }
   }, [formulationId, toast]);
 
-  const handleInputChange = (field: keyof NewProduct, value: string | number) => {
-    setFormData(prev => ({
+  const handleInputChange = (
+    field: keyof NewProduct,
+    value: string | number
+  ) => {
+    setFormData((prev) => ({
       ...prev,
       [field]: value,
     }));
@@ -92,7 +97,7 @@ export default function CreateProductPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.name || formData.quantity <= 0) {
       toast({
         title: 'Validation Error',
@@ -104,21 +109,24 @@ export default function CreateProductPage() {
 
     try {
       setIsSaving(true);
-      
-      const response = await fetch(`/api/formulations/${formulationId}/products`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData),
-      });
+
+      const response = await fetch(
+        `/api/formulations/${formulationId}/products`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(formData),
+        }
+      );
 
       if (!response.ok) {
         throw new Error('Failed to create product');
       }
 
-      const newProduct = await response.json();
-      
+      await response.json();
+
       toast({
         title: 'Success',
         description: 'Product created successfully.',
@@ -210,6 +218,7 @@ export default function CreateProductPage() {
                 Product Details
               </CardTitle>
             </CardHeader>
+
             <CardContent className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
@@ -217,7 +226,9 @@ export default function CreateProductPage() {
                   <Input
                     id="name"
                     value={formData.name}
-                    onChange={(e) => handleInputChange('name', e.target.value)}
+                    onChange={(e) =>
+                      handleInputChange('name', e.target.value)
+                    }
                     placeholder="Enter product name"
                     required
                   />
@@ -231,7 +242,12 @@ export default function CreateProductPage() {
                     step="0.01"
                     min="0"
                     value={formData.quantity}
-                    onChange={(e) => handleInputChange('quantity', parseFloat(e.target.value) || 0)}
+                    onChange={(e) =>
+                      handleInputChange(
+                        'quantity',
+                        parseFloat(e.target.value) || 0
+                      )
+                    }
                     placeholder="0.00"
                     required
                   />
@@ -241,7 +257,9 @@ export default function CreateProductPage() {
                   <Label htmlFor="unit">Unit *</Label>
                   <Select
                     value={formData.unit}
-                    onValueChange={(value: 'kg' | 'gm') => handleInputChange('unit', value)}
+                    onValueChange={(value: 'kg' | 'gm') =>
+                      handleInputChange('unit', value)
+                    }
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select unit" />
@@ -251,6 +269,21 @@ export default function CreateProductPage() {
                       <SelectItem value="gm">Grams (gm)</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="labels">Labels</Label>
+                  <Input
+                    id="labels"
+                    value={formData.labels}
+                    onChange={(e) =>
+                      handleInputChange('labels', e.target.value)
+                    }
+                    placeholder="e.g. box, packet, container"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Separate labels with commas
+                  </p>
                 </div>
               </div>
             </CardContent>

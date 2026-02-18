@@ -75,6 +75,9 @@ export async function GET(request: NextRequest) {
       productName: record.product.name,
       batchId: null,
       batchNumber: null,
+      clientName: record.clientName || null,
+      voucherNo: record.voucherNo || null,
+      voucherType: record.voucherType || null,
       quantitySold: record.quantitySold,
       unit: record.unit,
       sellingPricePerUnit: record.sellingPrice,
@@ -143,7 +146,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { productId, quantitySold, sellingPrice, discount, saleDate, remarks, productionCost, profit } = body;
+    const { productId, quantitySold, sellingPrice, discount, saleDate, remarks, productionCost, profit, clientName, voucherNo, voucherType } = body;
 
     // Validate required fields
     if (!productId || !quantitySold || sellingPrice === undefined || sellingPrice === null || !saleDate) {
@@ -240,6 +243,9 @@ export async function POST(request: NextRequest) {
       const salesRecord = await tx.salesRecord.create({
         data: {
           productId,
+          clientName: clientName || null,
+          voucherNo: voucherNo || null,
+          voucherType: voucherType || null,
           quantitySold: parsedQuantity,
           unit: "kg" as "kg" | "gm",
           sellingPrice: sellingPrice,
@@ -282,6 +288,9 @@ export async function POST(request: NextRequest) {
         productName: result.product.name,
         batchId: null,
         batchNumber: null,
+      clientName: record.clientName || null,
+      voucherNo: record.voucherNo || null,
+      voucherType: record.voucherType || null,
         quantitySold: result.quantitySold,
         unit: result.unit,
         sellingPrice: result.sellingPrice,
