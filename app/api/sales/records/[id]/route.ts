@@ -286,7 +286,7 @@ export async function PUT(
           // Calculate production cost per unit and total for new quantity
           productionCost: existingRecord.productionCost 
             ? (existingRecord.productionCost / existingRecord.quantitySold) * parsedQuantity
-            : null,
+            : undefined,
           // Recalculate profit based on new totals with discount
           profit: isFreeProduct ? 0 : (existingRecord.productionCost 
             ? (parsedQuantity * parsedSellingPrice * (1 - finalDiscount / 100)) - ((existingRecord.productionCost / existingRecord.quantitySold) * parsedQuantity)
