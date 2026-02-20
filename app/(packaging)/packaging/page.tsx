@@ -84,13 +84,22 @@ const PackagingList = () => {
     fetchBatches();
   }, [toast]);
 
+  // ── UPDATED: Prefix-based search filter ──
   const filteredBatches = batches.filter((batch) => {
-    const matchesSearch =
-      batch.batchNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      batch.productName.toLowerCase().includes(searchQuery.toLowerCase());
+    const query = searchQuery.toLowerCase().trim();
+    
+    // If search is empty, show all (respecting status filter)
+    if (!query) {
+      const matchesStatus = statusFilter === "all" || batch.status === statusFilter;
+      return matchesStatus;
+    }
 
-    const matchesStatus =
-      statusFilter === "all" || batch.status === statusFilter;
+    // Check if batch number OR product name STARTS WITH the query
+    const batchNumberMatch = batch.batchNumber.toLowerCase().startsWith(query);
+    const productNameMatch = batch.productName.toLowerCase().startsWith(query);
+    
+    const matchesSearch = batchNumberMatch || productNameMatch;
+    const matchesStatus = statusFilter === "all" || batch.status === statusFilter;
 
     return matchesSearch && matchesStatus;
   });
@@ -183,7 +192,7 @@ const PackagingList = () => {
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search batch or product..."
+              placeholder="Search products"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10"

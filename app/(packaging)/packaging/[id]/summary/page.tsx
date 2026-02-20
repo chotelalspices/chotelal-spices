@@ -11,6 +11,9 @@ import {
   AlertTriangle,
   Boxes,
   Loader2,
+  Check,
+  X,
+  Pencil,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -26,6 +29,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
 import { getStatusColor } from "@/data/packagingData";
@@ -56,32 +60,30 @@ interface PackagingBatch {
   }>;
 }
 
-// Helper function to parse product details from remarks
 const parseProductsFromRemarks = (remarks?: string) => {
   if (!remarks) return [];
-  
+
   const products: Array<{
     name: string;
     packets: number;
     weight: number;
   }> = [];
-  
-  // Look for pattern like "Garlic Paste 100g: 1000 packets (100kg)"
+
   const productMatches = remarks.match(/([^:]+): (\d+) packets \(([\d.]+)kg\)/g);
-  
+
   if (productMatches) {
-    productMatches.forEach(match => {
+    productMatches.forEach((match) => {
       const parts = match.match(/([^:]+): (\d+) packets \(([\d.]+)kg\)/);
       if (parts) {
         products.push({
           name: parts[1].trim(),
           packets: parseInt(parts[2]),
-          weight: parseFloat(parts[3])
+          weight: parseFloat(parts[3]),
         });
       }
     });
   }
-  
+
   return products;
 };
 
@@ -95,6 +97,11 @@ const PackagingSummary = () => {
   const [batch, setBatch] = useState<PackagingBatch | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // ── Date editing state ──
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editedDate, setEditedDate] = useState("");
+  const [isSavingDate, setIsSavingDate] = useState(false);
 
   useEffect(() => {
     const fetchBatch = async () => {
@@ -135,6 +142,74 @@ const PackagingSummary = () => {
 
     fetchBatch();
   }, [batchNumber, toast]);
+
+  /* ── Date editing handlers ── */
+  const startEditingDate = (sessionId: string, currentDate: string) => {
+    setEditingSessionId(sessionId);
+    // Convert ISO date to YYYY-MM-DD for input
+    const dateObj = new Date(currentDate);
+    const formatted = dateObj.toISOString().split("T")[0];
+    setEditedDate(formatted);
+  };
+
+  const cancelEditingDate = () => {
+    setEditingSessionId(null);
+    setEditedDate("");
+  };
+
+  const saveDate = async (sessionId: string) => {
+    if (!editedDate) {
+      toast({
+        title: "Error",
+        description: "Please select a valid date",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsSavingDate(true);
+
+      const response = await fetch(`/api/packaging/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: editedDate }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Failed to update date");
+      }
+
+      // Update local state
+      if (batch) {
+        setBatch({
+          ...batch,
+          sessions: batch.sessions.map((s) =>
+            s.id === sessionId
+              ? { ...s, date: new Date(editedDate).toISOString() }
+              : s
+          ),
+        });
+      }
+
+      toast({
+        title: "Date updated",
+        description: "Packaging session date updated successfully",
+      });
+
+      setEditingSessionId(null);
+      setEditedDate("");
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update date",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingDate(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -180,15 +255,13 @@ const PackagingSummary = () => {
       label: "Total Packaged",
       value: `${batch.alreadyPackaged.toFixed(2)} kg`,
       icon: PackageCheck,
-      color:
-        "bg-green-100 text-black dark:bg-green-900/30 dark:text-black",
+      color: "bg-green-100 text-black dark:bg-green-900/30 dark:text-black",
     },
     {
       label: "Total Loss",
       value: `${batch.totalLoss.toFixed(3)} kg`,
       icon: AlertTriangle,
-      color:
-        "bg-amber-100 text-black dark:bg-amber-900/30 dark:text-black",
+      color: "bg-amber-100 text-black dark:bg-amber-900/30 dark:text-black",
     },
     {
       label: "Remaining",
@@ -198,8 +271,7 @@ const PackagingSummary = () => {
     },
   ];
 
-  const completionPercent =
-    (batch.alreadyPackaged / batch.producedQuantity) * 100;
+  const completionPercent = (batch.alreadyPackaged / batch.producedQuantity) * 100;
 
   return (
     <AppLayout>
@@ -217,9 +289,7 @@ const PackagingSummary = () => {
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold">Packaging Summary</h1>
-              <Badge className={getStatusColor(batch.status)}>
-                {batch.status}
-              </Badge>
+              <Badge className={getStatusColor(batch.status)}>{batch.status}</Badge>
             </div>
             <p className="text-sm text-muted-foreground">
               {batch.productName} • {batch.batchNumber}
@@ -229,9 +299,7 @@ const PackagingSummary = () => {
           {batch.status !== "Completed" && (
             <Button
               className="h-11 min-w-[200px] justify-center"
-              onClick={() =>
-                router.push(`/packaging/${batchNumber}/entry`)
-              }
+              onClick={() => router.push(`/packaging/${batchNumber}/entry`)}
             >
               Continue Packaging
             </Button>
@@ -245,9 +313,7 @@ const PackagingSummary = () => {
               <CardContent className={`p-4 ${item.color}`}>
                 <div className="flex items-center gap-2 mb-2">
                   <item.icon className="h-4 w-4" />
-                  <span className="text-xs font-medium">
-                    {item.label}
-                  </span>
+                  <span className="text-xs font-medium">{item.label}</span>
                 </div>
                 <p className="text-xl font-bold">{item.value}</p>
               </CardContent>
@@ -258,16 +324,12 @@ const PackagingSummary = () => {
         {/* Progress */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg">
-              Packaging Progress
-            </CardTitle>
+            <CardTitle className="text-lg">Packaging Progress</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Completion</span>
-              <span className="font-medium">
-                {completionPercent.toFixed(1)}%
-              </span>
+              <span className="font-medium">{completionPercent.toFixed(1)}%</span>
             </div>
             <div className="h-3 bg-muted rounded-full overflow-hidden">
               <div
@@ -285,29 +347,67 @@ const PackagingSummary = () => {
         {/* Packaging History */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">
-              Packaging History
-            </CardTitle>
+            <CardTitle className="text-lg">Packaging History</CardTitle>
           </CardHeader>
           <CardContent>
             {batch.sessions.length === 0 ? (
               <div className="text-center py-8">
                 <Package className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
-                <p className="text-muted-foreground">
-                  No packaging sessions yet
-                </p>
+                <p className="text-muted-foreground">No packaging sessions yet</p>
               </div>
             ) : isMobile ? (
               <div className="space-y-4">
                 {batch.sessions.map((session) => (
                   <Card key={session.id} className="bg-muted/30">
                     <CardContent className="p-4">
-                      <div className="flex justify-between mb-3 text-sm text-muted-foreground">
+                      {/* Date row with edit */}
+                      <div className="flex justify-between items-center mb-3 text-sm text-muted-foreground">
                         <div className="flex items-center gap-2">
                           <Calendar className="h-4 w-4" />
-                          {format(
-                            new Date(session.date),
-                            "dd MMM yyyy"
+                          {editingSessionId === session.id ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                type="date"
+                                value={editedDate}
+                                onChange={(e) => setEditedDate(e.target.value)}
+                                className="h-7 w-32 text-xs"
+                                disabled={isSavingDate}
+                              />
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7"
+                                onClick={() => saveDate(session.id)}
+                                disabled={isSavingDate}
+                              >
+                                {isSavingDate ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Check className="h-3.5 w-3.5 text-green-600" />
+                                )}
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7"
+                                onClick={cancelEditingDate}
+                                disabled={isSavingDate}
+                              >
+                                <X className="h-3.5 w-3.5 text-red-600" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <>
+                              <span>{format(new Date(session.date), "dd MMM yyyy")}</span>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-6 w-6"
+                                onClick={() => startEditingDate(session.id, session.date)}
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </Button>
+                            </>
                           )}
                         </div>
                         <div className="flex items-center gap-2">
@@ -325,9 +425,7 @@ const PackagingSummary = () => {
                             <span>
                               {product.name} × {product.packets}
                             </span>
-                            <span className="font-medium">
-                              {product.weight.toFixed(3)} kg
-                            </span>
+                            <span className="font-medium">{product.weight.toFixed(3)} kg</span>
                           </div>
                         ))}
                       </div>
@@ -341,9 +439,7 @@ const PackagingSummary = () => {
                         </div>
                         <div className="bg-amber-100 dark:bg-amber-900/30 rounded-lg p-2 text-center">
                           <p className="text-xs">Loss</p>
-                          <p className="font-semibold">
-                            {session.packagingLoss.toFixed(3)} kg
-                          </p>
+                          <p className="font-semibold">{session.packagingLoss.toFixed(3)} kg</p>
                         </div>
                       </div>
 
@@ -362,12 +458,8 @@ const PackagingSummary = () => {
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Products</TableHead>
-                    <TableHead className="text-right">
-                      Packaged Weight
-                    </TableHead>
-                    <TableHead className="text-right">
-                      Loss
-                    </TableHead>
+                    <TableHead className="text-right">Packaged Weight</TableHead>
+                    <TableHead className="text-right">Loss</TableHead>
                     <TableHead>Performed By</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -375,19 +467,56 @@ const PackagingSummary = () => {
                   {batch.sessions.map((session) => (
                     <TableRow key={session.id}>
                       <TableCell>
-                        {format(
-                          new Date(session.date),
-                          "dd MMM yyyy"
+                        {editingSessionId === session.id ? (
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="date"
+                              value={editedDate}
+                              onChange={(e) => setEditedDate(e.target.value)}
+                              className="h-8 w-36"
+                              disabled={isSavingDate}
+                            />
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8"
+                              onClick={() => saveDate(session.id)}
+                              disabled={isSavingDate}
+                            >
+                              {isSavingDate ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Check className="h-4 w-4 text-green-600" />
+                              )}
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8"
+                              onClick={cancelEditingDate}
+                              disabled={isSavingDate}
+                            >
+                              <X className="h-4 w-4 text-red-600" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span>{format(new Date(session.date), "dd MMM yyyy")}</span>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7"
+                              onClick={() => startEditingDate(session.id, session.date)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
                         )}
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
                           {parseProductsFromRemarks(session.remarks).map((product, index) => (
-                            <Badge
-                              key={index}
-                              variant="secondary"
-                              className="text-xs"
-                            >
+                            <Badge key={index} variant="secondary" className="text-xs">
                               {product.name} × {product.packets}
                             </Badge>
                           ))}
@@ -399,9 +528,7 @@ const PackagingSummary = () => {
                       <TableCell className="text-right text-amber-600 dark:text-amber-400">
                         {session.packagingLoss.toFixed(3)} kg
                       </TableCell>
-                      <TableCell>
-                        {session.performedBy}
-                      </TableCell>
+                      <TableCell>{session.performedBy}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -423,9 +550,7 @@ const PackagingSummary = () => {
           {batch.status !== "Completed" && (
             <Button
               className="h-11 min-w-[200px]"
-              onClick={() =>
-                router.push(`/packaging/${batchNumber}/entry`)
-              }
+              onClick={() => router.push(`/packaging/${batchNumber}/entry`)}
             >
               Continue Packaging
             </Button>
