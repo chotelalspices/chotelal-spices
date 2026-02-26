@@ -87,6 +87,11 @@ export async function GET(request: NextRequest) {
       discount: record.discount || 0,
       saleDate: record.saleDate.toISOString().split('T')[0],
       remarks: record.remarks,
+      // ✅ ADD PAYMENT FIELDS
+      paymentStatus: record.paymentStatus || 'paid',
+      amountPaid: record.amountPaid || ((record.quantitySold * record.sellingPrice) - ((record.quantitySold * record.sellingPrice) * ((record.discount || 0) / 100))),
+      amountDue: record.amountDue || 0,
+      paymentNote: record.paymentNote || null,
       createdBy: record.createdBy.fullName,
       createdAt: record.createdAt.toISOString(),
     }));

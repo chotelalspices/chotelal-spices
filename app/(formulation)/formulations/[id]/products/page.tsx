@@ -35,6 +35,11 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 
+interface ProductLabel {
+  type: string;
+  quantity: number;
+}
+
 interface Product {
   id: string;
   name: string;
@@ -42,7 +47,7 @@ interface Product {
   unit: 'kg' | 'gm';
   formulationId: string;
   createdAt: string;
-  labels: string[]; // ✅ added
+  labels: ProductLabel[]; // ✅ Updated to include quantity
 }
 
 interface Formulation {
@@ -246,12 +251,15 @@ export default function FormulationProducts() {
                       <TableCell>
                         {product.labels?.length ? (
                           <div className="flex flex-wrap gap-1">
-                            {product.labels.map((label) => (
+                            {product.labels.map((label, idx) => (
                               <Badge
-                                key={label}
+                                key={`${label.type}-${idx}`}
                                 variant="secondary"
+                                className="gap-1"
                               >
-                                {label}
+                                <span className="capitalize">{label.type}</span>
+                                <span className="text-xs text-muted-foreground">×</span>
+                                <span className="font-semibold">{label.quantity}</span>
                               </Badge>
                             ))}
                           </div>
@@ -308,6 +316,14 @@ export default function FormulationProducts() {
                                     {productToDelete?.name}
                                   </strong>
                                   ?
+                                  {productToDelete?.labels && productToDelete.labels.length > 0 && (
+                                    <span className="block mt-2 text-sm">
+                                      This will also remove all associated labels:
+                                      <span className="block mt-1 font-medium">
+                                        {productToDelete.labels.map(l => `${l.type} (${l.quantity})`).join(', ')}
+                                      </span>
+                                    </span>
+                                  )}
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>

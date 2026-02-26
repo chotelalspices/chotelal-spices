@@ -14,6 +14,8 @@ import {
   Check,
   X,
   Pencil,
+  Tag,
+  Box,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -34,6 +36,40 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
 import { getStatusColor } from "@/data/packagingData";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface SessionLabel {
+  type: string;
+  quantity: number;
+}
+
+interface SessionCourierBox {
+  id: string;
+  label: string;
+  itemsPerBox: number;
+  boxesNeeded: number;
+  totalPackets: number;
+}
+
+interface PackagingSession {
+  id: string;
+  batchNumber: string;
+  date: string;
+  items: Array<{
+    containerId: string;
+    containerSize: number;
+    containerLabel: string;
+    numberOfPackets: number;
+    totalWeight: number;
+  }>;
+  packagingLoss: number;
+  totalPackagedWeight: number;
+  remarks?: string;
+  performedBy: string;
+  labels?: SessionLabel[];
+  courierBoxes?: SessionCourierBox[];
+}
+
 interface PackagingBatch {
   batchNumber: string;
   productName: string;
@@ -42,35 +78,15 @@ interface PackagingBatch {
   totalLoss: number;
   remainingQuantity: number;
   status: "Not Started" | "Partial" | "Completed";
-  sessions: Array<{
-    id: string;
-    batchNumber: string;
-    date: string;
-    items: Array<{
-      containerId: string;
-      containerSize: number;
-      containerLabel: string;
-      numberOfPackets: number;
-      totalWeight: number;
-    }>;
-    packagingLoss: number;
-    totalPackagedWeight: number;
-    remarks?: string;
-    performedBy: string;
-  }>;
+  sessions: PackagingSession[];
 }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const parseProductsFromRemarks = (remarks?: string) => {
   if (!remarks) return [];
-
-  const products: Array<{
-    name: string;
-    packets: number;
-    weight: number;
-  }> = [];
-
+  const products: Array<{ name: string; packets: number; weight: number }> = [];
   const productMatches = remarks.match(/([^:]+): (\d+) packets \(([\d.]+)kg\)/g);
-
   if (productMatches) {
     productMatches.forEach((match) => {
       const parts = match.match(/([^:]+): (\d+) packets \(([\d.]+)kg\)/);
@@ -83,9 +99,45 @@ const parseProductsFromRemarks = (remarks?: string) => {
       }
     });
   }
-
   return products;
 };
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+/** Inline labels display */
+const LabelsDisplay = ({ labels }: { labels?: SessionLabel[] }) => {
+  if (!labels || labels.length === 0) return null;
+  return (
+    <div className="flex items-start gap-2 mt-2">
+      <Tag className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+      <div className="flex flex-wrap gap-1">
+        {labels.map((l, i) => (
+          <Badge key={i} variant="outline" className="text-xs">
+            {l.type}: {l.quantity}
+          </Badge>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/** Inline courier box display */
+const CourierBoxDisplay = ({ courierBoxes }: { courierBoxes?: SessionCourierBox[] }) => {
+  const box = courierBoxes?.[0];
+  if (!box) return null;
+  return (
+    <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+      <Box className="h-3.5 w-3.5 shrink-0" />
+      <span>
+        <span className="font-medium text-foreground">{box.boxesNeeded} boxes</span>
+        {box.label && <span> ({box.label})</span>}
+        <span> · {box.itemsPerBox} packets/box · {box.totalPackets} total packets</span>
+      </span>
+    </div>
+  );
+};
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 const PackagingSummary = () => {
   const router = useRouter();
@@ -98,7 +150,7 @@ const PackagingSummary = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // ── Date editing state ──
+  // Date editing state
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editedDate, setEditedDate] = useState("");
   const [isSavingDate, setIsSavingDate] = useState(false);
@@ -106,50 +158,33 @@ const PackagingSummary = () => {
   useEffect(() => {
     const fetchBatch = async () => {
       if (!batchNumber) return;
-
       try {
         setIsLoading(true);
         setError(null);
         const response = await fetch(
           `/api/packaging/batches/${encodeURIComponent(batchNumber)}`
         );
-
         if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error("Batch not found");
-          }
-          throw new Error("Failed to fetch packaging batch");
+          throw new Error(response.status === 404 ? "Batch not found" : "Failed to fetch packaging batch");
         }
-
         const data = await response.json();
         setBatch(data);
       } catch (error) {
-        console.error("Error fetching packaging batch:", error);
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : "Failed to load packaging batch";
+        const errorMessage = error instanceof Error ? error.message : "Failed to load packaging batch";
         setError(errorMessage);
-        toast({
-          title: "Error",
-          description: errorMessage,
-          variant: "destructive",
-        });
+        toast({ title: "Error", description: errorMessage, variant: "destructive" });
       } finally {
         setIsLoading(false);
       }
     };
-
     fetchBatch();
   }, [batchNumber, toast]);
 
-  /* ── Date editing handlers ── */
+  // ── Date editing handlers ────────────────────────────────────────────────────
+
   const startEditingDate = (sessionId: string, currentDate: string) => {
     setEditingSessionId(sessionId);
-    // Convert ISO date to YYYY-MM-DD for input
-    const dateObj = new Date(currentDate);
-    const formatted = dateObj.toISOString().split("T")[0];
-    setEditedDate(formatted);
+    setEditedDate(new Date(currentDate).toISOString().split("T")[0]);
   };
 
   const cancelEditingDate = () => {
@@ -159,45 +194,29 @@ const PackagingSummary = () => {
 
   const saveDate = async (sessionId: string) => {
     if (!editedDate) {
-      toast({
-        title: "Error",
-        description: "Please select a valid date",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Please select a valid date", variant: "destructive" });
       return;
     }
-
     try {
       setIsSavingDate(true);
-
       const response = await fetch(`/api/packaging/sessions/${sessionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ date: editedDate }),
       });
-
       if (!response.ok) {
         const errData = await response.json();
         throw new Error(errData.error || "Failed to update date");
       }
-
-      // Update local state
       if (batch) {
         setBatch({
           ...batch,
           sessions: batch.sessions.map((s) =>
-            s.id === sessionId
-              ? { ...s, date: new Date(editedDate).toISOString() }
-              : s
+            s.id === sessionId ? { ...s, date: new Date(editedDate).toISOString() } : s
           ),
         });
       }
-
-      toast({
-        title: "Date updated",
-        description: "Packaging session date updated successfully",
-      });
-
+      toast({ title: "Date updated", description: "Packaging session date updated successfully" });
       setEditingSessionId(null);
       setEditedDate("");
     } catch (err) {
@@ -210,6 +229,8 @@ const PackagingSummary = () => {
       setIsSavingDate(false);
     }
   };
+
+  // ── Loading / error states ───────────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -230,13 +251,8 @@ const PackagingSummary = () => {
         <div className="flex flex-col items-center justify-center py-12">
           <Package className="h-16 w-16 text-muted-foreground mb-4" />
           <h2 className="text-xl font-semibold mb-2">Batch Not Found</h2>
-          <p className="text-muted-foreground mb-4">
-            {error || "The requested batch could not be found."}
-          </p>
-          <Button
-            className="h-11 min-w-[200px] justify-center"
-            onClick={() => router.push("/packaging")}
-          >
+          <p className="text-muted-foreground mb-4">{error || "The requested batch could not be found."}</p>
+          <Button className="h-11 min-w-[200px] justify-center" onClick={() => router.push("/packaging")}>
             Back to Packaging
           </Button>
         </div>
@@ -245,47 +261,25 @@ const PackagingSummary = () => {
   }
 
   const summaryItems = [
-    {
-      label: "Total Produced",
-      value: `${batch.producedQuantity.toFixed(2)} kg`,
-      icon: Boxes,
-      color: "bg-muted/50 text-foreground",
-    },
-    {
-      label: "Total Packaged",
-      value: `${batch.alreadyPackaged.toFixed(2)} kg`,
-      icon: PackageCheck,
-      color: "bg-green-100 text-black dark:bg-green-900/30 dark:text-black",
-    },
-    {
-      label: "Total Loss",
-      value: `${batch.totalLoss.toFixed(3)} kg`,
-      icon: AlertTriangle,
-      color: "bg-amber-100 text-black dark:bg-amber-900/30 dark:text-black",
-    },
-    {
-      label: "Remaining",
-      value: `${batch.remainingQuantity.toFixed(2)} kg`,
-      icon: Package,
-      color: "bg-primary/10 text-primary",
-    },
+    { label: "Total Produced", value: `${batch.producedQuantity.toFixed(2)} kg`, icon: Boxes, color: "bg-muted/50 text-foreground" },
+    { label: "Total Packaged", value: `${batch.alreadyPackaged.toFixed(2)} kg`, icon: PackageCheck, color: "bg-green-100 text-black dark:bg-green-900/30 dark:text-black" },
+    { label: "Total Loss", value: `${batch.totalLoss.toFixed(3)} kg`, icon: AlertTriangle, color: "bg-amber-100 text-black dark:bg-amber-900/30 dark:text-black" },
+    { label: "Remaining", value: `${batch.remainingQuantity.toFixed(2)} kg`, icon: Package, color: "bg-primary/10 text-primary" },
   ];
 
   const completionPercent = (batch.alreadyPackaged / batch.producedQuantity) * 100;
 
+  // ── Render ───────────────────────────────────────────────────────────────────
+
   return (
     <AppLayout>
       <div className="space-y-6">
+
         {/* Header */}
         <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => router.push("/packaging")}
-          >
+          <Button variant="ghost" size="icon" onClick={() => router.push("/packaging")}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold">Packaging Summary</h1>
@@ -295,7 +289,6 @@ const PackagingSummary = () => {
               {batch.productName} • {batch.batchNumber}
             </p>
           </div>
-
           {batch.status !== "Completed" && (
             <Button
               className="h-11 min-w-[200px] justify-center"
@@ -332,10 +325,7 @@ const PackagingSummary = () => {
               <span className="font-medium">{completionPercent.toFixed(1)}%</span>
             </div>
             <div className="h-3 bg-muted rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary transition-all"
-                style={{ width: `${completionPercent}%` }}
-              />
+              <div className="h-full bg-primary transition-all" style={{ width: `${completionPercent}%` }} />
             </div>
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>0 kg</span>
@@ -356,11 +346,13 @@ const PackagingSummary = () => {
                 <p className="text-muted-foreground">No packaging sessions yet</p>
               </div>
             ) : isMobile ? (
+              /* ── Mobile cards ── */
               <div className="space-y-4">
                 {batch.sessions.map((session) => (
                   <Card key={session.id} className="bg-muted/30">
                     <CardContent className="p-4">
-                      {/* Date row with edit */}
+
+                      {/* Date + performer row */}
                       <div className="flex justify-between items-center mb-3 text-sm text-muted-foreground">
                         <div className="flex items-center gap-2">
                           <Calendar className="h-4 w-4" />
@@ -373,38 +365,17 @@ const PackagingSummary = () => {
                                 className="h-7 w-32 text-xs"
                                 disabled={isSavingDate}
                               />
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7"
-                                onClick={() => saveDate(session.id)}
-                                disabled={isSavingDate}
-                              >
-                                {isSavingDate ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                  <Check className="h-3.5 w-3.5 text-green-600" />
-                                )}
+                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => saveDate(session.id)} disabled={isSavingDate}>
+                                {isSavingDate ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5 text-green-600" />}
                               </Button>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7"
-                                onClick={cancelEditingDate}
-                                disabled={isSavingDate}
-                              >
+                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={cancelEditingDate} disabled={isSavingDate}>
                                 <X className="h-3.5 w-3.5 text-red-600" />
                               </Button>
                             </div>
                           ) : (
                             <>
                               <span>{format(new Date(session.date), "dd MMM yyyy")}</span>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-6 w-6"
-                                onClick={() => startEditingDate(session.id, session.date)}
-                              >
+                              <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => startEditingDate(session.id, session.date)}>
                                 <Pencil className="h-3 w-3" />
                               </Button>
                             </>
@@ -416,26 +387,21 @@ const PackagingSummary = () => {
                         </div>
                       </div>
 
+                      {/* Products */}
                       <div className="space-y-2 mb-3">
                         {parseProductsFromRemarks(session.remarks).map((product, index) => (
-                          <div
-                            key={index}
-                            className="flex justify-between text-sm bg-background rounded-lg p-2"
-                          >
-                            <span>
-                              {product.name} × {product.packets}
-                            </span>
+                          <div key={index} className="flex justify-between text-sm bg-background rounded-lg p-2">
+                            <span>{product.name} × {product.packets}</span>
                             <span className="font-medium">{product.weight.toFixed(3)} kg</span>
                           </div>
                         ))}
                       </div>
 
+                      {/* Weight + loss */}
                       <div className="grid grid-cols-2 gap-2 text-sm">
                         <div className="bg-green-100 dark:bg-green-900/30 rounded-lg p-2 text-center">
                           <p className="text-xs">Packaged</p>
-                          <p className="font-semibold">
-                            {session.totalPackagedWeight.toFixed(3)} kg
-                          </p>
+                          <p className="font-semibold">{session.totalPackagedWeight.toFixed(3)} kg</p>
                         </div>
                         <div className="bg-amber-100 dark:bg-amber-900/30 rounded-lg p-2 text-center">
                           <p className="text-xs">Loss</p>
@@ -443,6 +409,13 @@ const PackagingSummary = () => {
                         </div>
                       </div>
 
+                      {/* Labels */}
+                      <LabelsDisplay labels={session.labels} />
+
+                      {/* Courier box */}
+                      <CourierBoxDisplay courierBoxes={session.courierBoxes} />
+
+                      {/* Remarks */}
                       {session.remarks && (
                         <p className="text-sm text-muted-foreground mt-3 italic">
                           "{session.remarks}"
@@ -453,19 +426,24 @@ const PackagingSummary = () => {
                 ))}
               </div>
             ) : (
+              /* ── Desktop table ── */
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Products</TableHead>
-                    <TableHead className="text-right">Packaged Weight</TableHead>
-                    <TableHead className="text-right">Loss</TableHead>
+                    <TableHead>Labels</TableHead>
+                    <TableHead>Courier Boxes</TableHead>
+                    <TableHead className="text-right">Packaged (kg)</TableHead>
+                    <TableHead className="text-right">Loss (kg)</TableHead>
                     <TableHead>Performed By</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {batch.sessions.map((session) => (
                     <TableRow key={session.id}>
+
+                      {/* Date cell with edit */}
                       <TableCell>
                         {editingSessionId === session.id ? (
                           <div className="flex items-center gap-1">
@@ -476,43 +454,24 @@ const PackagingSummary = () => {
                               className="h-8 w-36"
                               disabled={isSavingDate}
                             />
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8"
-                              onClick={() => saveDate(session.id)}
-                              disabled={isSavingDate}
-                            >
-                              {isSavingDate ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Check className="h-4 w-4 text-green-600" />
-                              )}
+                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => saveDate(session.id)} disabled={isSavingDate}>
+                              {isSavingDate ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4 text-green-600" />}
                             </Button>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8"
-                              onClick={cancelEditingDate}
-                              disabled={isSavingDate}
-                            >
+                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={cancelEditingDate} disabled={isSavingDate}>
                               <X className="h-4 w-4 text-red-600" />
                             </Button>
                           </div>
                         ) : (
                           <div className="flex items-center gap-2">
                             <span>{format(new Date(session.date), "dd MMM yyyy")}</span>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-7 w-7"
-                              onClick={() => startEditingDate(session.id, session.date)}
-                            >
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startEditingDate(session.id, session.date)}>
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         )}
                       </TableCell>
+
+                      {/* Products cell */}
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
                           {parseProductsFromRemarks(session.remarks).map((product, index) => (
@@ -522,12 +481,51 @@ const PackagingSummary = () => {
                           ))}
                         </div>
                       </TableCell>
+
+                      {/* Labels cell */}
+                      <TableCell>
+                        {session.labels && session.labels.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {session.labels.map((l, i) => (
+                              <Badge key={i} variant="outline" className="text-xs">
+                                {l.type}: {l.quantity}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </TableCell>
+
+                      {/* Courier box cell */}
+                      <TableCell>
+                        {session.courierBoxes && session.courierBoxes.length > 0 ? (
+                          <div className="flex items-center gap-1 text-sm">
+                            <Box className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            <span>
+                              <span className="font-medium">{session.courierBoxes[0].boxesNeeded}</span>
+                              <span className="text-muted-foreground text-xs">
+                                {" "}({session.courierBoxes[0].itemsPerBox}/box)
+                                {session.courierBoxes[0].label && ` · ${session.courierBoxes[0].label}`}
+                              </span>
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </TableCell>
+
+                      {/* Weight */}
                       <TableCell className="text-right font-medium">
-                        {session.totalPackagedWeight.toFixed(3)} kg
+                        {session.totalPackagedWeight.toFixed(3)}
                       </TableCell>
+
+                      {/* Loss */}
                       <TableCell className="text-right text-amber-600 dark:text-amber-400">
-                        {session.packagingLoss.toFixed(3)} kg
+                        {session.packagingLoss.toFixed(3)}
                       </TableCell>
+
+                      {/* Performer */}
                       <TableCell>{session.performedBy}</TableCell>
                     </TableRow>
                   ))}
@@ -539,23 +537,16 @@ const PackagingSummary = () => {
 
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-3">
-          <Button
-            variant="outline"
-            className="h-11 min-w-[200px]"
-            onClick={() => router.push("/packaging")}
-          >
+          <Button variant="outline" className="h-11 min-w-[200px]" onClick={() => router.push("/packaging")}>
             Back to Batches
           </Button>
-
           {batch.status !== "Completed" && (
-            <Button
-              className="h-11 min-w-[200px]"
-              onClick={() => router.push(`/packaging/${batchNumber}/entry`)}
-            >
+            <Button className="h-11 min-w-[200px]" onClick={() => router.push(`/packaging/${batchNumber}/entry`)}>
               Continue Packaging
             </Button>
           )}
         </div>
+
       </div>
     </AppLayout>
   );

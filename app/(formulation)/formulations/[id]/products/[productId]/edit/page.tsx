@@ -38,24 +38,37 @@ interface LabelEntry {
   quantity: number;
 }
 
-interface NewProduct {
+interface ProductData {
+  id: string;
+  name: string;
+  quantity: number;
+  unit: 'kg' | 'gm';
+  formulationId: string;
+  labels: Array<{
+    type: string;
+    quantity: number;
+  }>;
+}
+
+interface EditProductForm {
   name: string;
   quantity: number;
   unit: 'kg' | 'gm';
   labels: LabelEntry[];
 }
 
-export default function CreateProductPage() {
+export default function EditProductPage() {
   const params = useParams();
   const router = useRouter();
   const { toast } = useToast();
   const formulationId = params.id as string;
+  const productId = params.productId as string;
 
   const [formulation, setFormulation] = useState<Formulation | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  const [formData, setFormData] = useState<NewProduct>({
+  const [formData, setFormData] = useState<EditProductForm>({
     name: '',
     quantity: 0,
     unit: 'kg',
@@ -63,36 +76,56 @@ export default function CreateProductPage() {
   });
 
   useEffect(() => {
-    const fetchFormulation = async () => {
+    const fetchData = async () => {
       try {
         setIsLoading(true);
-        const response = await fetch(`/api/formulations/${formulationId}`);
 
-        if (!response.ok) {
+        // Fetch formulation
+        const formulationResponse = await fetch(`/api/formulations/${formulationId}`);
+        if (!formulationResponse.ok) {
           throw new Error('Failed to fetch formulation');
         }
+        const formulationData = await formulationResponse.json();
+        setFormulation(formulationData);
 
-        const data = await response.json();
-        setFormulation(data);
+        // Fetch product
+        const productResponse = await fetch(`/api/formulations/${formulationId}/products/${productId}`);
+        if (!productResponse.ok) {
+          throw new Error('Failed to fetch product');
+        }
+        const productData: ProductData = await productResponse.json();
+
+        // Populate form with existing data
+        setFormData({
+          name: productData.name,
+          quantity: productData.quantity,
+          unit: productData.unit,
+          labels: productData.labels?.map((label, index) => ({
+            id: `label-${index}`,
+            type: label.type,
+            quantity: label.quantity,
+          })) || [],
+        });
       } catch (error) {
-        console.error('Error fetching formulation:', error);
+        console.error('Error fetching data:', error);
         toast({
           title: 'Error',
-          description: 'Failed to load formulation. Please try again.',
+          description: error instanceof Error ? error.message : 'Failed to load data. Please try again.',
           variant: 'destructive',
         });
+        router.push(`/formulations/${formulationId}/products`);
       } finally {
         setIsLoading(false);
       }
     };
 
-    if (formulationId) {
-      fetchFormulation();
+    if (formulationId && productId) {
+      fetchData();
     }
-  }, [formulationId, toast]);
+  }, [formulationId, productId, router, toast]);
 
   const handleInputChange = (
-    field: keyof NewProduct,
+    field: keyof EditProductForm,
     value: string | number
   ) => {
     setFormData((prev) => ({
@@ -160,35 +193,30 @@ export default function CreateProductPage() {
     try {
       setIsSaving(true);
 
-      const response = await fetch(
-        `/api/formulations/${formulationId}/products`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(formData),
-        }
-      );
+      const response = await fetch(`/api/formulations/${formulationId}/products/${productId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      });
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create product');
+        throw new Error(errorData.error || 'Failed to update product');
       }
-
-      await response.json();
 
       toast({
         title: 'Success',
-        description: 'Product created successfully.',
+        description: 'Product updated successfully.',
       });
 
       router.push(`/formulations/${formulationId}/products`);
     } catch (error) {
-      console.error('Error creating product:', error);
+      console.error('Error updating product:', error);
       toast({
         title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to create product. Please try again.',
+        description: error instanceof Error ? error.message : 'Failed to update product. Please try again.',
         variant: 'destructive',
       });
     } finally {
@@ -200,7 +228,10 @@ export default function CreateProductPage() {
     return (
       <AppLayout>
         <div className="flex items-center justify-center min-h-[400px]">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-muted-foreground">Loading product...</p>
+          </div>
         </div>
       </AppLayout>
     );
@@ -234,9 +265,9 @@ export default function CreateProductPage() {
               </Link>
             </Button>
             <div>
-              <h1 className="page-title">Create Product</h1>
+              <h1 className="page-title">Edit Product</h1>
               <p className="text-muted-foreground mt-1">
-                New product from: {formulation.name}
+                From: {formulation.name}
               </p>
             </div>
           </div>
@@ -419,12 +450,12 @@ export default function CreateProductPage() {
               {isSaving ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Creating...
+                  Saving...
                 </>
               ) : (
                 <>
                   <Save className="h-4 w-4" />
-                  Create Product
+                  Save Changes
                 </>
               )}
             </Button>

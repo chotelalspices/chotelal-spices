@@ -57,6 +57,27 @@ export async function GET(
 
     console.log("identifier", identifier);
 
+    // ── Shared include with courierBoxes + sessionLabels ─────────────────────
+    const packagingSessionsInclude = {
+      include: {
+        items: {
+          include: {
+            container: true,
+          },
+        },
+        performedBy: {
+          select: {
+            fullName: true,
+          },
+        },
+        courierBoxes: true,     // ← courier boxes
+        sessionLabels: true,    // ← session labels
+      },
+      orderBy: {
+        date: "desc" as const,
+      },
+    };
+
     // Fetch the production batch by batch number (primary) or by id (fallback)
     let batch = await prisma.productionBatch.findUnique({
       where: {
@@ -64,23 +85,7 @@ export async function GET(
       },
       include: {
         formulation: true,
-        packagingSessions: {
-          include: {
-            items: {
-              include: {
-                container: true,
-              },
-            },
-            performedBy: {
-              select: {
-                fullName: true,
-              },
-            },
-          },
-          orderBy: {
-            date: "desc",
-          },
-        },
+        packagingSessions: packagingSessionsInclude,
       },
     });
 
@@ -91,23 +96,7 @@ export async function GET(
         },
         include: {
           formulation: true,
-          packagingSessions: {
-            include: {
-              items: {
-                include: {
-                  container: true,
-                },
-              },
-              performedBy: {
-                select: {
-                  fullName: true,
-                },
-              },
-            },
-            orderBy: {
-              date: "desc",
-            },
-          },
+          packagingSessions: packagingSessionsInclude,
         },
       });
     }
@@ -151,13 +140,12 @@ export async function GET(
     if (totalPackagedWeight === 0) {
       status = "Not Started";
     } else if (remainingQuantity <= 0.01) {
-      // Consider completed if remaining is less than 0.01 kg
       status = "Completed";
     } else {
       status = "Partial";
     }
 
-    // Format sessions
+    // Format sessions — includes courierBoxes and sessionLabels
     const sessions = batch.packagingSessions.map((session) => {
       let sessionWeight = 0;
       if (session.remarks && session.remarks.includes('Total:')) {
@@ -171,11 +159,16 @@ export async function GET(
         id: session.id,
         batchNumber: batch?.batchNumber,
         date: session.date.toISOString(),
-        items: [], // No PackagedItem records
+        items: [],
         packagingLoss: session.packagingLoss,
         totalPackagedWeight: sessionWeight,
         remarks: session.remarks,
         performedBy: session.performedBy.fullName,
+        courierBoxes: session.courierBoxes ?? [],
+        labels: (session.sessionLabels ?? []).map((l) => ({
+          type: l.type,
+          quantity: l.quantity,
+        })),
       };
     });
 
@@ -371,7 +364,6 @@ export async function PATCH(
 
       // Create packaged items if provided
       if (items && Array.isArray(items) && items.length > 0) {
-        // Create packaged items
         for (const item of items) {
           await tx.packagedItem.create({
             data: {

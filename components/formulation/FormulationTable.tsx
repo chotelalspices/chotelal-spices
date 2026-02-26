@@ -33,7 +33,7 @@ export function FormulationTable({ formulations, isAdmin = false }: FormulationT
             <TableHead>Ingredients</TableHead>
             <TableHead>Last Updated</TableHead>
             <TableHead>Status</TableHead>
-            {isAdmin && <TableHead className="text-right">Actions</TableHead>}
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -56,7 +56,6 @@ export function FormulationTable({ formulations, isAdmin = false }: FormulationT
                   {formulation.status === 'active' ? 'Active' : 'Inactive'}
                 </span>
               </TableCell>
-              {isAdmin && (
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
                     <Tooltip>
@@ -93,7 +92,6 @@ export function FormulationTable({ formulations, isAdmin = false }: FormulationT
                     </Tooltip>
                   </div>
                 </TableCell>
-              )}
             </TableRow>
           ))}
         </TableBody>

@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/table';
 import { formatCurrency, formatDate } from '@/data/sampleData';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/use-auth';
 
 // Note: You'll need to install these packages:
 // npm install jspdf jspdf-autotable
@@ -68,6 +69,7 @@ export default function ViewFormulationPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const { isAdmin } = useAuth();
 
   useEffect(() => {
     const fetchFormulation = async () => {
@@ -287,12 +289,12 @@ export default function ViewFormulationPage() {
           <span className={`status-badge ${formulation.status === 'active' ? 'status-active' : 'status-inactive'}`}>
             {formulation.status === 'active' ? 'Active' : 'Inactive'}
           </span>
-          <Button asChild>
+          { isAdmin && (<Button asChild>
             <Link href={`/formulations/${formulation.id}/edit`}>
               <Edit className="h-4 w-4 mr-2" />
               Edit Formulation
             </Link>
-          </Button>
+          </Button>)}
           <Button 
             onClick={downloadPDF}
             disabled={isDownloading}

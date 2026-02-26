@@ -246,7 +246,29 @@ model PackagingSession {
   performedById String
   performedBy   User            @relation(fields: [performedById], references: [id])
 
-  items PackagedItem[]
+  items        PackagedItem[]
+  courierBoxes CourierBox[]    // ← add this line
+  sessionLabels SessionLabel[]
+}
+
+model CourierBox {
+  id           String           @id @default(uuid())
+  sessionId    String
+  session      PackagingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  label        String
+  itemsPerBox  Int
+  boxesNeeded  Int
+  totalPackets Int
+  createdAt    DateTime         @default(now())
+}
+
+model SessionLabel {
+  id        String           @id @default(uuid())
+  sessionId String
+  session   PackagingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  type      String           // e.g. "Box", "Packet"
+  quantity  Int
+  createdAt DateTime         @default(now())
 }
 
 model PackagedItem {
@@ -264,34 +286,37 @@ model PackagedItem {
 //////////////////////////////////////////////////////
 
 model FinishedProduct {
-  id                 String      @id @default(uuid())
+  id                 String   @id @default(uuid())
   name               String
   quantity           Float
   unit               Unit
   availableInventory Float?
   formulationId      String
   formulation        Formulation @relation(fields: [formulationId], references: [id])
-  createdAt          DateTime    @default(now())
-  labels         ProductLabel[]
-  salesRecords SalesRecord[]
+  createdAt          DateTime @default(now())
+
+  salesRecords       SalesRecord[]
+  productLabels      ProductLabel[]  // ✅ Renamed relation
 }
 
 model Label {
-  id        String   @id @default(cuid())
+  id        String   @id @default(uuid())
   name      String   @unique
   createdAt DateTime @default(now())
 
-  products  ProductLabel[]
+  productLabels ProductLabel[]  // ✅ Renamed relation
 }
 
 model ProductLabel {
+  id        String @id @default(uuid())
   productId String
   labelId   String
-
-  product   FinishedProduct @relation(fields: [productId], references: [id])
+  quantity  Int    // ✅ NEW: Track quantity of this label type
+  
+  product   FinishedProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
   label     Label           @relation(fields: [labelId], references: [id])
-
-  @@id([productId, labelId])
+  
+  @@unique([productId, labelId])
 }
 
 model SalesRecord {
@@ -314,8 +339,15 @@ model SalesRecord {
   createdById     String
   createdAt       DateTime @default(now())
 
+  // ✅ PAYMENT TRACKING FIELDS
+  paymentStatus     String?    // 'paid' | 'unpaid' | 'partial'
+  amountPaid        Float?     // Amount received from client
+  amountDue         Float?     // Remaining balance
+  paymentNote       String?    // Payment reference/notes
+  paymentUpdatedAt  DateTime?  // Last payment update timestamp
+
   product     FinishedProduct @relation(fields: [productId], references: [id])
-  createdBy  User            @relation(fields: [createdById], references: [id])
+  createdBy   User            @relation(fields: [createdById], references: [id])
 }
 
 //////////////////////////////////////////////////////

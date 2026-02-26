@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
 /**
- * GET: Fetch all products for a formulation (with labels)
+ * GET: Fetch all products for a formulation (with labels and quantities)
  */
 export async function GET(
   request: NextRequest,
@@ -16,7 +16,7 @@ export async function GET(
         formulationId,
       },
       include: {
-        labels: {
+        productLabels: {
           include: {
             label: true,
           },
@@ -27,10 +27,14 @@ export async function GET(
       },
     });
 
-    // Flatten labels for frontend
+    // Format labels with quantities for frontend
     const formattedProducts = products.map((product) => ({
       ...product,
-      labels: product.labels.map((pl) => pl.label.name),
+      labels: product.productLabels.map((pl) => ({
+        type: pl.label.name,
+        quantity: pl.quantity,
+      })),
+      productLabels: undefined, // Remove raw relation data
     }));
 
     return NextResponse.json(formattedProducts);
@@ -44,7 +48,7 @@ export async function GET(
 }
 
 /**
- * POST: Create product with labels
+ * POST: Create product with labels and quantities
  */
 export async function POST(
   request: NextRequest,
@@ -54,13 +58,29 @@ export async function POST(
     const { id: formulationId } = await params;
     const body = await request.json();
 
-    const labels: string[] = body.labels
-      ? body.labels
-          .split(',')
-          .map((l: string) => l.trim().toLowerCase())
-          .filter(Boolean)
-      : [];
+    // Validate required fields
+    if (!body.name || !body.quantity || !body.unit) {
+      return NextResponse.json(
+        { error: 'Missing required fields: name, quantity, unit' },
+        { status: 400 }
+      );
+    }
 
+    // Parse labels array
+    const labels: Array<{ type: string; quantity: number }> = body.labels || [];
+
+    // Validate label quantities
+    const invalidLabels = labels.filter(
+      (label) => !label.type || label.quantity <= 0
+    );
+    if (invalidLabels.length > 0) {
+      return NextResponse.json(
+        { error: 'All labels must have a type and quantity greater than 0' },
+        { status: 400 }
+      );
+    }
+
+    // Create product with labels
     const product = await prisma.finishedProduct.create({
       data: {
         name: body.name,
@@ -68,19 +88,20 @@ export async function POST(
         unit: body.unit,
         formulationId,
 
-        labels: {
-          create: labels.map((labelName) => ({
+        productLabels: {
+          create: labels.map((label) => ({
+            quantity: label.quantity,
             label: {
               connectOrCreate: {
-                where: { name: labelName },
-                create: { name: labelName },
+                where: { name: label.type.toLowerCase().trim() },
+                create: { name: label.type.toLowerCase().trim() },
               },
             },
           })),
         },
       },
       include: {
-        labels: {
+        productLabels: {
           include: {
             label: true,
           },
@@ -91,7 +112,11 @@ export async function POST(
     return NextResponse.json(
       {
         ...product,
-        labels: product.labels.map((l) => l.label.name),
+        labels: product.productLabels.map((pl) => ({
+          type: pl.label.name,
+          quantity: pl.quantity,
+        })),
+        productLabels: undefined,
       },
       { status: 201 }
     );

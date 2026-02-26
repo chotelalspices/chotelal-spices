@@ -31,6 +31,11 @@ export interface SalesRecord {
   discount: number;
   saleDate: string;
   remarks?: string;
+  // ✅ ADD PAYMENT FIELDS
+  paymentStatus?: 'paid' | 'unpaid' | 'partial';
+  amountPaid?: number;
+  amountDue?: number;
+  paymentNote?: string;
   createdBy: string;
   createdAt: string;
 }
