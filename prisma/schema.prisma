@@ -74,7 +74,7 @@ model UserRoleAssignment {
   userId String
   user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   role   UserRole
-  
+
   @@unique([userId, role])
 }
 
@@ -89,7 +89,7 @@ model User {
   createdAt          DateTime  @default(now())
   hashedPassword     String?
 
-  userRoles          UserRoleAssignment[]
+  userRoles            UserRoleAssignment[]
   stockMovements       StockMovement[]
   productionBatches    ProductionBatch[]
   plannedProductions   PlannedProduction[]
@@ -127,8 +127,8 @@ model StockMovement {
   quantity      Float
   reason        StockReason
   reference     String?
-  performedById String
-  performedBy   User        @relation(fields: [performedById], references: [id])
+  performedById String?
+  performedBy   User?       @relation(fields: [performedById], references: [id], onDelete: SetNull)
   createdAt     DateTime    @default(now())
 }
 
@@ -178,7 +178,7 @@ model ProductionBatch {
   productionDate    DateTime
   status            ProductionStatus
   confirmedById     String?
-  confirmedBy       User?            @relation(fields: [confirmedById], references: [id])
+  confirmedBy       User?            @relation(fields: [confirmedById], references: [id], onDelete: SetNull)
   confirmedAt       DateTime?
   createdAt         DateTime         @default(now())
 
@@ -206,8 +206,8 @@ model PlannedProduction {
   plannedDate     DateTime
   materialStatus  MaterialStatus
   emailSent       Boolean
-  createdById     String
-  createdBy       User           @relation(fields: [createdById], references: [id])
+  createdById     String?
+  createdBy       User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt       DateTime       @default(now())
 }
 
@@ -220,8 +220,8 @@ model ReturnedProduct {
   returnReason     String
   returnDate       DateTime
   addedToStock     Boolean
-  createdById      String
-  createdBy        User        @relation(fields: [createdById], references: [id])
+  createdById      String?
+  createdBy        User?       @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt        DateTime    @default(now())
 }
 
@@ -243,11 +243,11 @@ model PackagingSession {
   date          DateTime
   packagingLoss Float
   remarks       String?
-  performedById String
-  performedBy   User            @relation(fields: [performedById], references: [id])
+  performedById String?
+  performedBy   User?           @relation(fields: [performedById], references: [id], onDelete: SetNull)
 
-  items        PackagedItem[]
-  courierBoxes CourierBox[]    // ← add this line
+  items         PackagedItem[]
+  courierBoxes  CourierBox[]
   sessionLabels SessionLabel[]
 }
 
@@ -266,7 +266,7 @@ model SessionLabel {
   id        String           @id @default(uuid())
   sessionId String
   session   PackagingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  type      String           // e.g. "Box", "Packet"
+  type      String
   quantity  Int
   createdAt DateTime         @default(now())
 }
@@ -286,17 +286,17 @@ model PackagedItem {
 //////////////////////////////////////////////////////
 
 model FinishedProduct {
-  id                 String   @id @default(uuid())
+  id                 String      @id @default(uuid())
   name               String
   quantity           Float
   unit               Unit
   availableInventory Float?
   formulationId      String
   formulation        Formulation @relation(fields: [formulationId], references: [id])
-  createdAt          DateTime @default(now())
+  createdAt          DateTime    @default(now())
 
-  salesRecords       SalesRecord[]
-  productLabels      ProductLabel[]  // ✅ Renamed relation
+  salesRecords  SalesRecord[]
+  productLabels ProductLabel[]
 }
 
 model Label {
@@ -304,50 +304,46 @@ model Label {
   name      String   @unique
   createdAt DateTime @default(now())
 
-  productLabels ProductLabel[]  // ✅ Renamed relation
+  productLabels ProductLabel[]
 }
 
 model ProductLabel {
   id        String @id @default(uuid())
   productId String
   labelId   String
-  quantity  Int    // ✅ NEW: Track quantity of this label type
-  
-  product   FinishedProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
-  label     Label           @relation(fields: [labelId], references: [id])
-  
+  quantity  Int
+
+  product FinishedProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  label   Label           @relation(fields: [labelId], references: [id])
+
   @@unique([productId, labelId])
 }
 
 model SalesRecord {
-  id              String   @id @default(uuid())
-  productId       String
+  id             String   @id @default(uuid())
+  productId      String
+  clientName     String?
+  voucherNo      String?
+  voucherType    String?
+  quantitySold   Int
+  sellingPrice   Float
+  discount       Float
+  productionCost Float
+  profit         Float
+  remarks        String?
+  saleDate       DateTime
+  unit           String
+  createdById    String?
+  createdAt      DateTime @default(now())
 
-  // ✅ CLIENT / VOUCHER FIELDS
-  clientName      String?
-  voucherNo       String?
-  voucherType     String?
+  paymentStatus    String?
+  amountPaid       Float?
+  amountDue        Float?
+  paymentNote      String?
+  paymentUpdatedAt DateTime?
 
-  quantitySold    Int
-  sellingPrice    Float
-  discount        Float
-  productionCost  Float
-  profit          Float
-  remarks         String?
-  saleDate        DateTime
-  unit            String
-  createdById     String
-  createdAt       DateTime @default(now())
-
-  // ✅ PAYMENT TRACKING FIELDS
-  paymentStatus     String?    // 'paid' | 'unpaid' | 'partial'
-  amountPaid        Float?     // Amount received from client
-  amountDue         Float?     // Remaining balance
-  paymentNote       String?    // Payment reference/notes
-  paymentUpdatedAt  DateTime?  // Last payment update timestamp
-
-  product     FinishedProduct @relation(fields: [productId], references: [id])
-  createdBy   User            @relation(fields: [createdById], references: [id])
+  product   FinishedProduct @relation(fields: [productId], references: [id])
+  createdBy User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
 }
 
 //////////////////////////////////////////////////////
@@ -364,7 +360,7 @@ model ResearchFormulation {
   notes           String
   status          ResearchStatus
   reviewedById    String?
-  reviewedBy      User?          @relation(fields: [reviewedById], references: [id])
+  reviewedBy      User?          @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
   reviewedAt      DateTime?
   rejectionReason String?
   createdAt       DateTime       @default(now())
@@ -410,6 +406,6 @@ model PasswordResetOTP {
   otp       String
   expiresAt DateTime
   createdAt DateTime @default(now())
-  
+
   @@unique([email])
 }

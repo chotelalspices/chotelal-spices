@@ -163,7 +163,7 @@ export async function GET(
         packagingLoss: session.packagingLoss,
         totalPackagedWeight: sessionWeight,
         remarks: session.remarks,
-        performedBy: session.performedBy.fullName,
+        performedBy: session.performedBy ? session.performedBy.fullName : null,
         courierBoxes: session.courierBoxes ?? [],
         labels: (session.sessionLabels ?? []).map((l) => ({
           type: l.type,

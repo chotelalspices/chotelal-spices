@@ -20,7 +20,8 @@ import { RecentActivity } from '@/components/dashboard/RecentActivity';
 import { DateRangeFilter } from '@/components/dashboard/DateRangeFilter';
 import { formatCurrency } from '@/data/sampleData';
 
-import { DateRangeOption } from '@/data/dashboardData';
+// ✅ UPDATED: Added 'quarter' to DateRangeOption
+export type DateRangeOption = 'today' | 'week' | 'month' | 'quarter';
 
 // Types for dashboard data
 interface DashboardData {
@@ -93,6 +94,22 @@ export default function DashboardPage() {
     fetchDashboardData();
   }, [dateRange]);
 
+  // ✅ UPDATED: Helper function to get date range label
+  const getDateRangeLabel = () => {
+    switch (dateRange) {
+      case 'today':
+        return 'Today';
+      case 'week':
+        return 'This week';
+      case 'month':
+        return 'This month';
+      case 'quarter':
+        return 'This quarter';
+      default:
+        return 'Period';
+    }
+  };
+
   // Show loading state
   if (loading && !dashboardData) {
     return (
@@ -137,7 +154,6 @@ export default function DashboardPage() {
     );
   }
 
-
   return (
     <AppLayout>
       <div className="space-y-8">
@@ -151,7 +167,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <DateRangeFilter value={dateRange} onChange={setDateRange} />
+            <DateRangeFilter value={dateRange} onChange={(value) => setDateRange(value as DateRangeOption)} />
           </div>
         </div>
 
@@ -196,13 +212,13 @@ export default function DashboardPage() {
           <MetricCard
             title="Packaging Loss"
             value={`${dashboardData.packagingLoss.toFixed(2)} kg`}
-            subtitle={dateRange === 'today' ? 'Today' : dateRange === 'week' ? 'This week' : 'This month'}
+            subtitle={getDateRangeLabel()} // ✅ UPDATED: Uses helper function
             icon={TrendingDown}
             variant={dashboardData.packagingLoss > 5 ? 'danger' : 'default'}
             href="/packaging"
           />
           <MetricCard
-            title="Profit"
+            title="Net Profit"
             value={formatCurrency(dashboardData.profitSnapshot.profit)}
             subtitle={`Revenue: ${formatCurrency(dashboardData.profitSnapshot.revenue)}`}
             icon={TrendingUp}

@@ -58,7 +58,7 @@ export function FormulationTable({ formulations, isAdmin = false }: FormulationT
               </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
-                    <Tooltip>
+                    {isAdmin && (<Tooltip>
                       <TooltipTrigger asChild>
                         <Button variant="ghost" size="icon" asChild className="h-8 w-8">
                           <Link href={`/formulations/${formulation.id}`}>
@@ -68,6 +68,7 @@ export function FormulationTable({ formulations, isAdmin = false }: FormulationT
                       </TooltipTrigger>
                       <TooltipContent>View Formulation</TooltipContent>
                     </Tooltip>
+                    )}
                     {isAdmin && (
                       <Tooltip>
                         <TooltipTrigger asChild>

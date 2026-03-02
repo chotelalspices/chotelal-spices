@@ -219,6 +219,82 @@ export async function PUT(
   }
 }
 
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    const { id } = await params;
+
+    if (!session || !session.user) {
+      return NextResponse.json(
+        { error: 'Unauthorized. Please log in to perform this action.' },
+        { status: 401 }
+      );
+    }
+
+    // Check if user is admin
+    const currentUser = await prisma.user.findUnique({
+      where: { email: session.user.email! },
+      include: {
+        userRoles: {
+          select: { role: true }
+        }
+      }
+    });
+
+    if (!currentUser || !currentUser.userRoles.some(ur => ur.role === 'admin')) {
+      return NextResponse.json(
+        { error: 'Access denied. Admin privileges required.' },
+        { status: 403 }
+      );
+    }
+
+    if (!id) {
+      return NextResponse.json(
+        { error: 'User ID is required' },
+        { status: 400 }
+      );
+    }
+
+    // Prevent admin from deleting themselves
+    if (currentUser.id === id) {
+      return NextResponse.json(
+        { error: 'You cannot delete your own account.' },
+        { status: 400 }
+      );
+    }
+
+    // Check if user exists
+    const existingUser = await prisma.user.findUnique({
+      where: { id },
+    });
+
+    if (!existingUser) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
+    }
+
+    // Delete user (userRoles will cascade delete if set up in schema,
+    // otherwise delete roles first)
+    await prisma.user.delete({ where: { id } });
+
+    return NextResponse.json(
+      { message: `User "${existingUser.fullName}" has been deleted successfully.` },
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete user' },
+      { status: 500 }
+    );
+  }
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

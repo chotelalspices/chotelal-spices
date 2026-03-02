@@ -1,7 +1,14 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
-import { History, Check, Filter, X, ChevronsUpDown, Loader2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import {
+  History,
+  Check,
+  Filter,
+  X,
+  ChevronsUpDown,
+  Loader2,
+} from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
 import { MovementCard } from '@/components/inventory/MovementCard';
@@ -44,18 +51,19 @@ import {
 
 export default function MovementHistory() {
   const [materialFilter, setMaterialFilter] = useState<string>('all');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [reasonFilter, setReasonFilter] = useState<string>('all');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
-  
-  // API states
+
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch raw materials
+  // =============================
+  // Fetch Raw Materials
+  // =============================
   useEffect(() => {
     const fetchRawMaterials = async () => {
       try {
@@ -73,30 +81,40 @@ export default function MovementHistory() {
     fetchRawMaterials();
   }, []);
 
-  // Fetch stock movements with filters
+  // =============================
+  // Fetch Stock Movements
+  // =============================
   useEffect(() => {
     const fetchStockMovements = async () => {
       try {
         setLoading(true);
+
         const params = new URLSearchParams();
-        
-        if (materialFilter && materialFilter !== 'all') {
+
+        if (materialFilter !== 'all') {
           params.append('materialId', materialFilter);
         }
-        if (typeFilter && typeFilter !== 'all') {
-          params.append('type', typeFilter);
+
+        if (reasonFilter !== 'all') {
+          params.append('reason', reasonFilter);
         }
+
         if (dateFrom) {
           params.append('dateFrom', dateFrom);
         }
+
         if (dateTo) {
           params.append('dateTo', dateTo);
         }
 
-        const response = await fetch(`/api/stock-movements?${params.toString()}`);
+        const response = await fetch(
+          `/api/stock-movements?${params.toString()}`
+        );
+
         if (!response.ok) {
           throw new Error('Failed to fetch stock movements');
         }
+
         const data = await response.json();
         setStockMovements(data);
       } catch (err) {
@@ -107,20 +125,22 @@ export default function MovementHistory() {
     };
 
     fetchStockMovements();
-  }, [materialFilter, typeFilter, dateFrom, dateTo]);
-
-  // Filtered movements are now handled by the API
-  const filteredMovements = stockMovements;
+  }, [materialFilter, reasonFilter, dateFrom, dateTo]);
 
   const hasActiveFilters =
-    materialFilter !== 'all' || typeFilter !== 'all' || dateFrom || dateTo;
+    materialFilter !== 'all' ||
+    reasonFilter !== 'all' ||
+    dateFrom ||
+    dateTo;
 
   const clearFilters = () => {
     setMaterialFilter('all');
-    setTypeFilter('all');
+    setReasonFilter('all');
     setDateFrom('');
     setDateTo('');
   };
+
+  const filteredMovements = stockMovements;
 
   return (
     <AppLayout>
@@ -134,17 +154,22 @@ export default function MovementHistory() {
         </div>
       </div>
 
-      {/* Desktop Filters */}
-      <div className="hidden md:block industrial-card p-4 mb-6 animate-fade-in">
+      {/* =============================
+          DESKTOP FILTERS
+      ============================= */}
+      <div className="hidden md:block industrial-card p-4 mb-6">
         <div className="flex flex-wrap items-end gap-4">
-          <div className="space-y-2 min-w-[200px]">
-            <Label className="text-xs text-muted-foreground">Raw Material</Label>
+
+          {/* Raw Material */}
+          <div className="space-y-2 min-w-[220px]">
+            <Label className="text-xs text-muted-foreground">
+              Raw Material
+            </Label>
 
             <Popover>
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
-                  role="combobox"
                   className="w-full justify-between"
                 >
                   {materialFilter === 'all'
@@ -155,13 +180,16 @@ export default function MovementHistory() {
                 </Button>
               </PopoverTrigger>
 
-              <PopoverContent className="w-[240px] p-0">
+              <PopoverContent className="w-[260px] p-0">
                 <Command>
                   <CommandInput placeholder="Search material..." />
                   <CommandEmpty>No material found.</CommandEmpty>
 
                   <CommandGroup>
-                    <CommandItem value="all" onSelect={() => setMaterialFilter('all')}>
+                    <CommandItem
+                      value="all"
+                      onSelect={() => setMaterialFilter('all')}
+                    >
                       All Materials
                       {materialFilter === 'all' && (
                         <Check className="ml-auto h-4 w-4" />
@@ -186,20 +214,25 @@ export default function MovementHistory() {
             </Popover>
           </div>
 
-          <div className="space-y-2 min-w-[160px]">
-            <Label className="text-xs text-muted-foreground">Movement Type</Label>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
+          {/* Reason Filter */}
+          <div className="space-y-2 min-w-[180px]">
+            <Label className="text-xs text-muted-foreground">
+              Movement Reason
+            </Label>
+
+            <Select value={reasonFilter} onValueChange={setReasonFilter}>
               <SelectTrigger>
-                <SelectValue placeholder="All Types" />
+                <SelectValue placeholder="All Reasons" />
               </SelectTrigger>
-              <SelectContent className="bg-popover">
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="adjustment">Adjustments Only</SelectItem>
-                <SelectItem value="production">Production Only</SelectItem>
+              <SelectContent>
+                <SelectItem value="all">All Reasons</SelectItem>
+                <SelectItem value="production">Production</SelectItem>
+                <SelectItem value="purchase">Purchase</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
+          {/* Date From */}
           <div className="space-y-2 min-w-[150px]">
             <Label className="text-xs text-muted-foreground">Date From</Label>
             <Input
@@ -210,6 +243,7 @@ export default function MovementHistory() {
             />
           </div>
 
+          {/* Date To */}
           <div className="space-y-2 min-w-[150px]">
             <Label className="text-xs text-muted-foreground">Date To</Label>
             <Input
@@ -222,12 +256,7 @@ export default function MovementHistory() {
           </div>
 
           {hasActiveFilters && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearFilters}
-              className="mb-0.5"
-            >
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
               <X className="h-4 w-4 mr-1" />
               Clear Filters
             </Button>
@@ -235,153 +264,62 @@ export default function MovementHistory() {
         </div>
       </div>
 
-      {/* Mobile Search / Filter */}
-      <div className="md:hidden flex items-center gap-3 mb-4">
-        <div className="flex-1">
-          <Select value={materialFilter} onValueChange={setMaterialFilter}>
-            <SelectTrigger>
-              <SelectValue placeholder="All Materials" />
-            </SelectTrigger>
-            <SelectContent className="bg-popover">
-              <SelectItem value="all">All Materials</SelectItem>
-              {rawMaterials.map(material => (
-                <SelectItem key={material.id} value={material.id}>
-                  {material.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <Sheet open={mobileFilterOpen} onOpenChange={setMobileFilterOpen}>
-          <SheetTrigger asChild>
-            <Button variant="outline" size="icon">
-              <Filter className="h-4 w-4" />
-            </Button>
-          </SheetTrigger>
-
-          <SheetContent side="bottom" className="h-auto rounded-t-xl">
-            <SheetHeader className="text-left mb-4">
-              <SheetTitle>Filters</SheetTitle>
-            </SheetHeader>
-
-            <div className="space-y-4">
-              <div>
-                <Label className="text-sm font-medium mb-2 block">
-                  Movement Type
-                </Label>
-                <Select value={typeFilter} onValueChange={setTypeFilter}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="All Types" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover">
-                    <SelectItem value="all">All Types</SelectItem>
-                    <SelectItem value="adjustment">Adjustments Only</SelectItem>
-                    <SelectItem value="production">Production Only</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-sm font-medium mb-2 block">
-                    Date From
-                  </Label>
-                  <Input
-                    type="date"
-                    value={dateFrom}
-                    onChange={e => setDateFrom(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <Label className="text-sm font-medium mb-2 block">
-                    Date To
-                  </Label>
-                  <Input
-                    type="date"
-                    value={dateTo}
-                    onChange={e => setDateTo(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <Button variant="outline" onClick={clearFilters} className="flex-1">
-                  Clear Filters
-                </Button>
-                <Button
-                  onClick={() => setMobileFilterOpen(false)}
-                  className="flex-1"
-                >
-                  Apply
-                </Button>
-              </div>
-            </div>
-          </SheetContent>
-        </Sheet>
-      </div>
-
-      {/* Results Count */}
+      {/* =============================
+          RESULTS COUNT
+      ============================= */}
       <div className="mb-4">
         <p className="text-sm text-muted-foreground">
-          Showing {filteredMovements.length} of {stockMovements.length} records
+          Showing {filteredMovements.length} records
           {hasActiveFilters && ' (filtered)'}
         </p>
       </div>
 
-      {/* Loading State */}
+      {/* =============================
+          LOADING
+      ============================= */}
       {loading && (
         <div className="text-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading stock movements...</p>
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground">
+            Loading stock movements...
+          </p>
         </div>
       )}
 
-      {/* Error State */}
+      {/* =============================
+          ERROR
+      ============================= */}
       {error && !loading && (
         <div className="text-center py-12">
           <History className="h-12 w-12 text-destructive mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-foreground mb-1">
-            Error loading data
-          </h3>
           <p className="text-muted-foreground mb-4">{error}</p>
-          <Button 
-            onClick={() => window.location.reload()} 
-            variant="outline"
-          >
+          <Button onClick={() => window.location.reload()} variant="outline">
             Try Again
           </Button>
         </div>
       )}
 
-      {/* Empty State */}
+      {/* =============================
+          TABLE / CARDS
+      ============================= */}
+      {!loading && !error && filteredMovements.length > 0 && (
+        <>
+          <div className="hidden md:block">
+            <MovementTable movements={filteredMovements} />
+          </div>
+
+          <div className="md:hidden space-y-3">
+            {filteredMovements.map(movement => (
+              <MovementCard key={movement.id} movement={movement} />
+            ))}
+          </div>
+        </>
+      )}
+
       {!loading && !error && filteredMovements.length === 0 && (
         <div className="text-center py-12">
           <History className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-foreground mb-1">
-            No records found
-          </h3>
-          <p className="text-muted-foreground">
-            {hasActiveFilters
-              ? 'Try adjusting your filters'
-              : 'Stock movements will appear here once adjustments are made'}
-          </p>
-        </div>
-      )}
-
-      {/* Desktop Table */}
-      {!loading && !error && filteredMovements.length > 0 && (
-        <div className="hidden md:block">
-          <MovementTable movements={filteredMovements} />
-        </div>
-      )}
-
-      {/* Mobile Cards */}
-      {!loading && !error && filteredMovements.length > 0 && (
-        <div className="md:hidden space-y-3">
-          {filteredMovements.map(movement => (
-            <MovementCard key={movement.id} movement={movement} />
-          ))}
+          <p className="text-muted-foreground">No records found</p>
         </div>
       )}
     </AppLayout>

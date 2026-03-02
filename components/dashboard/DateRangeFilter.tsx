@@ -16,7 +16,7 @@ interface DateRangeFilterProps {
   className?: string;
 }
 
-const options: DateRangeOption[] = ['today', 'week', 'month'];
+const options: DateRangeOption[] = ['today', 'week', 'month', 'quarter'];
 
 export function DateRangeFilter({ value, onChange, className }: DateRangeFilterProps) {
   return (
@@ -42,7 +42,7 @@ export function DateRangeFilter({ value, onChange, className }: DateRangeFilterP
       {/* Mobile: Dropdown */}
       <div className="md:hidden">
         <Select value={value} onValueChange={(v) => onChange(v as DateRangeOption)}>
-          <SelectTrigger className="w-[140px]">
+          <SelectTrigger className="w-[160px]">
             <Calendar className="h-4 w-4 mr-2" />
             <SelectValue />
           </SelectTrigger>

@@ -154,7 +154,7 @@ export default function InventoryDashboard() {
           <Button asChild className="hidden md:flex">
             <Link href="/add-material">
               <Plus className="h-4 w-4 mr-2" />
-              Add Raw Material
+              Add New Raw Material
             </Link>
           </Button>
         </div>

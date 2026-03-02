@@ -193,29 +193,59 @@ export const getRecentSales = (limit: number = 5): RecentSale[] => {
 };
 
 // Date range filter options
-export type DateRangeOption = 'today' | 'week' | 'month' | 'custom';
+// Date range filter options
+export type DateRangeOption = 
+  | 'today' 
+  | 'week' 
+  | 'month' 
+  | 'quarter' 
+  | 'custom';
 
 export const getDateRangeLabel = (option: DateRangeOption): string => {
   switch (option) {
-    case 'today': return 'Today';
-    case 'week': return 'This Week';
-    case 'month': return 'This Month';
-    case 'custom': return 'Custom';
+    case 'today': 
+      return 'Today';
+    case 'week': 
+      return 'This Week';
+    case 'month': 
+      return 'This Month';
+    case 'quarter': 
+      return 'This Quarter';
+    case 'custom': 
+      return 'Custom';
+    default:
+      return 'Today';
   }
 };
 
 export const getDateRangeStartDate = (option: DateRangeOption): Date => {
   const now = new Date();
+
   switch (option) {
     case 'today':
       return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    case 'week':
+
+    case 'week': {
       const weekStart = new Date(now);
       weekStart.setDate(now.getDate() - now.getDay());
+      weekStart.setHours(0, 0, 0, 0);
       return weekStart;
+    }
+
     case 'month':
       return new Date(now.getFullYear(), now.getMonth(), 1);
+
+    case 'quarter': {
+      const currentQuarter = Math.floor(now.getMonth() / 3);
+      const quarterStartMonth = currentQuarter * 3;
+      return new Date(now.getFullYear(), quarterStartMonth, 1);
+    }
+
     case 'custom':
+      // You can later override this from date picker
       return new Date(now.getFullYear(), now.getMonth(), 1);
+
+    default:
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
   }
 };

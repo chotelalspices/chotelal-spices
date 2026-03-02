@@ -11,6 +11,7 @@ import {
   Key,
   UserX,
   UserCheck,
+  Trash2,
   Filter,
 } from 'lucide-react';
 
@@ -40,6 +41,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
 
@@ -68,6 +79,11 @@ export default function UserListPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Delete confirmation dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchUsers = async () => {
     try {
@@ -132,7 +148,7 @@ export default function UserListPage() {
     return matchesSearch && matchesRole && matchesStatus;
   });
 
-  const handleToggleStatus = async (user: any) => {
+  const handleToggleStatus = async (user: User) => {
     try {
       const newStatus = user.status === 'active' ? 'inactive' : 'active';
       const response = await fetch(`/api/users/${user.id}`, {
@@ -153,7 +169,6 @@ export default function UserListPage() {
         throw new Error(errorData.error || 'Failed to update user status');
       }
 
-      // Update local state
       setUsers((prev) =>
         prev.map((u) =>
           u.id === user.id ? { ...u, status: newStatus } : u
@@ -174,14 +189,49 @@ export default function UserListPage() {
     }
   };
 
+  const handleDeleteClick = (user: User) => {
+    setUserToDelete(user);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!userToDelete) return;
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`/api/users/${userToDelete.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete user');
+      }
+
+      setUsers((prev) => prev.filter((u) => u.id !== userToDelete.id));
+
+      toast({
+        title: 'User Deleted',
+        description: `${userToDelete.fullName} has been permanently deleted.`,
+      });
+
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to delete user',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const getRoleDisplayNames = (roles: string[]): string => {
     if (roles.includes('admin')) return 'Administrator';
     if (roles.length === 1) return roles[0].charAt(0).toUpperCase() + roles[0].slice(1);
     return roles.map(r => r.charAt(0).toUpperCase() + r.slice(1)).join(', ');
-  };
-
-  const getStatusBadgeClass = (status: UserStatus): string => {
-    return status === 'active' ? 'status-active' : 'status-inactive';
   };
 
   return (
@@ -278,10 +328,10 @@ export default function UserListPage() {
                   <TableCell>
                     <Badge
                       variant={
-                        (user as any).roles?.includes('admin') ? 'default' : 'secondary'
+                        user.roles?.includes('admin') ? 'default' : 'secondary'
                       }
                     >
-                      {getRoleDisplayNames((user as any).roles || [])}
+                      {getRoleDisplayNames(user.roles || [])}
                     </Badge>
                   </TableCell>
 
@@ -317,9 +367,7 @@ export default function UserListPage() {
 
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
-                          onClick={() =>
-                            router.push(`/users/${user.id}/edit`)
-                          }
+                          onClick={() => router.push(`/users/${user.id}/edit`)}
                         >
                           <Edit className="h-4 w-4 mr-2" />
                           Edit User
@@ -346,6 +394,16 @@ export default function UserListPage() {
                               Enable User
                             </>
                           )}
+                        </DropdownMenuItem>
+
+                        <DropdownMenuSeparator />
+
+                        <DropdownMenuItem
+                          onClick={() => handleDeleteClick(user)}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Delete User
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -394,9 +452,7 @@ export default function UserListPage() {
 
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
-                      onClick={() =>
-                        router.push(`/users/${user.id}/edit`)
-                      }
+                      onClick={() => router.push(`/users/${user.id}/edit`)}
                     >
                       <Edit className="h-4 w-4 mr-2" />
                       Edit User
@@ -412,9 +468,27 @@ export default function UserListPage() {
                           : 'text-success'
                       }
                     >
-                      {user.status === 'active'
-                        ? 'Disable User'
-                        : 'Enable User'}
+                      {user.status === 'active' ? (
+                        <>
+                          <UserX className="h-4 w-4 mr-2" />
+                          Disable User
+                        </>
+                      ) : (
+                        <>
+                          <UserCheck className="h-4 w-4 mr-2" />
+                          Enable User
+                        </>
+                      )}
+                    </DropdownMenuItem>
+
+                    <DropdownMenuSeparator />
+
+                    <DropdownMenuItem
+                      onClick={() => handleDeleteClick(user)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete User
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -423,11 +497,11 @@ export default function UserListPage() {
               <div className="flex items-center gap-2">
                 <Badge
                   variant={
-                    (user as any).roles?.includes('admin') ? 'default' : 'secondary'
+                    user.roles?.includes('admin') ? 'default' : 'secondary'
                   }
                   className="text-xs"
                 >
-                  {getRoleDisplayNames((user as any).roles || [])}
+                  {getRoleDisplayNames(user.roles || [])}
                 </Badge>
 
                 <span
@@ -450,6 +524,32 @@ export default function UserListPage() {
           )}
         </div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete User</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to permanently delete{' '}
+              <span className="font-semibold text-foreground">
+                {userToDelete?.fullName}
+              </span>{' '}
+              ({userToDelete?.email})? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete User'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }
