@@ -26,7 +26,7 @@ import { cn } from '@/libs/utils';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { AuthGuard } from '@/components/auth/AuthGuard';
-import { hasPermission, getAccessibleModules } from '@/lib/role-permissions';
+import { hasPermission, getAccessibleModules, type Module } from '@/lib/role-permissions';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,6 +43,7 @@ interface AppLayoutProps {
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, module: null },
   { name: 'Inventory', href: '/inventory', icon: Package, module: 'inventory' as const },
+  { name: 'Labels Inventory', href: '/labels/inventory', icon: Boxes, module: 'labels' as const },
   { name: 'Formulations', href: '/formulations', icon: FileText, module: 'formulations' as const },
   { name: 'Production', href: '/production', icon: Factory, module: 'production' as const },
   { name: 'Packaging', href: '/packaging', icon: PackageCheck, module: 'packaging' as const },
@@ -55,6 +56,7 @@ const navigation = [
 const mobileNav = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, module: null },
   { name: 'Inventory', href: '/inventory', icon: Package, module: 'inventory' as const },
+  { name: 'Labels Inventory', href: '/labels/inventory', icon: Boxes, module: 'labels' as const },
   { name: 'Formulations', href: '/formulations', icon: FileText, module: 'formulations' as const },
   { name: 'Production', href: '/production', icon: Factory, module: 'production' as const },
   { name: 'Packaging', href: '/packaging', icon: PackageCheck, module: 'packaging' as const },
@@ -82,14 +84,10 @@ export function AppLayout({ children }: AppLayoutProps) {
     userRoles.includes('sales') ? 'Sales' :
     userRoles.includes('research') ? 'Research' : 'User';
 
-  // Check if user has permission to access a route
-  const hasRoutePermission = (module: 'inventory' | 'formulations' | 'production' | 'packaging' | 'sales' | 'research' | 'settings' | null) => {
-    // Dashboard is visible to all users
-    if (module === null) return true;
-    
-    // Use the existing role-permissions system
-    return hasPermission(userRoles as any[], module);
-  };
+  const hasRoutePermission = (module: Module | null) => {
+  if (module === null) return true;
+  return hasPermission(userRoles as any[], module);
+};
   
   // Get initials for avatar
   const getInitials = (name: string) => {

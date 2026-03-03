@@ -65,6 +65,17 @@ enum ResearchStatus {
   rejected
 }
 
+enum LabelStockAction {
+  add
+  reduce
+}
+
+enum LabelStockReason {
+  purchase
+  wastage
+  damage
+  correction
+}
 //////////////////////////////////////////////////////
 // USER MODULE
 //////////////////////////////////////////////////////
@@ -97,6 +108,7 @@ model User {
   packagingSessions    PackagingSession[]
   salesRecords         SalesRecord[]
   researchFormulations ResearchFormulation[]
+  labelMovements       LabelMovement[]
 }
 
 //////////////////////////////////////////////////////
@@ -300,11 +312,29 @@ model FinishedProduct {
 }
 
 model Label {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  createdAt DateTime @default(now())
+  id           String   @id @default(uuid())
+  name         String   @unique
+  minimumStock Int      @default(0)
+  status       Status   @default(active)   // ✅ ADD THIS
+  description  String?
+  createdAt    DateTime @default(now())
 
-  productLabels ProductLabel[]
+  productLabels  ProductLabel[]
+  labelMovements LabelMovement[]
+}
+
+model LabelMovement {
+  id             String           @id @default(uuid())
+  labelId        String
+  label          Label            @relation(fields: [labelId], references: [id])
+  action         LabelStockAction
+  quantity       Int
+  reason         LabelStockReason
+  remarks        String?
+  adjustmentDate DateTime         @default(now())
+  performedById  String?
+  performedBy    User?            @relation(fields: [performedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime         @default(now())
 }
 
 model ProductLabel {

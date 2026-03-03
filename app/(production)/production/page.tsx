@@ -10,7 +10,7 @@ import {
   Clock,
   Loader2,
   AlertCircle,
-  Filter,
+  PlayCircle,
 } from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -45,46 +45,31 @@ export default function ProductionList() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch production batches from API
   useEffect(() => {
     const fetchBatches = async () => {
       try {
         setIsLoading(true);
         setError(null);
         const response = await fetch('/api/production/batches');
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch production batches');
-        }
-
+        if (!response.ok) throw new Error('Failed to fetch production batches');
         const data = await response.json();
         setBatches(data);
       } catch (error) {
         console.error('Error fetching production batches:', error);
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : 'Failed to load production batches';
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load production batches';
         setError(errorMessage);
-        toast({
-          title: 'Error',
-          description: errorMessage,
-          variant: 'destructive',
-        });
+        toast({ title: 'Error', description: errorMessage, variant: 'destructive' });
       } finally {
         setIsLoading(false);
       }
     };
-
     fetchBatches();
   }, [toast]);
 
-  // Set default date range to current month on mount
   useEffect(() => {
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    
     setStartDate(firstDay.toISOString().split('T')[0]);
     setEndDate(lastDay.toISOString().split('T')[0]);
   }, []);
@@ -93,27 +78,42 @@ export default function ProductionList() {
     const matchesSearch =
       batch.batchNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
       batch.formulationName.toLowerCase().includes(searchTerm.toLowerCase());
-
     const batchDate = new Date(batch.productionDate);
     const matchesStartDate = !startDate || batchDate >= new Date(startDate);
     const matchesEndDate = !endDate || batchDate <= new Date(endDate + 'T23:59:59');
-
     return matchesSearch && matchesStartDate && matchesEndDate;
   });
 
-  // Stats
   const totalBatches = filteredBatches.length;
-  const confirmedBatches = filteredBatches.filter(
-    b => b.status === 'confirmed'
-  ).length;
+  const confirmedBatches = filteredBatches.filter(b => b.status === 'confirmed').length;
+  const draftBatches = filteredBatches.filter(b => b.status === 'draft').length;
+  const totalOutput = filteredBatches.filter(b => b.status === 'confirmed').reduce((sum, b) => sum + b.finalOutputQuantity, 0);
+  const totalCost = filteredBatches.filter(b => b.status === 'confirmed').reduce((sum, b) => sum + b.totalProductionCost, 0);
 
-  const totalOutput = filteredBatches
-    .filter(b => b.status === 'confirmed')
-    .reduce((sum, b) => sum + b.finalOutputQuantity, 0);
+  const handleContinueDraft = (batch: ProductionBatch) => {
+    // Restore entry data and material requirements from the draft batch into sessionStorage
+    const entryData = {
+      formulationId: batch.formulationId,
+      formulationName: batch.formulationName,
+      plannedQuantity: batch.plannedQuantity,
+      availableQuantity: batch.availableQuantity ?? 0,
+      producedQuantity: batch.producedQuantity ?? batch.plannedQuantity,
+      numberOfLots: batch.numberOfLots ?? 1,
+      finalQuantity: batch.finalOutputQuantity,
+      unit: batch.unit,
+      productionDate: batch.productionDate,
+      batchId: batch.id, // Pass the draft batch ID so it can be updated instead of created
+    };
 
-  const totalCost = filteredBatches
-    .filter(b => b.status === 'confirmed')
-    .reduce((sum, b) => sum + b.totalProductionCost, 0);
+    sessionStorage.setItem('productionEntry', JSON.stringify(entryData));
+
+    // If the draft has saved material requirements, restore them too
+    if (batch.materialRequirements) {
+      sessionStorage.setItem('materialRequirements', JSON.stringify(batch.materialRequirements));
+    }
+
+    router.push('/production/stock-check');
+  };
 
   if (isLoading) {
     return (
@@ -138,9 +138,7 @@ export default function ProductionList() {
               <h3 className="text-lg font-semibold mb-2">Error loading batches</h3>
               <p className="text-muted-foreground">{error}</p>
             </div>
-            <Button onClick={() => window.location.reload()}>
-              Retry
-            </Button>
+            <Button onClick={() => window.location.reload()}>Retry</Button>
           </div>
         </div>
       </AppLayout>
@@ -153,27 +151,15 @@ export default function ProductionList() {
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold">
-              Production Batches
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Manage and track production batches
-            </p>
+            <h1 className="text-2xl md:text-3xl font-bold">Production Batches</h1>
+            <p className="text-muted-foreground mt-1">Manage and track production batches</p>
           </div>
-
           <div className="flex items-center gap-3">
-            <Button
-              onClick={() => router.push('/production/planning')}
-              className="gap-2"
-            >
+            <Button onClick={() => router.push('/production/planning')} className="gap-2">
               <Plus className="h-4 w-4" />
               Plan production
             </Button>
-
-            <Button
-              onClick={() => router.push('/production/new')}
-              className="gap-2"
-            >
+            <Button onClick={() => router.push('/production/new')} className="gap-2">
               <Plus className="h-4 w-4" />
               New Batch
             </Button>
@@ -181,39 +167,53 @@ export default function ProductionList() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <Card>
             <CardContent className="p-4">
               <p className="text-sm text-muted-foreground">Total Batches</p>
               <p className="text-xl font-bold">{totalBatches}</p>
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="p-4">
               <p className="text-sm text-muted-foreground">Confirmed</p>
               <p className="text-xl font-bold">{confirmedBatches}</p>
             </CardContent>
           </Card>
-
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-sm text-muted-foreground">Drafts</p>
+              <p className="text-xl font-bold text-amber-600">{draftBatches}</p>
+            </CardContent>
+          </Card>
           <Card>
             <CardContent className="p-4">
               <p className="text-sm text-muted-foreground">Total Output</p>
-              <p className="text-xl font-bold">
-                {totalOutput.toFixed(0)} kg
-              </p>
+              <p className="text-xl font-bold">{totalOutput.toFixed(0)} kg</p>
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="p-4">
               <p className="text-sm text-muted-foreground">Total Cost</p>
-              <p className="text-xl font-bold">
-                {formatCurrency(totalCost)}
-              </p>
+              <p className="text-xl font-bold">{formatCurrency(totalCost)}</p>
             </CardContent>
           </Card>
         </div>
+
+        {/* Draft batches callout */}
+        {draftBatches > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+            <Clock className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium text-amber-800">
+                {draftBatches} incomplete {draftBatches === 1 ? 'batch' : 'batches'} pending
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Click <strong>Continue</strong> on any draft batch below to resume and complete it.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* DESKTOP FILTERS */}
         <Card className="hidden md:block">
@@ -228,40 +228,16 @@ export default function ProductionList() {
                   className="pl-9"
                 />
               </div>
-
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">
-                  Start Date
-                </Label>
-                <Input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-40"
-                />
+                <Label className="text-xs text-muted-foreground">Start Date</Label>
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-40" />
               </div>
-
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">
-                  End Date
-                </Label>
-                <Input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-40"
-                />
+                <Label className="text-xs text-muted-foreground">End Date</Label>
+                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-40" />
               </div>
-
               {(startDate || endDate) && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setStartDate('');
-                    setEndDate('');
-                  }}
-                >
+                <Button variant="ghost" size="sm" onClick={() => { setStartDate(''); setEndDate(''); }}>
                   Clear
                 </Button>
               )}
@@ -283,40 +259,18 @@ export default function ProductionList() {
                     className="pl-9"
                   />
                 </div>
-
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">
-                      Start Date
-                    </Label>
-                    <Input
-                      type="date"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                    />
+                    <Label className="text-xs text-muted-foreground">Start Date</Label>
+                    <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                   </div>
-
                   <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">
-                      End Date
-                    </Label>
-                    <Input
-                      type="date"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                    />
+                    <Label className="text-xs text-muted-foreground">End Date</Label>
+                    <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
                   </div>
                 </div>
-
                 {(startDate || endDate) && (
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setStartDate('');
-                      setEndDate('');
-                    }}
-                    className="w-full"
-                  >
+                  <Button variant="outline" onClick={() => { setStartDate(''); setEndDate(''); }} className="w-full">
                     Clear Filters
                   </Button>
                 )}
@@ -327,38 +281,20 @@ export default function ProductionList() {
 
         {/* List */}
         {isMobile ? (
-          /* Mobile View */
           <div className="space-y-3">
             {filteredBatches.map(batch => (
-              <Card key={batch.id}>
+              <Card key={batch.id} className={batch.status === 'draft' ? 'border-amber-200' : ''}>
                 <CardContent className="p-4">
                   <div className="flex justify-between mb-3">
                     <div>
-                      <p className="font-mono text-sm text-primary">
-                        {batch.batchNumber}
-                      </p>
-                      <p className="font-semibold">
-                        {batch.formulationName}
-                      </p>
+                      <p className="font-mono text-sm text-primary">{batch.batchNumber}</p>
+                      <p className="font-semibold">{batch.formulationName}</p>
                     </div>
-
-                    <Badge
-                      variant={
-                        batch.status === 'confirmed'
-                          ? 'default'
-                          : 'secondary'
-                      }
-                    >
+                    <Badge variant={batch.status === 'confirmed' ? 'default' : 'secondary'}>
                       {batch.status === 'confirmed' ? (
-                        <>
-                          <CheckCircle className="h-3 w-3 mr-1" />
-                          Confirmed
-                        </>
+                        <><CheckCircle className="h-3 w-3 mr-1" />Confirmed</>
                       ) : (
-                        <>
-                          <Clock className="h-3 w-3 mr-1" />
-                          Draft
-                        </>
+                        <><Clock className="h-3 w-3 mr-1" />Draft</>
                       )}
                     </Badge>
                   </div>
@@ -366,116 +302,96 @@ export default function ProductionList() {
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>
                       <p className="text-muted-foreground">Output</p>
-                      <p className="font-semibold">
-                        {batch.finalOutputQuantity.toFixed(2)} {batch.unit}
-                      </p>
+                      <p className="font-semibold">{batch.finalOutputQuantity.toFixed(2)} {batch.unit}</p>
                     </div>
-
                     <div>
                       <p className="text-muted-foreground">Cost/kg</p>
-                      <p className="font-semibold">
-                        {formatCurrency(batch.costPerKg)}
-                      </p>
+                      <p className="font-semibold">{formatCurrency(batch.costPerKg)}</p>
                     </div>
-
                     <div className="col-span-2">
                       <p className="text-muted-foreground">Production Date</p>
-                      <p className="font-semibold">
-                        {formatDate(batch.productionDate)}
-                      </p>
+                      <p className="font-semibold">{formatDate(batch.productionDate)}</p>
                     </div>
-
                     {batch.status === 'confirmed' && batch.confirmedAt && (
                       <div className="col-span-2">
                         <p className="text-muted-foreground">Confirmed</p>
-                        <p className="font-semibold">
-                          {batch.confirmedBy} •{' '}
-                          {formatDateTime(batch.confirmedAt)}
-                        </p>
+                        <p className="font-semibold">{batch.confirmedBy} • {formatDateTime(batch.confirmedAt)}</p>
                       </div>
                     )}
                   </div>
+
+                  {/* Continue button for draft batches */}
+                  {batch.status === 'draft' && (
+                    <div className="mt-4 pt-3 border-t border-amber-100">
+                      <Button
+                        size="sm"
+                        className="w-full gap-2 bg-amber-600 hover:bg-amber-700 text-white"
+                        onClick={() => handleContinueDraft(batch)}
+                      >
+                        <PlayCircle className="h-4 w-4" />
+                        Continue Production
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}
           </div>
         ) : (
-          /* Desktop View */
           <Card>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Batch Number</TableHead>
                   <TableHead>Product</TableHead>
-                  <TableHead className="text-right">
-                    Planned Qty / Lot
-                  </TableHead>
-                  <TableHead className="text-right">
-                    Final Output
-                  </TableHead>
-                  <TableHead className="text-right">
-                    Cost/kg
-                  </TableHead>
+                  <TableHead className="text-right">Planned Qty / Lot</TableHead>
+                  <TableHead className="text-right">Final Output</TableHead>
+                  <TableHead className="text-right">Cost/kg</TableHead>
                   <TableHead>Production Date</TableHead>
                   <TableHead>Confirmed By</TableHead>
                   <TableHead>Confirmed At</TableHead>
-                  <TableHead className="text-center">
-                    Status
-                  </TableHead>
+                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead className="text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
-
               <TableBody>
                 {filteredBatches.map(batch => (
-                  <TableRow key={batch.id}>
-                    <TableCell className="font-mono text-primary">
-                      {batch.batchNumber}
-                    </TableCell>
-                    <TableCell>
-                      {batch.formulationName}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {batch.plannedQuantity} {batch.unit}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {batch.finalOutputQuantity.toFixed(2)} {batch.unit}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(batch.costPerKg)}
-                    </TableCell>
-                    <TableCell>
-                      {formatDate(batch.productionDate)}
-                    </TableCell>
-                    <TableCell>
-                      {batch.status === 'confirmed'
-                        ? batch.confirmedBy
-                        : '—'}
-                    </TableCell>
+                  <TableRow key={batch.id} className={batch.status === 'draft' ? 'bg-amber-50/40' : ''}>
+                    <TableCell className="font-mono text-primary">{batch.batchNumber}</TableCell>
+                    <TableCell>{batch.formulationName}</TableCell>
+                    <TableCell className="text-right">{batch.plannedQuantity} {batch.unit}</TableCell>
+                    <TableCell className="text-right">{batch.finalOutputQuantity.toFixed(2)} {batch.unit}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(batch.costPerKg)}</TableCell>
+                    <TableCell>{formatDate(batch.productionDate)}</TableCell>
+                    <TableCell>{batch.status === 'confirmed' ? batch.confirmedBy : '—'}</TableCell>
                     <TableCell>
                       {batch.status === 'confirmed' && batch.confirmedAt
                         ? formatDateTime(batch.confirmedAt)
                         : '—'}
                     </TableCell>
                     <TableCell className="text-center">
-                      <Badge
-                        variant={
-                          batch.status === 'confirmed'
-                            ? 'default'
-                            : 'secondary'
-                        }
-                      >
+                      <Badge variant={batch.status === 'confirmed' ? 'default' : 'secondary'}>
                         {batch.status === 'confirmed' ? (
-                          <>
-                            <CheckCircle className="h-3 w-3 mr-1" />
-                            Confirmed
-                          </>
+                          <><CheckCircle className="h-3 w-3 mr-1" />Confirmed</>
                         ) : (
-                          <>
-                            <Clock className="h-3 w-3 mr-1" />
-                            Draft
-                          </>
+                          <><Clock className="h-3 w-3 mr-1" />Draft</>
                         )}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {batch.status === 'draft' ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5 border-amber-400 text-amber-700 hover:bg-amber-50"
+                          onClick={() => handleContinueDraft(batch)}
+                        >
+                          <PlayCircle className="h-3.5 w-3.5" />
+                          Continue
+                        </Button>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">—</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -489,9 +405,7 @@ export default function ProductionList() {
             <Package className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
             <h3 className="text-lg font-medium">No batches found</h3>
             <p className="text-muted-foreground">
-              {searchTerm
-                ? 'Try adjusting your search'
-                : 'Create your first production batch'}
+              {searchTerm ? 'Try adjusting your search' : 'Create your first production batch'}
             </p>
           </div>
         )}

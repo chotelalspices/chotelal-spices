@@ -12,24 +12,27 @@ export async function GET(
       where: {
         formulationId: formulationId,
       },
+      include: {
+        productLabels: {
+          include: {
+            label: true,
+          },
+        },
+      },
       orderBy: {
         createdAt: 'desc',
       },
     });
 
-    // Transform products to include available inventory and extract container info from name
     const transformedProducts = products.map((product) => {
-      // Extract container size from product name (e.g., "Garam Masala 100g" -> 100g)
       const nameParts = product.name.split(' ');
-      const containerLabel = nameParts[nameParts.length - 1]; // e.g., "100g" or "1kg"
-      
+      const containerLabel = nameParts[nameParts.length - 1];
+
       let containerSize = 0;
       if (containerLabel.toLowerCase().includes('kg')) {
-        // For kg sizes, convert to grams for consistency
         const sizeInKg = parseFloat(containerLabel.replace(/[^\d.]/g, '')) || 0;
-        containerSize = sizeInKg * 1000; // Convert kg to grams
+        containerSize = sizeInKg * 1000;
       } else if (containerLabel.toLowerCase().includes('g')) {
-        // For gram sizes, use directly
         containerSize = parseFloat(containerLabel.replace(/[^\d.]/g, '')) || 0;
       }
 
@@ -41,8 +44,12 @@ export async function GET(
         availableInventory: product.availableInventory || 0,
         unit: product.unit,
         containerLabel,
-        containerSize, // in grams
+        containerSize,
         createdAt: product.createdAt,
+        labels: product.productLabels.map((pl) => ({
+          type: pl.label.name,
+          quantity: pl.quantity, // qty per courier box
+        })),
       };
     });
 

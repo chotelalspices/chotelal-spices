@@ -58,7 +58,7 @@ import {
   getStatusColor,
 } from "@/data/packagingData";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Product {
   id: string;
@@ -68,23 +68,21 @@ interface Product {
   unit: "kg" | "gm";
   availableInventory: number;
   createdAt: string;
-}
-
-interface ProductLabel {
-  type: string;   // label name, e.g. "box", "packet"
-  quantity: number; // weight/size per unit
+  // labels[].quantity = qty per courier box (e.g. 10 jars per box)
+  labels: Array<{ type: string; quantity: number }>;
 }
 
 interface LabelEntry {
   id: string;
-  type: string;   // custom label type text
-  quantity: number; // number of labels used
+  type: string;
+  qtyPerBox: number;   // from product definition (read-only reference)
+  quantity: number;    // auto-calculated boxes needed, editable by user
 }
 
 interface CourierBox {
-  label: string;        // custom description e.g. "Medium Box"
-  itemsPerBox: number;  // how many packets fit in one box
-  boxesNeeded: number;  // auto-calculated
+  label: string;
+  itemsPerBox: number;
+  boxesNeeded: number;
 }
 
 interface PackagingBatch {
@@ -99,7 +97,9 @@ interface PackagingBatch {
   sessions: any[];
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+const PACKETS_PER_BOX = 10;
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 const PackagingEntry = () => {
   const router = useRouter();
@@ -109,35 +109,31 @@ const PackagingEntry = () => {
   const { toast } = useToast();
   const isMobile = useIsMobile();
 
-  // Data
   const [batch, setBatch] = useState<PackagingBatch | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Product packaging
   const [items, setItems] = useState<PackagedItem[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
   const [packetCount, setPacketCount] = useState("");
 
-  // Labels
+  // Labels: auto-filled, user-editable
   const [labels, setLabels] = useState<LabelEntry[]>([]);
 
-  // Courier box
   const [courierEnabled, setCourierEnabled] = useState(false);
   const [courierBox, setCourierBox] = useState<CourierBox>({
     label: "",
-    itemsPerBox: 0,
+    itemsPerBox: PACKETS_PER_BOX,
     boxesNeeded: 0,
   });
 
-  // Session meta
   const [packagingLoss, setPackagingLoss] = useState("0");
   const [remarks, setRemarks] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
 
-  // ─── Fetch ──────────────────────────────────────────────────────────────────
+  // ─── Fetch ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const fetchData = async () => {
@@ -149,10 +145,12 @@ const PackagingEntry = () => {
         const batchRes = await fetch(
           `/api/packaging/batches/${encodeURIComponent(batchNumber as string)}`
         );
-        if (!batchRes.ok) throw new Error(batchRes.status === 404 ? "Batch not found" : "Failed to fetch batch details");
+        if (!batchRes.ok)
+          throw new Error(
+            batchRes.status === 404 ? "Batch not found" : "Failed to fetch batch details"
+          );
 
         const batchData: PackagingBatch = await batchRes.json();
-
         if (batchData.status === "Completed") {
           router.push("/packaging");
           return;
@@ -162,7 +160,6 @@ const PackagingEntry = () => {
           `/api/formulations/${batchData.formulationId}/products/packaging`
         );
         if (!productsRes.ok) throw new Error("Failed to fetch formulation products");
-
         const productsData: Product[] = await productsRes.json();
 
         setBatch(batchData);
@@ -175,21 +172,20 @@ const PackagingEntry = () => {
         setIsLoading(false);
       }
     };
-
     fetchData();
   }, [batchNumber, router, toast]);
 
-  // ─── Derived values ──────────────────────────────────────────────────────────
+  // ─── Derived values ───────────────────────────────────────────────────────
 
   const totalPackagedWeight = calculatePackagedWeight(items);
   const lossValue = parseFloat(packagingLoss) || 0;
   const totalUsed = totalPackagedWeight + lossValue;
-  const isValid = batch ? validatePackagingEntry(batch.remainingQuantity, items, lossValue) : { valid: false, message: "" };
-
-  // Total packets across all items (for courier box calculation)
+  const isValid = batch
+    ? validatePackagingEntry(batch.remainingQuantity, items, lossValue)
+    : { valid: false, message: "" };
   const totalPackets = items.reduce((sum, item) => sum + item.numberOfPackets, 0);
 
-  // Auto-recalculate courier boxes when items or itemsPerBox changes
+  // Auto-recalculate courier boxes when packets or itemsPerBox changes
   useEffect(() => {
     if (courierBox.itemsPerBox > 0 && totalPackets > 0) {
       setCourierBox((prev) => ({
@@ -201,11 +197,70 @@ const PackagingEntry = () => {
     }
   }, [totalPackets, courierBox.itemsPerBox]);
 
-  // ─── Product handlers ────────────────────────────────────────────────────────
+  // Auto-set itemsPerBox = 10 when courier is enabled
+  useEffect(() => {
+    if (courierEnabled) {
+      setCourierBox((prev) => ({
+        ...prev,
+        itemsPerBox: PACKETS_PER_BOX,
+        boxesNeeded: totalPackets > 0 ? Math.ceil(totalPackets / PACKETS_PER_BOX) : 0,
+      }));
+    }
+  }, [courierEnabled]);
+
+  // ─── Recalculate labels when packet count changes ─────────────────────────
+  // This recalculates ALL label entries based on their qtyPerBox and current items
+
+  const recalculateLabels = (updatedItems: PackagedItem[]) => {
+    // Build a map of labelType -> total boxes needed across all items
+    const labelTotals = new Map<string, { qtyPerBox: number; boxes: number }>();
+
+    for (const item of updatedItems) {
+      const product = products.find((p) => p.id === item.containerId);
+      if (!product?.labels?.length) continue;
+
+      for (const productLabel of product.labels) {
+        const boxesForThisItem = Math.ceil(
+          item.numberOfPackets / productLabel.quantity
+        );
+        const existing = labelTotals.get(productLabel.type.toLowerCase());
+        if (existing) {
+          existing.boxes += boxesForThisItem;
+        } else {
+          labelTotals.set(productLabel.type.toLowerCase(), {
+            qtyPerBox: productLabel.quantity,
+            boxes: boxesForThisItem,
+          });
+        }
+      }
+    }
+
+    // Rebuild label entries — preserve manual entries (those with no qtyPerBox)
+    setLabels((prevLabels) => {
+      const manualLabels = prevLabels.filter((l) => l.qtyPerBox === 0);
+
+      const autoLabels: LabelEntry[] = Array.from(labelTotals.entries()).map(
+        ([type, { qtyPerBox, boxes }]) => ({
+          id: `auto-${type}`,
+          type,
+          qtyPerBox,
+          quantity: boxes,
+        })
+      );
+
+      return [...autoLabels, ...manualLabels];
+    });
+  };
+
+  // ─── Product handlers ─────────────────────────────────────────────────────
 
   const handleAddItem = () => {
     if (!selectedProduct || !packetCount || parseInt(packetCount) <= 0) {
-      toast({ title: "Invalid Input", description: "Please select a product and enter packet count", variant: "destructive" });
+      toast({
+        title: "Invalid Input",
+        description: "Please select a product and enter packet count",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -213,21 +268,22 @@ const PackagingEntry = () => {
     if (!product) return;
 
     const count = parseInt(packetCount);
-    const quantityInGrams = product.unit === "kg" ? product.quantity * 1000 : product.quantity;
+    const quantityInGrams =
+      product.unit === "kg" ? product.quantity * 1000 : product.quantity;
 
     const existingIndex = items.findIndex((item) => item.containerId === selectedProduct);
+    let updatedItems: PackagedItem[];
 
     if (existingIndex >= 0) {
-      const updated = [...items];
-      const newCount = updated[existingIndex].numberOfPackets + count;
-      updated[existingIndex] = {
-        ...updated[existingIndex],
+      updatedItems = [...items];
+      const newCount = updatedItems[existingIndex].numberOfPackets + count;
+      updatedItems[existingIndex] = {
+        ...updatedItems[existingIndex],
         numberOfPackets: newCount,
         totalWeight: calculateItemWeight(quantityInGrams, newCount),
       };
-      setItems(updated);
     } else {
-      setItems([
+      updatedItems = [
         ...items,
         {
           containerId: product.id,
@@ -236,23 +292,27 @@ const PackagingEntry = () => {
           numberOfPackets: count,
           totalWeight: calculateItemWeight(quantityInGrams, count),
         },
-      ]);
+      ];
     }
 
+    setItems(updatedItems);
+    recalculateLabels(updatedItems);
     setSelectedProduct("");
     setPacketCount("");
   };
 
   const handleRemoveItem = (containerId: string) => {
-    setItems(items.filter((i) => i.containerId !== containerId));
+    const updatedItems = items.filter((i) => i.containerId !== containerId);
+    setItems(updatedItems);
+    recalculateLabels(updatedItems);
   };
 
-  // ─── Label handlers ──────────────────────────────────────────────────────────
+  // ─── Label handlers ───────────────────────────────────────────────────────
 
-  const addLabel = () => {
+  const addManualLabel = () => {
     setLabels((prev) => [
       ...prev,
-      { id: `label-${Date.now()}`, type: "", quantity: 0 },
+      { id: `manual-${Date.now()}`, type: "", qtyPerBox: 0, quantity: 0 },
     ]);
   };
 
@@ -270,7 +330,7 @@ const PackagingEntry = () => {
     );
   };
 
-  // ─── Courier box handlers ────────────────────────────────────────────────────
+  // ─── Courier box handlers ─────────────────────────────────────────────────
 
   const handleCourierChange = (field: keyof CourierBox, value: string | number) => {
     setCourierBox((prev) => {
@@ -282,7 +342,7 @@ const PackagingEntry = () => {
     });
   };
 
-  // ─── Submit handlers ─────────────────────────────────────────────────────────
+  // ─── Submit ───────────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
     if (!isValid.valid) {
@@ -305,17 +365,17 @@ const PackagingEntry = () => {
           })),
           packagingLoss: lossValue,
           remarks: remarks || undefined,
-          labels: labels.filter((l) => l.type.trim() && l.quantity > 0).map((l) => ({
-            type: l.type.trim(),
-            quantity: l.quantity,
-          })),
-          courierBox: courierEnabled && courierBox.itemsPerBox > 0
-            ? {
-                label: courierBox.label || "Courier Box",
-                itemsPerBox: courierBox.itemsPerBox,
-                boxesNeeded: courierBox.boxesNeeded,
-              }
-            : undefined,
+          labels: labels
+            .filter((l) => l.type.trim() && l.quantity > 0)
+            .map((l) => ({ type: l.type.trim(), quantity: l.quantity })),
+          courierBox:
+            courierEnabled && courierBox.itemsPerBox > 0
+              ? {
+                  label: courierBox.label || "Courier Box",
+                  itemsPerBox: courierBox.itemsPerBox,
+                  boxesNeeded: courierBox.boxesNeeded,
+                }
+              : undefined,
         }),
       });
 
@@ -326,13 +386,15 @@ const PackagingEntry = () => {
 
       toast({
         title: "Packaging Recorded",
-        description: `Successfully packaged ${totalPackagedWeight.toFixed(3)} kg with ${lossValue.toFixed(3)} kg loss`,
+        description: `Successfully packaged ${totalPackagedWeight.toFixed(3)} kg`,
       });
-
       router.push(`/packaging/${encodeURIComponent(batch!.batchNumber)}/summary`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to save packaging session. Please try again.";
-      toast({ title: "Error", description: message, variant: "destructive" });
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to save packaging session.",
+        variant: "destructive",
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -340,7 +402,11 @@ const PackagingEntry = () => {
 
   const handleFinishBatch = async () => {
     if (batch!.remainingQuantity <= 0) {
-      toast({ title: "Batch Already Finished", description: "This batch has no remaining quantity.", variant: "destructive" });
+      toast({
+        title: "Batch Already Finished",
+        description: "This batch has no remaining quantity.",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -359,7 +425,13 @@ const PackagingEntry = () => {
                   totalWeight: item.totalWeight,
                 }))
               : [],
-            remarks: remarks || `Batch marked as finished. Remaining ${batch!.remainingQuantity.toFixed(3)} kg counted as loss.`,
+            // Pass labels so backend deducts from label inventory
+            labels: labels
+              .filter((l) => l.type.trim() && l.quantity > 0)
+              .map((l) => ({ type: l.type.trim(), quantity: l.quantity })),
+            remarks:
+              remarks ||
+              `Batch marked as finished. Remaining ${batch!.remainingQuantity.toFixed(3)} kg counted as loss.`,
           }),
         }
       );
@@ -373,17 +445,19 @@ const PackagingEntry = () => {
         title: "Batch Finished",
         description: `Batch marked as finished. ${batch!.remainingQuantity.toFixed(3)} kg counted as loss.`,
       });
-
       router.push(`/packaging/${encodeURIComponent(batch!.batchNumber)}/summary`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to mark batch as finished. Please try again.";
-      toast({ title: "Error", description: message, variant: "destructive" });
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to mark batch as finished.",
+        variant: "destructive",
+      });
     } finally {
       setIsFinishing(false);
     }
   };
 
-  // ─── Loading / Error states ──────────────────────────────────────────────────
+  // ─── Loading / Error ──────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -404,16 +478,18 @@ const PackagingEntry = () => {
         <div className="flex flex-col items-center justify-center py-12">
           <Package className="h-16 w-16 text-muted-foreground mb-4" />
           <h2 className="text-xl font-semibold mb-2">Batch Not Found</h2>
-          <p className="text-muted-foreground mb-4">{error || "The requested batch could not be found."}</p>
-          <Button className="h-11 min-w-[200px] justify-center" onClick={() => router.push("/packaging")}>
-            Back to Packaging
-          </Button>
+          <p className="text-muted-foreground mb-4">
+            {error || "The requested batch could not be found."}
+          </p>
+          <Button onClick={() => router.push("/packaging")}>Back to Packaging</Button>
         </div>
       </AppLayout>
     );
   }
 
-  // ─── Render ──────────────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────
+
+  const validLabels = labels.filter((l) => l.type.trim() && l.quantity > 0);
 
   return (
     <AppLayout>
@@ -426,7 +502,9 @@ const PackagingEntry = () => {
           </Button>
           <div className="flex-1">
             <h1 className="text-2xl font-bold">Packaging Entry</h1>
-            <p className="text-sm text-muted-foreground">Record packaging for {batch.productName}</p>
+            <p className="text-sm text-muted-foreground">
+              Record packaging for {batch.productName}
+            </p>
           </div>
         </div>
 
@@ -463,6 +541,9 @@ const PackagingEntry = () => {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Add Product</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Selecting a product auto-fills label quantities below based on packet count ÷ qty per box
+            </p>
           </CardHeader>
           <CardContent className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1">
@@ -487,6 +568,7 @@ const PackagingEntry = () => {
                 min={1}
                 value={packetCount}
                 onChange={(e) => setPacketCount(e.target.value)}
+                placeholder="e.g. 100"
               />
             </div>
             <div className="flex items-end">
@@ -521,10 +603,14 @@ const PackagingEntry = () => {
                       const product = products.find((p) => p.id === item.containerId);
                       return (
                         <TableRow key={item.containerId}>
-                          <TableCell className="font-medium">{product?.name || "Unknown Product"}</TableCell>
+                          <TableCell className="font-medium">
+                            {product?.name || "Unknown Product"}
+                          </TableCell>
                           <TableCell>{item.containerLabel}</TableCell>
                           <TableCell>{item.numberOfPackets}</TableCell>
-                          <TableCell className="text-right">{item.totalWeight.toFixed(3)}</TableCell>
+                          <TableCell className="text-right">
+                            {item.totalWeight.toFixed(3)}
+                          </TableCell>
                           <TableCell className="text-right">
                             <Button
                               variant="ghost"
@@ -545,54 +631,97 @@ const PackagingEntry = () => {
           </Card>
         )}
 
-        {/* ── Labels Section ── */}
+        {/* Labels Section */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Tag className="h-5 w-5 text-primary" />
                 Labels
-                <span className="text-sm font-normal text-muted-foreground">(Optional)</span>
+                <span className="text-sm font-normal text-muted-foreground">
+                  (auto-calculated from packets ÷ qty per box)
+                </span>
               </CardTitle>
-              <Button type="button" variant="outline" size="sm" onClick={addLabel} className="gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addManualLabel}
+                className="gap-2"
+              >
                 <Plus className="h-4 w-4" />
                 Add Label
               </Button>
             </div>
             <p className="text-sm text-muted-foreground">
-              Track label types and quantities used in this session
+              Courier boxes needed are auto-filled. You can edit before finishing.
+              Stock will be deducted when the batch is marked as finished.
             </p>
           </CardHeader>
           <CardContent>
             {labels.length === 0 ? (
               <div className="text-center py-6 text-muted-foreground">
                 <Tag className="h-10 w-10 mx-auto mb-2 opacity-40" />
-                <p className="text-sm">No labels added. Click "Add Label" to track packaging labels.</p>
+                <p className="text-sm">
+                  Add a product above — label quantities will auto-fill here.
+                </p>
               </div>
             ) : (
               <div className="space-y-3">
                 {labels.map((label, index) => (
-                  <div key={label.id} className="flex items-end gap-3 p-4 border rounded-lg bg-muted/30">
+                  <div
+                    key={label.id}
+                    className="flex items-end gap-3 p-4 border rounded-lg bg-muted/30"
+                  >
+                    {/* Label type */}
                     <div className="flex-1 space-y-1">
-                      <Label htmlFor={`label-type-${label.id}`}>Label Type {index + 1}</Label>
+                      <Label htmlFor={`label-type-${label.id}`}>
+                        Label Type {index + 1}
+                      </Label>
                       <Input
                         id={`label-type-${label.id}`}
                         value={label.type}
                         onChange={(e) => updateLabel(label.id, "type", e.target.value)}
-                        placeholder="e.g., Box, Packet, Pouch, Sticker"
+                        placeholder="Label name"
+                        // auto-filled labels have a type locked from product
+                        readOnly={label.qtyPerBox > 0}
+                        className={label.qtyPerBox > 0 ? "bg-muted/60" : ""}
                       />
                     </div>
-                    <div className="w-32 space-y-1">
-                      <Label htmlFor={`label-qty-${label.id}`}>Quantity</Label>
-                      <Input
-                        id={`label-qty-${label.id}`}
-                        type="number"
-                        min="1"
-                        value={label.quantity || ""}
-                        onChange={(e) => updateLabel(label.id, "quantity", e.target.value)}
-                        placeholder="0"
-                      />
+
+                    {/* Qty per box — read only info */}
+                    {label.qtyPerBox > 0 && (
+                      <div className="w-28 space-y-1">
+                        <Label className="text-xs text-muted-foreground">
+                          Per Box
+                        </Label>
+                        <div className="flex items-center h-10 px-3 rounded-md border bg-muted/50 text-sm text-muted-foreground">
+                          {label.qtyPerBox} pcs
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Boxes needed — editable */}
+                    <div className="w-36 space-y-1">
+                      <Label htmlFor={`label-qty-${label.id}`}>
+                        {label.qtyPerBox > 0 ? "Boxes Needed" : "Quantity"}
+                      </Label>
+                      <div className="relative">
+                        <Input
+                          id={`label-qty-${label.id}`}
+                          type="number"
+                          min="1"
+                          value={label.quantity || ""}
+                          onChange={(e) => updateLabel(label.id, "quantity", e.target.value)}
+                          placeholder="0"
+                          className="pr-12"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                          {label.qtyPerBox > 0 ? "boxes" : "pcs"}
+                        </span>
+                      </div>
                     </div>
+
                     <Button
                       type="button"
                       variant="ghost"
@@ -609,89 +738,7 @@ const PackagingEntry = () => {
           </CardContent>
         </Card>
 
-        {/* ── Courier Box Section ── */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Box className="h-5 w-5 text-primary" />
-                Courier Box
-                <span className="text-sm font-normal text-muted-foreground">(Optional)</span>
-              </CardTitle>
-              <Button
-                type="button"
-                variant={courierEnabled ? "default" : "outline"}
-                size="sm"
-                onClick={() => setCourierEnabled((v) => !v)}
-              >
-                {courierEnabled ? "Disable" : "Enable"}
-              </Button>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Calculate how many courier boxes are needed based on packets per box
-            </p>
-          </CardHeader>
-
-          {courierEnabled && (
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Box label */}
-                <div className="space-y-1">
-                  <Label>Box Description</Label>
-                  <Input
-                    value={courierBox.label}
-                    onChange={(e) => handleCourierChange("label", e.target.value)}
-                    placeholder="e.g., Medium Corrugated Box"
-                  />
-                </div>
-
-                {/* Items per box */}
-                <div className="space-y-1">
-                  <Label>Packets per Box</Label>
-                  <Input
-                    type="number"
-                    min="1"
-                    value={courierBox.itemsPerBox || ""}
-                    onChange={(e) => handleCourierChange("itemsPerBox", e.target.value)}
-                    placeholder="e.g., 10"
-                  />
-                </div>
-
-                {/* Auto-calculated boxes */}
-                <div className="space-y-1">
-                  <Label>Boxes Needed (auto)</Label>
-                  <div className="flex items-center h-10 px-3 rounded-md border bg-muted/50 font-semibold text-primary">
-                    {courierBox.boxesNeeded > 0 ? courierBox.boxesNeeded : "—"}
-                  </div>
-                </div>
-              </div>
-
-              {/* Info row */}
-              {courierBox.itemsPerBox > 0 && totalPackets > 0 && (
-                <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground">{totalPackets} total packets</span>
-                  {" ÷ "}
-                  <span className="font-medium text-foreground">{courierBox.itemsPerBox} per box</span>
-                  {" = "}
-                  <span className="font-semibold text-primary">{courierBox.boxesNeeded} boxes needed</span>
-                  {totalPackets % courierBox.itemsPerBox !== 0 && (
-                    <span className="text-amber-600 ml-2">
-                      (last box has {totalPackets % courierBox.itemsPerBox} packet{totalPackets % courierBox.itemsPerBox > 1 ? "s" : ""})
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {courierBox.itemsPerBox > 0 && totalPackets === 0 && (
-                <p className="text-sm text-muted-foreground italic">
-                  Add products above to calculate boxes needed.
-                </p>
-              )}
-            </CardContent>
-          )}
-        </Card>
-
-        {/* Packaging Loss + Remarks */}
+        {/* Loss & Remarks */}
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Loss & Remarks</CardTitle>
@@ -720,7 +767,7 @@ const PackagingEntry = () => {
           </CardContent>
         </Card>
 
-        {/* Session Summary + Save */}
+        {/* Session Summary + Actions */}
         <Card className={!isValid.valid && items.length ? "border-destructive" : ""}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
@@ -757,26 +804,35 @@ const PackagingEntry = () => {
                 <Box className="h-4 w-4 text-primary shrink-0" />
                 <span>
                   <span className="font-medium">{courierBox.boxesNeeded} courier boxes</span>
-                  {courierBox.label && <span className="text-muted-foreground"> ({courierBox.label})</span>}
-                  <span className="text-muted-foreground"> — {courierBox.itemsPerBox} packets each</span>
+                  {courierBox.label && (
+                    <span className="text-muted-foreground"> ({courierBox.label})</span>
+                  )}
+                  <span className="text-muted-foreground">
+                    {" "}— {courierBox.itemsPerBox} packets each
+                  </span>
                 </span>
               </div>
             )}
 
-            {labels.filter((l) => l.type.trim() && l.quantity > 0).length > 0 && (
+            {validLabels.length > 0 && (
               <div className="mb-4 flex flex-wrap gap-2">
-                {labels.filter((l) => l.type.trim() && l.quantity > 0).map((l) => (
+                {validLabels.map((l) => (
                   <Badge key={l.id} variant="secondary">
-                    {l.type}: {l.quantity}
+                    <Tag className="h-3 w-3 mr-1" />
+                    {l.type}: {l.quantity} {l.qtyPerBox > 0 ? "boxes" : "pcs"}
                   </Badge>
                 ))}
               </div>
             )}
 
             <div className="flex flex-col sm:flex-row gap-3">
+              {/* Save Packaging */}
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button disabled={!isValid.valid || !items.length || isSubmitting} className="flex-1">
+                  <Button
+                    disabled={!isValid.valid || !items.length || isSubmitting}
+                    className="flex-1"
+                  >
                     Save Packaging
                   </Button>
                 </AlertDialogTrigger>
@@ -784,9 +840,10 @@ const PackagingEntry = () => {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Confirm Packaging</AlertDialogTitle>
                     <AlertDialogDescription>
-                      This will record {totalPackagedWeight.toFixed(3)} kg with {lossValue.toFixed(3)} kg loss.
-                      {courierEnabled && courierBox.boxesNeeded > 0 && (
-                        <> {courierBox.boxesNeeded} courier boxes will also be recorded.</>
+                      This will record {totalPackagedWeight.toFixed(3)} kg with{" "}
+                      {lossValue.toFixed(3)} kg loss.
+                      {validLabels.length > 0 && (
+                        <> Label stock will be deducted when the batch is marked as finished.</>
                       )}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
@@ -797,6 +854,7 @@ const PackagingEntry = () => {
                 </AlertDialogContent>
               </AlertDialog>
 
+              {/* Mark as Finished */}
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button
@@ -811,11 +869,19 @@ const PackagingEntry = () => {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Mark Batch as Finished</AlertDialogTitle>
                     <AlertDialogDescription>
-                      This will mark the batch as finished. Any remaining quantity ({batch.remainingQuantity.toFixed(3)} kg) will be counted as loss.
-                      {items.length > 0 && (
-                        <><br /><br />Any items you've added will also be saved in this session.</>
+                      Remaining {batch.remainingQuantity.toFixed(3)} kg will be counted as loss.
+                      {validLabels.length > 0 && (
+                        <>
+                          <br /><br />
+                          <strong>Label stock will be deducted from inventory:</strong>
+                          <br />
+                          {validLabels.map((l) => (
+                            <span key={l.id} className="block">
+                              • {l.type}: {l.quantity} {l.qtyPerBox > 0 ? "boxes" : "pcs"}
+                            </span>
+                          ))}
+                        </>
                       )}
-                      <br /><br />Are you sure you want to continue?
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>

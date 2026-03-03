@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Save, Package, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save, Package, Loader2, Plus, Trash2, Tag } from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
@@ -35,7 +35,7 @@ interface Formulation {
 interface LabelEntry {
   id: string;
   type: string;
-  quantity: number;
+  quantity: number; // quantity per courier box (e.g. 10 jars fit in 1 box)
 }
 
 interface NewProduct {
@@ -67,11 +67,7 @@ export default function CreateProductPage() {
       try {
         setIsLoading(true);
         const response = await fetch(`/api/formulations/${formulationId}`);
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch formulation');
-        }
-
+        if (!response.ok) throw new Error('Failed to fetch formulation');
         const data = await response.json();
         setFormulation(data);
       } catch (error) {
@@ -86,31 +82,20 @@ export default function CreateProductPage() {
       }
     };
 
-    if (formulationId) {
-      fetchFormulation();
-    }
+    if (formulationId) fetchFormulation();
   }, [formulationId, toast]);
 
-  const handleInputChange = (
-    field: keyof NewProduct,
-    value: string | number
-  ) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+  const handleInputChange = (field: keyof NewProduct, value: string | number) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  // ── Label management functions ──
   const addLabel = () => {
-    const newLabel: LabelEntry = {
-      id: `label-${Date.now()}`,
-      type: '',
-      quantity: 0,
-    };
     setFormData((prev) => ({
       ...prev,
-      labels: [...prev.labels, newLabel],
+      labels: [
+        ...prev.labels,
+        { id: `label-${Date.now()}`, type: '', quantity: 0 },
+      ],
     }));
   };
 
@@ -144,14 +129,13 @@ export default function CreateProductPage() {
       return;
     }
 
-    // Validate labels
     const invalidLabels = formData.labels.filter(
       (label) => !label.type.trim() || label.quantity <= 0
     );
     if (invalidLabels.length > 0) {
       toast({
         title: 'Validation Error',
-        description: 'All labels must have a type and quantity greater than 0.',
+        description: 'All labels must have a type and quantity per courier box greater than 0.',
         variant: 'destructive',
       });
       return;
@@ -160,29 +144,18 @@ export default function CreateProductPage() {
     try {
       setIsSaving(true);
 
-      const response = await fetch(
-        `/api/formulations/${formulationId}/products`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(formData),
-        }
-      );
+      const response = await fetch(`/api/formulations/${formulationId}/products`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
 
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Failed to create product');
       }
 
-      await response.json();
-
-      toast({
-        title: 'Success',
-        description: 'Product created successfully.',
-      });
-
+      toast({ title: 'Success', description: 'Product created successfully.' });
       router.push(`/formulations/${formulationId}/products`);
     } catch (error) {
       console.error('Error creating product:', error);
@@ -269,7 +242,6 @@ export default function CreateProductPage() {
                 Product Details
               </CardTitle>
             </CardHeader>
-
             <CardContent className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
@@ -277,9 +249,7 @@ export default function CreateProductPage() {
                   <Input
                     id="name"
                     value={formData.name}
-                    onChange={(e) =>
-                      handleInputChange('name', e.target.value)
-                    }
+                    onChange={(e) => handleInputChange('name', e.target.value)}
                     placeholder="Enter product name"
                     required
                   />
@@ -294,10 +264,7 @@ export default function CreateProductPage() {
                     min="0"
                     value={formData.quantity}
                     onChange={(e) =>
-                      handleInputChange(
-                        'quantity',
-                        parseFloat(e.target.value) || 0
-                      )
+                      handleInputChange('quantity', parseFloat(e.target.value) || 0)
                     }
                     placeholder="0.00"
                     required
@@ -329,7 +296,11 @@ export default function CreateProductPage() {
           <Card className="mt-6">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">Labels (Optional)</CardTitle>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Tag className="h-5 w-5" />
+                  Labels
+                  <span className="text-sm font-normal text-muted-foreground">(Optional)</span>
+                </CardTitle>
                 <Button
                   type="button"
                   variant="outline"
@@ -342,16 +313,19 @@ export default function CreateProductPage() {
                 </Button>
               </div>
               <p className="text-sm text-muted-foreground">
-                Track different packaging types and quantities
+                Define label types and how many units fit per courier box.
+                This will be used to auto-calculate label quantities during packaging.
               </p>
             </CardHeader>
 
             <CardContent>
               {formData.labels.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                  <Tag className="h-12 w-12 mx-auto mb-3 opacity-40" />
                   <p>No labels added yet</p>
-                  <p className="text-sm">Click "Add Label" to start tracking packaging</p>
+                  <p className="text-sm">
+                    Click "Add Label" to define packaging label types
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -360,6 +334,7 @@ export default function CreateProductPage() {
                       key={label.id}
                       className="flex items-end gap-3 p-4 border rounded-lg bg-muted/30"
                     >
+                      {/* Label type */}
                       <div className="flex-1 space-y-2">
                         <Label htmlFor={`label-type-${label.id}`}>
                           Label Type {index + 1}
@@ -370,24 +345,36 @@ export default function CreateProductPage() {
                           onChange={(e) =>
                             updateLabel(label.id, 'type', e.target.value)
                           }
-                          placeholder="e.g., Box, Packet, Container"
+                          placeholder="e.g., 100g Jar, 500g Box"
                         />
                       </div>
 
-                      <div className="w-32 space-y-2">
+                      {/* Qty per courier box */}
+                      <div className="w-48 space-y-2">
                         <Label htmlFor={`label-quantity-${label.id}`}>
-                          Quantity
+                          Qty per Courier Box
                         </Label>
-                        <Input
-                          id={`label-quantity-${label.id}`}
-                          type="number"
-                          min="1"
-                          value={label.quantity}
-                          onChange={(e) =>
-                            updateLabel(label.id, 'quantity', e.target.value)
-                          }
-                          placeholder="0"
-                        />
+                        <div className="relative">
+                          <Input
+                            id={`label-quantity-${label.id}`}
+                            type="number"
+                            min="1"
+                            value={label.quantity || ''}
+                            onChange={(e) =>
+                              updateLabel(label.id, 'quantity', e.target.value)
+                            }
+                            placeholder="e.g., 10"
+                            className="pr-14"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                            pcs/box
+                          </span>
+                        </div>
+                        {label.quantity > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            {label.quantity} {label.type || 'units'} fit in 1 box
+                          </p>
+                        )}
                       </div>
 
                       <Button
@@ -395,7 +382,7 @@ export default function CreateProductPage() {
                         variant="ghost"
                         size="icon"
                         onClick={() => removeLabel(label.id)}
-                        className="text-destructive hover:text-destructive"
+                        className="text-destructive hover:text-destructive mb-0.5"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -414,7 +401,6 @@ export default function CreateProductPage() {
                 Cancel
               </Link>
             </Button>
-
             <Button type="submit" disabled={isSaving} className="gap-2">
               {isSaving ? (
                 <>
