@@ -131,7 +131,7 @@ export async function GET(request: NextRequest) {
           packagingLoss: session.packagingLoss,
           totalPackagedWeight: 0, // Can be parsed from remarks if needed
           remarks: session.remarks,
-          performedBy: session.performedBy.fullName,
+          performedBy: session.performedBy?.fullName ?? "Unknown",
         };
       });
 
