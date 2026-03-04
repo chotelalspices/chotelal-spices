@@ -97,7 +97,7 @@ export async function PATCH(
           id: updatedSession.id,
           date: updatedSession.date.toISOString(),
           batchNumber: updatedSession.batch?.batchNumber || '',
-          performedBy: updatedSession.performedBy.fullName,
+          performedBy: updatedSession.performedBy?.fullName ?? null,
         },
       },
       { status: 200 }
