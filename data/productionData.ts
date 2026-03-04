@@ -48,6 +48,9 @@ export interface ProductionBatch {
   formulationId: string;
   formulationName: string;
   plannedQuantity: number;
+  availableQuantity?: number; // add this
+  producedQuantity?: number;  // also needed because you use it
+  numberOfLots?: number;      // also used in your code
   unit: 'kg' | 'gm';
   expectedLossPercent: number;
   lossQuantity: number;
