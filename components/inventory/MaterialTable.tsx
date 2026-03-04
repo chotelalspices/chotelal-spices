@@ -76,7 +76,7 @@ export function MaterialTable({ materials }: MaterialTableProps) {
                       stockStatus === 'normal' && 'text-foreground'
                     )}
                   >
-                    {formatQuantity(material.availableStock, material.unit)}
+                    {parseFloat(formatQuantity(material.availableStock, material.unit)).toFixed(2)}
                   </span>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
