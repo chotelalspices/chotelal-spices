@@ -268,7 +268,7 @@ export async function POST(request: NextRequest) {
         packagingLoss: createdSession.packagingLoss,
         totalPackagedWeight,
         remarks: createdSession.remarks,
-        performedBy: createdSession.performedBy.fullName,
+        performedBy: createdSession.performedBy?.fullName ?? null,
         courierBox: createdSession.courierBoxes[0] ?? null,
         labels: createdSession.sessionLabels.map((l) => ({
           type: l.type,
