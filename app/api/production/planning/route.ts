@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
         | "sufficient"
         | "insufficient",
       emailSent: plan.emailSent,
-      createdBy: plan.createdBy.fullName,
+      createdBy: plan.createdBy?.fullName ?? null,
       createdAt: plan.createdAt.toISOString(),
     }));
 
@@ -278,7 +278,7 @@ export async function POST(request: NextRequest) {
               <p><strong>Product:</strong> ${formulation.name}</p>
               <p><strong>Planned Quantity:</strong> ${finalQuantity} ${unit}</p>
               <p><strong>Planned Date:</strong> ${new Date(plannedDate).toLocaleDateString()}</p>
-              <p><strong>Created By:</strong> ${plannedProduction.createdBy.fullName}</p>
+              <p><strong>Created By:</strong> ${plannedProduction.createdBy?.fullName ?? "Unknown"}</p>
               <p><strong>Material Status:</strong> ${finalMaterialStatus === "sufficient" ? "✅ Sufficient" : "⚠️ Insufficient"}</p>
               
               <h3>📦 Material Requirements:</h3>
@@ -347,7 +347,7 @@ export async function POST(request: NextRequest) {
           | "sufficient"
           | "insufficient",
         emailSent: plannedProduction.emailSent,
-        createdBy: plannedProduction.createdBy.fullName,
+        createdBy: plannedProduction.createdBy?.fullName ?? null,
         createdAt: plannedProduction.createdAt.toISOString(),
       },
       { status: 201 }

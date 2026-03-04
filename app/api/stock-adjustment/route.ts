@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
   try {
     // Verify authentication
     const session = await getServerSession(authOptions);
-    
+
     if (!session || !session.user) {
       return NextResponse.json(
         { error: 'Unauthorized. Please log in to perform this action.' },
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
 
     // Get the authenticated user's ID
     const authenticatedUserId = (session.user as any).id as string;
-    
+
     if (!authenticatedUserId) {
       return NextResponse.json(
         { error: 'User ID not found in session.' },
@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
     // Validate that reducing stock won't go below zero
     if (adjustmentType === 'reduce' && quantityNum > currentStock) {
       return NextResponse.json(
-        { 
+        {
           error: 'Cannot reduce stock below zero',
           currentStock,
           requestedReduction: quantityNum,
@@ -180,8 +180,8 @@ export async function POST(request: NextRequest) {
     });
 
     // Calculate new stock after adjustment
-    const newStock = adjustmentType === 'add' 
-      ? currentStock + quantityNum 
+    const newStock = adjustmentType === 'add'
+      ? currentStock + quantityNum
       : currentStock - quantityNum;
 
     return NextResponse.json(
@@ -198,17 +198,19 @@ export async function POST(request: NextRequest) {
         reference: stockMovement.reference,
         currentStock,
         newStock,
-        performedBy: {
-          id: stockMovement.performedBy.id,
-          fullName: stockMovement.performedBy.fullName,
-        },
+        performedBy: stockMovement.performedBy
+          ? {
+            id: stockMovement.performedBy.id,
+            fullName: stockMovement.performedBy.fullName,
+          }
+          : null,
         createdAt: stockMovement.createdAt.toISOString(),
       },
       { status: 201 }
     );
   } catch (error) {
     console.error('Error creating stock adjustment:', error);
-    
+
     // Handle Prisma validation errors
     if (error instanceof Error) {
       if (error.message.includes('Unique constraint')) {
