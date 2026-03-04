@@ -115,7 +115,7 @@ export async function GET(
       profit: salesRecord.profit || 0,
       saleDate: salesRecord.saleDate.toISOString().split('T')[0],
       remarks: salesRecord.remarks,
-      createdBy: salesRecord.createdBy.fullName,
+      createdBy: salesRecord.createdBy?.fullName ?? null,
       createdAt: salesRecord.createdAt.toISOString(),
     };
 
@@ -337,7 +337,7 @@ export async function PUT(
       profit: result.profit || 0,
       saleDate: result.saleDate.toISOString().split('T')[0],
       remarks: result.remarks,
-      createdBy: result.createdBy.fullName,
+      createdBy: result.createdBy?.fullName ?? null,
       createdAt: result.createdAt.toISOString(),
     };
 

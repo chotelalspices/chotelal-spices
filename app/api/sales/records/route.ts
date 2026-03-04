@@ -92,7 +92,7 @@ export async function GET(request: NextRequest) {
       amountPaid: record.amountPaid || ((record.quantitySold * record.sellingPrice) - ((record.quantitySold * record.sellingPrice) * ((record.discount || 0) / 100))),
       amountDue: record.amountDue || 0,
       paymentNote: record.paymentNote || null,
-      createdBy: record.createdBy.fullName,
+      createdBy: record.createdBy?.fullName ?? null,
       createdAt: record.createdAt.toISOString(),
     }));
 
@@ -305,7 +305,7 @@ export async function POST(request: NextRequest) {
         remarks: result.remarks,
         totalAmount: (result.quantitySold * result.sellingPrice) - ((result.quantitySold * result.sellingPrice) * ((result.discount || 0) / 100)),
         saleDate: result.saleDate.toISOString(),
-        createdBy: result.createdBy.fullName,
+        createdBy: result.createdBy?.fullName ?? null,
         createdAt: result.createdAt.toISOString(),
         remainingQuantity: (product.availableInventory || 0) - parsedQuantity,
       },
