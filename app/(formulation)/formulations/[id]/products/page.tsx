@@ -183,7 +183,7 @@ export default function FormulationProducts() {
         <div className="page-header">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" asChild>
-              <Link href={`/formulations/${formulationId}`}>
+              <Link href={"/formulations"}>
                 <ArrowLeft className="h-5 w-5" />
               </Link>
             </Button>
