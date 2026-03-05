@@ -51,6 +51,21 @@ interface SessionCourierBox {
   totalPackets: number;
 }
 
+interface ProductLabel {
+  type: string;
+  quantity: number; // qtyPerBox
+}
+
+interface Product {
+  id: string;
+  name: string;
+  formulationId: string;
+  quantity: number;
+  unit: "kg" | "gm";
+  availableInventory: number;
+  labels: ProductLabel[];
+}
+
 interface PackagingSession {
   id: string;
   batchNumber: string;
@@ -73,6 +88,7 @@ interface PackagingSession {
 interface PackagingBatch {
   batchNumber: string;
   productName: string;
+  formulationId: string;
   producedQuantity: number;
   alreadyPackaged: number;
   totalLoss: number;
@@ -82,6 +98,9 @@ interface PackagingBatch {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const isCourierBoxLabel = (name: string) =>
+  name.toLowerCase().includes("courier box");
 
 const parseProductsFromRemarks = (remarks?: string) => {
   if (!remarks) return [];
@@ -102,9 +121,26 @@ const parseProductsFromRemarks = (remarks?: string) => {
   return products;
 };
 
+/** Given session labels + all products, compute box count for a label type */
+const getBoxCount = (
+  sessionLabels: SessionLabel[],
+  labelType: string,
+  products: Product[]
+): number | null => {
+  const label = sessionLabels.find((l) => l.type === labelType);
+  if (!label) return null;
+  for (const p of products) {
+    const pl = p.labels.find((l) => l.type === labelType);
+    if (pl && pl.quantity > 0) {
+      return Math.ceil(label.quantity / pl.quantity);
+    }
+  }
+  return label.quantity; // fallback: show packets if no product definition found
+};
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-/** Inline labels display */
+/** Inline labels display (mobile) */
 const LabelsDisplay = ({ labels }: { labels?: SessionLabel[] }) => {
   if (!labels || labels.length === 0) return null;
   return (
@@ -121,7 +157,7 @@ const LabelsDisplay = ({ labels }: { labels?: SessionLabel[] }) => {
   );
 };
 
-/** Inline courier box display */
+/** Inline courier box display (mobile) */
 const CourierBoxDisplay = ({ courierBoxes }: { courierBoxes?: SessionCourierBox[] }) => {
   const box = courierBoxes?.[0];
   if (!box) return null;
@@ -147,6 +183,7 @@ const PackagingSummary = () => {
 
   const isMobile = useIsMobile();
   const [batch, setBatch] = useState<PackagingBatch | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -161,16 +198,31 @@ const PackagingSummary = () => {
       try {
         setIsLoading(true);
         setError(null);
+
         const response = await fetch(
           `/api/packaging/batches/${encodeURIComponent(batchNumber)}`
         );
         if (!response.ok) {
-          throw new Error(response.status === 404 ? "Batch not found" : "Failed to fetch packaging batch");
+          throw new Error(
+            response.status === 404 ? "Batch not found" : "Failed to fetch packaging batch"
+          );
         }
-        const data = await response.json();
+        const data: PackagingBatch = await response.json();
         setBatch(data);
+
+        // Fetch product definitions so we can compute box counts
+        if (data.formulationId) {
+          const productsRes = await fetch(
+            `/api/formulations/${data.formulationId}/products/packaging`
+          );
+          if (productsRes.ok) {
+            const productsData: Product[] = await productsRes.json();
+            setProducts(productsData);
+          }
+        }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Failed to load packaging batch";
+        const errorMessage =
+          error instanceof Error ? error.message : "Failed to load packaging batch";
         setError(errorMessage);
         toast({ title: "Error", description: errorMessage, variant: "destructive" });
       } finally {
@@ -212,7 +264,9 @@ const PackagingSummary = () => {
         setBatch({
           ...batch,
           sessions: batch.sessions.map((s) =>
-            s.id === sessionId ? { ...s, date: new Date(editedDate).toISOString() } : s
+            s.id === sessionId
+              ? { ...s, date: new Date(editedDate).toISOString() }
+              : s
           ),
         });
       }
@@ -251,8 +305,13 @@ const PackagingSummary = () => {
         <div className="flex flex-col items-center justify-center py-12">
           <Package className="h-16 w-16 text-muted-foreground mb-4" />
           <h2 className="text-xl font-semibold mb-2">Batch Not Found</h2>
-          <p className="text-muted-foreground mb-4">{error || "The requested batch could not be found."}</p>
-          <Button className="h-11 min-w-[200px] justify-center" onClick={() => router.push("/packaging")}>
+          <p className="text-muted-foreground mb-4">
+            {error || "The requested batch could not be found."}
+          </p>
+          <Button
+            className="h-11 min-w-[200px] justify-center"
+            onClick={() => router.push("/packaging")}
+          >
             Back to Packaging
           </Button>
         </div>
@@ -261,10 +320,30 @@ const PackagingSummary = () => {
   }
 
   const summaryItems = [
-    { label: "Total Produced", value: `${batch.producedQuantity.toFixed(2)} kg`, icon: Boxes, color: "bg-muted/50 text-foreground" },
-    { label: "Total Packaged", value: `${batch.alreadyPackaged.toFixed(2)} kg`, icon: PackageCheck, color: "bg-green-100 text-black dark:bg-green-900/30 dark:text-black" },
-    { label: "Total Loss", value: `${batch.totalLoss.toFixed(3)} kg`, icon: AlertTriangle, color: "bg-amber-100 text-black dark:bg-amber-900/30 dark:text-black" },
-    { label: "Remaining", value: `${batch.remainingQuantity.toFixed(2)} kg`, icon: Package, color: "bg-primary/10 text-primary" },
+    {
+      label: "Total Produced",
+      value: `${batch.producedQuantity.toFixed(2)} kg`,
+      icon: Boxes,
+      color: "bg-muted/50 text-foreground",
+    },
+    {
+      label: "Total Packaged",
+      value: `${batch.alreadyPackaged.toFixed(2)} kg`,
+      icon: PackageCheck,
+      color: "bg-green-100 text-black dark:bg-green-900/30 dark:text-black",
+    },
+    {
+      label: "Total Loss",
+      value: `${batch.totalLoss.toFixed(3)} kg`,
+      icon: AlertTriangle,
+      color: "bg-amber-100 text-black dark:bg-amber-900/30 dark:text-black",
+    },
+    {
+      label: "Remaining",
+      value: `${batch.remainingQuantity.toFixed(2)} kg`,
+      icon: Package,
+      color: "bg-primary/10 text-primary",
+    },
   ];
 
   const completionPercent = (batch.alreadyPackaged / batch.producedQuantity) * 100;
@@ -325,7 +404,10 @@ const PackagingSummary = () => {
               <span className="font-medium">{completionPercent.toFixed(1)}%</span>
             </div>
             <div className="h-3 bg-muted rounded-full overflow-hidden">
-              <div className="h-full bg-primary transition-all" style={{ width: `${completionPercent}%` }} />
+              <div
+                className="h-full bg-primary transition-all"
+                style={{ width: `${completionPercent}%` }}
+              />
             </div>
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>0 kg</span>
@@ -365,17 +447,36 @@ const PackagingSummary = () => {
                                 className="h-7 w-32 text-xs"
                                 disabled={isSavingDate}
                               />
-                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => saveDate(session.id)} disabled={isSavingDate}>
-                                {isSavingDate ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5 text-green-600" />}
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7"
+                                onClick={() => saveDate(session.id)}
+                                disabled={isSavingDate}
+                              >
+                                {isSavingDate
+                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  : <Check className="h-3.5 w-3.5 text-green-600" />}
                               </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={cancelEditingDate} disabled={isSavingDate}>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7"
+                                onClick={cancelEditingDate}
+                                disabled={isSavingDate}
+                              >
                                 <X className="h-3.5 w-3.5 text-red-600" />
                               </Button>
                             </div>
                           ) : (
                             <>
                               <span>{format(new Date(session.date), "dd MMM yyyy")}</span>
-                              <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => startEditingDate(session.id, session.date)}>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-6 w-6"
+                                onClick={() => startEditingDate(session.id, session.date)}
+                              >
                                 <Pencil className="h-3 w-3" />
                               </Button>
                             </>
@@ -390,7 +491,10 @@ const PackagingSummary = () => {
                       {/* Products */}
                       <div className="space-y-2 mb-3">
                         {parseProductsFromRemarks(session.remarks).map((product, index) => (
-                          <div key={index} className="flex justify-between text-sm bg-background rounded-lg p-2">
+                          <div
+                            key={index}
+                            className="flex justify-between text-sm bg-background rounded-lg p-2"
+                          >
                             <span>{product.name} × {product.packets}</span>
                             <span className="font-medium">{product.weight.toFixed(3)} kg</span>
                           </div>
@@ -433,7 +537,7 @@ const PackagingSummary = () => {
                     <TableHead>Date</TableHead>
                     <TableHead>Products</TableHead>
                     <TableHead>Labels</TableHead>
-                    <TableHead>Courier Boxes</TableHead>
+                    <TableHead>Boxes</TableHead>
                     <TableHead className="text-right">Packaged (kg)</TableHead>
                     <TableHead className="text-right">Loss (kg)</TableHead>
                     <TableHead>Performed By</TableHead>
@@ -454,17 +558,36 @@ const PackagingSummary = () => {
                               className="h-8 w-36"
                               disabled={isSavingDate}
                             />
-                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => saveDate(session.id)} disabled={isSavingDate}>
-                              {isSavingDate ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4 text-green-600" />}
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8"
+                              onClick={() => saveDate(session.id)}
+                              disabled={isSavingDate}
+                            >
+                              {isSavingDate
+                                ? <Loader2 className="h-4 w-4 animate-spin" />
+                                : <Check className="h-4 w-4 text-green-600" />}
                             </Button>
-                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={cancelEditingDate} disabled={isSavingDate}>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8"
+                              onClick={cancelEditingDate}
+                              disabled={isSavingDate}
+                            >
                               <X className="h-4 w-4 text-red-600" />
                             </Button>
                           </div>
                         ) : (
                           <div className="flex items-center gap-2">
                             <span>{format(new Date(session.date), "dd MMM yyyy")}</span>
-                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startEditingDate(session.id, session.date)}>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7"
+                              onClick={() => startEditingDate(session.id, session.date)}
+                            >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                           </div>
@@ -497,25 +620,55 @@ const PackagingSummary = () => {
                         )}
                       </TableCell>
 
-                      {/* Courier box cell */}
+                      {/* Boxes cell — regular labels use computed box count, courier box uses stored record */}
                       <TableCell>
-                        {session.courierBoxes && session.courierBoxes.length > 0 ? (
-                          <div className="flex items-center gap-1 text-sm">
-                            <Box className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <span>
-                              <span className="font-medium">{session.courierBoxes[0].boxesNeeded}</span>
-                              <span className="text-muted-foreground text-xs">
-                                {" "}({session.courierBoxes[0].itemsPerBox}/box)
-                                {session.courierBoxes[0].label && ` · ${session.courierBoxes[0].label}`}
+                        <div className="flex flex-col gap-1">
+
+                          {/* Regular (non-courier-box) labels → compute boxes from product definition */}
+                          {session.labels &&
+                            session.labels
+                              .filter((l) => !isCourierBoxLabel(l.type))
+                              .map((l, i) => {
+                                const boxes = getBoxCount(session.labels!, l.type, products);
+                                return (
+                                  <div key={i} className="flex items-center gap-1 text-sm">
+                                    <Box className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                    <span className="font-medium">
+                                      {boxes !== null
+                                        ? boxes.toLocaleString("en-IN")
+                                        : l.quantity.toLocaleString("en-IN")}
+                                    </span>
+                                    <span className="text-muted-foreground text-xs">
+                                      boxes · {l.type}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+
+                          {/* Courier box entry → use stored boxesNeeded */}
+                          {session.courierBoxes && session.courierBoxes.length > 0 && (
+                            <div className="flex items-center gap-1 text-sm">
+                              <Box className="h-3.5 w-3.5 text-primary shrink-0" />
+                              <span className="font-medium">
+                                {session.courierBoxes[0].boxesNeeded.toLocaleString("en-IN")}
                               </span>
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
+                              <span className="text-muted-foreground text-xs">
+                                boxes · {session.courierBoxes[0].label || "courier box"}
+                                {` · ${session.courierBoxes[0].itemsPerBox}/box`}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Fallback */}
+                          {(!session.labels ||
+                            session.labels.filter((l) => !isCourierBoxLabel(l.type)).length === 0) &&
+                            (!session.courierBoxes || session.courierBoxes.length === 0) && (
+                              <span className="text-muted-foreground text-xs">—</span>
+                            )}
+                        </div>
                       </TableCell>
 
-                      {/* Weight */}
+                      {/* Packaged weight */}
                       <TableCell className="text-right font-medium">
                         {session.totalPackagedWeight.toFixed(3)}
                       </TableCell>
@@ -527,6 +680,7 @@ const PackagingSummary = () => {
 
                       {/* Performer */}
                       <TableCell>{session.performedBy}</TableCell>
+
                     </TableRow>
                   ))}
                 </TableBody>
@@ -537,11 +691,18 @@ const PackagingSummary = () => {
 
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-3">
-          <Button variant="outline" className="h-11 min-w-[200px]" onClick={() => router.push("/packaging")}>
+          <Button
+            variant="outline"
+            className="h-11 min-w-[200px]"
+            onClick={() => router.push("/packaging")}
+          >
             Back to Batches
           </Button>
           {batch.status !== "Completed" && (
-            <Button className="h-11 min-w-[200px]" onClick={() => router.push(`/packaging/${batchNumber}/entry`)}>
+            <Button
+              className="h-11 min-w-[200px]"
+              onClick={() => router.push(`/packaging/${batchNumber}/entry`)}
+            >
               Continue Packaging
             </Button>
           )}
