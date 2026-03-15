@@ -15,6 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -36,6 +37,7 @@ interface LabelEntry {
   id: string;
   type: string;
   quantity: number;
+  semiPackageable: boolean;
 }
 
 interface ProductData {
@@ -47,6 +49,7 @@ interface ProductData {
   labels: Array<{
     type: string;
     quantity: number;
+    semiPackageable: boolean;
   }>;
 }
 
@@ -104,6 +107,7 @@ export default function EditProductPage() {
             id: `label-${index}`,
             type: label.type,
             quantity: label.quantity,
+            semiPackageable: label.semiPackageable || false,
           })) || [],
         });
       } catch (error) {
@@ -140,6 +144,7 @@ export default function EditProductPage() {
       id: `label-${Date.now()}`,
       type: '',
       quantity: 0,
+      semiPackageable: false,
     };
     setFormData((prev) => ({
       ...prev,
@@ -154,7 +159,7 @@ export default function EditProductPage() {
     }));
   };
 
-  const updateLabel = (id: string, field: 'type' | 'quantity', value: string | number) => {
+  const updateLabel = (id: string, field: 'type' | 'quantity' | 'semiPackageable', value: string | number | boolean) => {
     setFormData((prev) => ({
       ...prev,
       labels: prev.labels.map((label) =>
@@ -377,65 +382,69 @@ export default function EditProductPage() {
               </p>
             </CardHeader>
 
-            <CardContent>
-              {formData.labels.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                  <p>No labels added yet</p>
-                  <p className="text-sm">Click "Add Label" to start tracking packaging</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {formData.labels.map((label, index) => (
-                    <div
-                      key={label.id}
-                      className="flex items-end gap-3 p-4 border rounded-lg bg-muted/30"
-                    >
-                      <div className="flex-1 space-y-2">
-                        <Label htmlFor={`label-type-${label.id}`}>
-                          Label Type {index + 1}
-                        </Label>
-                        <Input
-                          id={`label-type-${label.id}`}
-                          value={label.type}
-                          onChange={(e) =>
-                            updateLabel(label.id, 'type', e.target.value)
-                          }
-                          placeholder="e.g., Box, Packet, Container"
-                        />
-                      </div>
-
-                      <div className="w-32 space-y-2">
-                        <Label htmlFor={`label-quantity-${label.id}`}>
-                          Quantity
-                        </Label>
-                        <Input
-                          id={`label-quantity-${label.id}`}
-                          type="number"
-                          min="1"
-                          value={label.quantity}
-                          onChange={(e) =>
-                            updateLabel(label.id, 'quantity', e.target.value)
-                          }
-                          placeholder="0"
-                        />
-                      </div>
-
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => removeLabel(label.id)}
-                        className="text-destructive hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+          <CardContent>
+            {formData.labels.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                <p>No labels added yet</p>
+                <p className="text-sm">Click "Add Label" to start tracking packaging</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {formData.labels.map((label, index) => (
+                  <div
+                    key={label.id}
+                    className="flex items-end gap-3 p-4 border rounded-lg bg-muted/30"
+                  >
+                    <div className="flex-1 space-y-2">
+                      <Label htmlFor={`label-type-${label.id}`}>
+                        Label Type {index + 1}
+                      </Label>
+                      <Input
+                        id={`label-type-${label.id}`}
+                        value={label.type}
+                        onChange={(e) =>
+                          updateLabel(label.id, 'type', e.target.value)
+                        }
+                        placeholder="e.g., Box, Packet, Container"
+                      />
                     </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+
+                    <div className="w-32 space-y-2">
+                      <Label htmlFor={`label-quantity-${label.id}`}>
+                        Quantity
+                      </Label>
+                      <Input
+                        id={`label-quantity-${label.id}`}
+                        type="number"
+                        min="1"
+                        value={label.quantity}
+                        onChange={(e) =>
+                          updateLabel(label.id, 'quantity', e.target.value)
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div className="w-32 space-y-2">
+                      <Label htmlFor={`label-semi-packageable-${label.id}`}>
+                        Semi-packageable
+                      </Label>
+                      <Checkbox
+                        id={`label-semi-packageable-${label.id}`}
+                        checked={label.semiPackageable}
+                        onCheckedChange={(checked) =>
+                          updateLabel(label.id, 'semiPackageable', checked)
+                        }
+                        className="mt-4 ml-[50%]"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
           {/* Actions */}
           <div className="flex justify-between gap-3 mt-6">

@@ -42,6 +42,7 @@ export async function GET(
       labels: product.productLabels.map((pl) => ({
         type: pl.label.name,
         quantity: pl.quantity,
+        semiPackageable: pl.semiPackageable,
       })),
     };
 
@@ -81,7 +82,7 @@ export async function PUT(
       );
     }
 
-    const labels: Array<{ type: string; quantity: number }> = body.labels || [];
+    const labels: Array<{ type: string; quantity: number; semiPackageable: boolean }> = body.labels || [];
 
     const invalidLabels = labels.filter(
       (label) => !label.type || label.quantity <= 0
@@ -121,6 +122,7 @@ export async function PUT(
           productLabels: {
             create: labels.map((label) => ({
               quantity: label.quantity,
+              semiPackageable: label.semiPackageable || false,
               label: {
                 connectOrCreate: {
                   where: { name: label.type.toLowerCase().trim() },
@@ -148,6 +150,7 @@ export async function PUT(
         labels: updatedProduct.productLabels.map((pl) => ({
           type: pl.label.name,
           quantity: pl.quantity,
+          semiPackageable: pl.semiPackageable,
         })),
         productLabels: undefined,
       },

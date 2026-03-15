@@ -338,10 +338,11 @@ model LabelMovement {
 }
 
 model ProductLabel {
-  id        String @id @default(uuid())
-  productId String
-  labelId   String
-  quantity  Int
+  id              String @id @default(uuid())
+  productId       String
+  labelId         String
+  quantity        Int
+  semiPackageable Boolean @default(false)
 
   product FinishedProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
   label   Label           @relation(fields: [labelId], references: [id])
