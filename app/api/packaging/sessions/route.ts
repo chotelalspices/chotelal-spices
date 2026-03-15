@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const labelsArray: Array<{ type: string; quantity: number; semiPackaged?: boolean }> =
+    const labelsArray: Array<{ type: string; quantity: number; semiPackaged?: boolean; isConversion?: boolean }> =
       Array.isArray(labels) ? labels.filter((l) => l.type?.trim() && l.quantity > 0) : [];
 
     // ── Find batch ──────────────────────────────────────────────────────────
@@ -97,10 +97,12 @@ export async function POST(request: NextRequest) {
     // ── Pre-fetch label records OUTSIDE transaction ─────────────────────────
     let labelRecordsForTx: Array<{ id: string; name: string }> = [];
     let hasSemiPackagedLabels = false;
+    let hasConversionLabels = false;
 
     if (labelsArray.length > 0) {
-      // Check if any labels are semi-packaged
+      // Check if any labels are semi-packaged or conversions
       hasSemiPackagedLabels = labelsArray.some(l => l.semiPackaged);
+      hasConversionLabels = labelsArray.some(l => l.isConversion);
 
       const labelNames = labelsArray.map((l) => l.type.toLowerCase().trim());
       const foundLabels = await prisma.label.findMany({
@@ -108,8 +110,9 @@ export async function POST(request: NextRequest) {
         include: { labelMovements: true },
       });
 
-      // Only validate stock for non-semi-packaged sessions
-      if (!hasSemiPackagedLabels) {
+      // Only validate stock for non-semi-packaged sessions and conversions
+      // Conversions should still validate label stock since we're consuming labels
+      if (!hasSemiPackagedLabels || hasConversionLabels) {
         for (const entry of labelsArray) {
           const labelRecord = foundLabels.find(
             (fl) => fl.name === entry.type.toLowerCase().trim()
@@ -182,11 +185,16 @@ export async function POST(request: NextRequest) {
 
         // 3. Update session remarks
         if (packagingDetails.length > 0) {
+          // Check if this is a semi-packaged session (all labels are semi-packaged)
+          const isSemiPackagedSession = labelsArray.length > 0 && 
+            labelsArray.every((l: any) => l.semiPackaged === true);
+
           await tx.packagingSession.update({
             where: { id: packagingSession.id },
             data: {
-              remarks:
-                `${remarks || ""} Packaged: ${packagingDetails.join(", ")}. Total: ${totalPackagedWeight}kg`.trim(),
+              remarks: isSemiPackagedSession
+                ? `${remarks || ""} Semi Packaging Session`
+                : `${remarks || ""} Packaged: ${packagingDetails.join(", ")}. Total: ${totalPackagedWeight}kg`.trim(),
             },
           });
         }
@@ -258,25 +266,47 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        // 8. Deduct label stock from inventory (only for non-semi-packaged sessions)
-        if (labelsArray.length > 0 && labelRecordsForTx.length > 0 && totalSemiPackagedWeight === 0) {
+        // 8. Handle label stock deductions and conversions
+        if (labelsArray.length > 0 && labelRecordsForTx.length > 0) {
           for (const entry of labelsArray) {
             const labelRecord = labelRecordsForTx.find(
               (fl) => fl.name === entry.type.toLowerCase().trim()
             );
             if (!labelRecord) continue;
 
-            await tx.labelMovement.create({
-              data: {
-                labelId: labelRecord.id,
-                action: "reduce",
-                quantity: entry.quantity,
-                reason: "correction",
-                remarks: `Used in packaging — batch ${batch!.batchNumber}`,
-                adjustmentDate: new Date(),
-                performedById: authenticatedUserId,
-              },
-            });
+            // Always deduct label stock for conversions and regular packaging
+            if (!entry.semiPackaged || entry.isConversion) {
+              await tx.labelMovement.create({
+                data: {
+                  labelId: labelRecord.id,
+                  action: "reduce",
+                  quantity: entry.quantity,
+                  reason: "correction",
+                  remarks: `Used in packaging — batch ${batch!.batchNumber}${entry.isConversion ? ' (conversion)' : ''}`,
+                  adjustmentDate: new Date(),
+                  performedById: authenticatedUserId,
+                },
+              });
+            }
+
+            // Handle semi-package to full package conversion
+            if (entry.isConversion) {
+              const conversionWeight = items.reduce((sum: number, item: any) => {
+                const product = products.find((p) => p.id === item.containerId);
+                if (product) {
+                  return sum + parseFloat(item.totalWeight);
+                }
+                return sum;
+              }, 0);
+
+              // Reduce semi-packaged inventory from production batch
+              await tx.productionBatch.update({
+                where: { id: batch.id },
+                data: {
+                  semiPackaged: Math.max(0, (batch.semiPackaged || 0) - conversionWeight),
+                },
+              });
+            }
           }
         }
 

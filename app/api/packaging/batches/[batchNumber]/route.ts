@@ -206,7 +206,7 @@ export async function PATCH(
       }
     }
 
-    const labelEntries: Array<{ type: string; quantity: number }> =
+    const labelEntries: Array<{ type: string; quantity: number; semiPackaged?: boolean; isConversion?: boolean }> =
       Array.isArray(labels) ? labels.filter((l: any) => l.type?.trim() && l.quantity > 0) : [];
 
     let labelRecordsForTx: Array<{ id: string; name: string }> = [];
@@ -265,8 +265,14 @@ export async function PATCH(
           return `${product?.name ?? item.containerId}: ${item.numberOfPackets} packets (${item.totalWeight}kg)`;
         });
 
+        // Check if this is a semi-packaged session (all labels are semi-packaged)
+        const isSemiPackagedSession = labelEntries.length > 0 && 
+          labelEntries.every((l: any) => l.semiPackaged === true);
+
         const sessionRemarks = packagingDetails.length > 0
-          ? `${remarks || ""} Packaged: ${packagingDetails.join(", ")}. Total: ${itemsWeight}kg`.trim()
+          ? isSemiPackagedSession
+            ? `${remarks || ""} Semi Packaging Session`
+            : `${remarks || ""} Packaged: ${packagingDetails.join(", ")}. Total: ${itemsWeight}kg`.trim()
           : remarks || "Batch marked as finished - remaining quantity counted as loss";
 
         const packagingSession = await tx.packagingSession.create({
@@ -300,6 +306,7 @@ export async function PATCH(
                   sessionId: packagingSession.id,
                   type: l.type.trim(),
                   quantity: l.quantity,
+                  semiPackaged: l.semiPackaged || false,
                 },
               })
             )
@@ -322,23 +329,46 @@ export async function PATCH(
           });
         }
 
+        // Handle label stock deductions and conversions
         for (const entry of labelEntries) {
           const labelRecord = labelRecordsForTx.find(
             (fl) => fl.name === entry.type.toLowerCase().trim()
           );
           if (!labelRecord) continue;
 
-          await tx.labelMovement.create({
-            data: {
-              labelId: labelRecord.id,
-              action: "reduce",
-              quantity: entry.quantity,
-              reason: "correction",
-              remarks: `Used in packaging batch ${batch!.batchNumber}`,
-              adjustmentDate: new Date(),
-              performedById: authenticatedUserId,
-            },
-          });
+          // Always deduct label stock for conversions and regular packaging
+          if (!entry.semiPackaged || entry.isConversion) {
+            await tx.labelMovement.create({
+              data: {
+                labelId: labelRecord.id,
+                action: "reduce",
+                quantity: entry.quantity,
+                reason: "correction",
+                remarks: `Used in packaging batch ${batch!.batchNumber}${entry.isConversion ? ' (conversion)' : ''}`,
+                adjustmentDate: new Date(),
+                performedById: authenticatedUserId,
+              },
+            });
+          }
+
+          // Handle semi-package to full package conversion
+          if (entry.isConversion) {
+            const conversionWeight = itemsArray.reduce((sum: number, item: any) => {
+              const product = validatedProducts.find((p) => p.id === item.containerId);
+              if (product) {
+                return sum + parseFloat(item.totalWeight || 0);
+              }
+              return sum;
+            }, 0);
+
+            // Reduce semi-packaged inventory from production batch
+            await tx.productionBatch.update({
+              where: { id: batch!.id },
+              data: {
+                semiPackaged: Math.max(0, (batch!.semiPackaged || 0) - conversionWeight),
+              },
+            });
+          }
         }
       },
       { timeout: 30000 }

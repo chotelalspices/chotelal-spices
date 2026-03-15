@@ -242,9 +242,9 @@ export default function PackagingEntry() {
 
   const totalPackagedWeightKg = useMemo(
     () => labelEntries
-      .filter((e) => !e.isCourierBox)
+      .filter((e) => !e.isCourierBox && !semiPackageableToggles[e.type])
       .reduce((sum, e) => sum + e.weightKg, 0),
-    [labelEntries]
+    [labelEntries, semiPackageableToggles]
   );
 
   // Calculate semi-packaged weight (only for labels with toggle ON) - current session only
@@ -304,6 +304,18 @@ export default function PackagingEntry() {
     // Courier box entry (if any)
     const courierEntry = labelEntries.find((e) => e.isCourierBox && e.packets > 0);
 
+    // Detect semi-package to full package conversions
+    const conversionEntries = labelEntries.filter((entry) => {
+      if (entry.packets <= 0 || entry.isCourierBox) return false;
+      
+      const isSemiPackageableLabel = selectedProduct?.labels.find(
+        (pl) => pl.type === entry.type && pl.semiPackageable
+      );
+      
+      // Conversion happens when label is semi-packageable but toggle is OFF
+      return isSemiPackageableLabel && !semiPackageableToggles[entry.type];
+    });
+
     return {
       items: selectedProduct
         ? regularEntries.map((e) => ({
@@ -317,7 +329,8 @@ export default function PackagingEntry() {
         .map((e) => ({ 
           type: e.type, 
           quantity: e.packets,
-          semiPackaged: semiPackageableToggles[e.type] || false
+          semiPackaged: semiPackageableToggles[e.type] || false,
+          isConversion: conversionEntries.some(ce => ce.type === e.type)
         })),
       // Populate CourierBox DB record automatically from the courier box label entry
       courierBox: courierEntry
@@ -336,7 +349,7 @@ export default function PackagingEntry() {
   // ─── Save partial ─────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
-    if (totalPackagedWeightKg <= 0) {
+    if (totalPackagedWeightKg <= 0 && currentSessionSemiPackagedWeightKg <= 0) {
       toast({ title: "Nothing to save", description: "Please enter packet quantities before saving.", variant: "destructive" });
       return;
     }
@@ -900,7 +913,7 @@ export default function PackagingEntry() {
                   <AlertDialogTrigger asChild>
                     <Button
                       variant="outline"
-                      disabled={totalPackagedWeightKg <= 0 || exceedsRemaining || isSubmitting || isFinishing || hasStockErrors}
+                      disabled={(totalPackagedWeightKg <= 0 && currentSessionSemiPackagedWeightKg <= 0) || exceedsRemaining || isSubmitting || isFinishing || hasStockErrors}
                       className="flex-1"
                     >
                       Save Packaging (Partial)
