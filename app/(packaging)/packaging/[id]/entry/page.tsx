@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
@@ -31,6 +32,7 @@ import { getStatusColor } from "@/data/packagingData";
 interface ProductLabel {
   type: string;
   quantity: number; // qty per courier box
+  semiPackageable: boolean;
 }
 
 interface Product {
@@ -99,11 +101,19 @@ export default function PackagingEntry() {
 
   const [selectedProductId, setSelectedProductId] = useState("");
   const [labelEntries, setLabelEntries] = useState<LabelBoxEntry[]>([]);
+  const [semiPackageableToggles, setSemiPackageableToggles] = useState<Record<string, boolean>>({});
 
   const [packagingLoss, setPackagingLoss] = useState("0");
   const [remarks, setRemarks] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
+
+  const toggleSemiPackageable = (type: string) => {
+    setSemiPackageableToggles(prev => ({
+      ...prev,
+      [type]: !prev[type]
+    }));
+  };
 
   // ─── Fetch batch + products + label inventory in parallel ─────────────────
 
@@ -196,6 +206,15 @@ export default function PackagingEntry() {
         };
       })
     );
+
+    // Initialize semiPackageable toggles
+    const initialToggles: Record<string, boolean> = {};
+    product.labels.forEach((pl) => {
+      if (pl.semiPackageable) {
+        initialToggles[pl.type] = false;
+      }
+    });
+    setSemiPackageableToggles(initialToggles);
   }, [selectedProductId, products, inventoryLabels]);
 
   // ─── Derived calculations ─────────────────────────────────────────────────
@@ -631,6 +650,23 @@ export default function PackagingEntry() {
                               : "—"}
                         </div>
                       </div>
+                      
+
+                      {/* Semi-packageable toggle - only shown if label is semi-packageable */}
+                      {selectedProduct?.labels.find((pl) => pl.type === entry.type && pl.semiPackageable) && (
+                        <div className="col-span-1 md:col-span-2 flex items-center justify-center">
+                          <div className="flex items-center space-x-2">
+                            <Label htmlFor={`semi-packageable-${entry.type}`} className="text-xs text-muted-foreground">
+                              Semi-packageable
+                            </Label>
+                            <Switch
+                              id={`semi-packageable-${entry.type}`}
+                              checked={semiPackageableToggles[entry.type] || false}
+                              onCheckedChange={(checked) => toggleSemiPackageable(entry.type)}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

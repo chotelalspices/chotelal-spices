@@ -49,6 +49,7 @@ export async function GET(
         labels: product.productLabels.map((pl) => ({
           type: pl.label.name,
           quantity: pl.quantity, // qty per courier box
+          semiPackageable: pl.semiPackageable,
         })),
       };
     });
