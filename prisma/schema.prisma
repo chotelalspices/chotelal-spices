@@ -184,6 +184,7 @@ model ProductionBatch {
   formulationId     String
   formulation       Formulation      @relation(fields: [formulationId], references: [id])
   plannedQuantity   Float
+  semiPackaged      Float?           @default(0)
   availableQuantity Float?
   unit              Unit
   finalOutput       Float?
@@ -253,7 +254,8 @@ model PackagingSession {
   batchId       String
   batch         ProductionBatch @relation(fields: [batchId], references: [id])
   date          DateTime
-  packagingLoss Float
+  semiPackaged  Float           @default(0)
+  packagingLoss Float           @default(0)
   remarks       String?
   performedById String?
   performedBy   User?           @relation(fields: [performedById], references: [id], onDelete: SetNull)

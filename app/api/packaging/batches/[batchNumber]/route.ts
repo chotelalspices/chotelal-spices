@@ -95,10 +95,11 @@ export async function GET(
         items: [],
         packagingLoss: session.packagingLoss,
         totalPackagedWeight: sessionWeight,
+        semiPackaged: session.semiPackaged || 0,
         remarks: session.remarks,
         performedBy: session.performedBy ? session.performedBy.fullName : null,
         courierBoxes: session.courierBoxes ?? [],
-        labels: (session.sessionLabels ?? []).map((l) => ({ type: l.type, quantity: l.quantity })),
+        labels: (session.sessionLabels ?? []).map((l) => ({ type: l.type, quantity: l.quantity, semiPackaged: l.semiPackaged })),
       };
     });
 
@@ -111,6 +112,7 @@ export async function GET(
       totalLoss,
       remainingQuantity: Math.max(0, remainingQuantity),
       status,
+      semiPackaged: batch.semiPackaged || 0,
       sessions,
     }, { status: 200 });
   } catch (error) {

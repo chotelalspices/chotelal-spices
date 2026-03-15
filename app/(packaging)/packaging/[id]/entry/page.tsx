@@ -76,6 +76,7 @@ interface PackagingBatch {
   remainingQuantity: number;
   status: "Not Started" | "Partial" | "Completed";
   sessions: any[];
+  semiPackaged: number;
 }
 
 const WEIGHT_TOLERANCE = 0.01;
@@ -245,6 +246,17 @@ export default function PackagingEntry() {
       .reduce((sum, e) => sum + e.weightKg, 0),
     [labelEntries]
   );
+
+  // Calculate semi-packaged weight (only for labels with toggle ON) - current session only
+  const currentSessionSemiPackagedWeightKg = useMemo(
+    () => labelEntries
+      .filter((e) => !e.isCourierBox && semiPackageableToggles[e.type])
+      .reduce((sum, e) => sum + e.weightKg, 0),
+    [labelEntries, semiPackageableToggles]
+  );
+
+  // Get cumulative batch semi-packaged weight from database
+  const batchSemiPackagedWeightKg = useMemo(() => batch?.semiPackaged || 0, [batch]);
 
   const lossValue = parseFloat(packagingLoss) || 0;
 
@@ -449,7 +461,7 @@ export default function PackagingEntry() {
             </CardTitle>
             <Badge className={getStatusColor(batch.status)}>{batch.status}</Badge>
           </CardHeader>
-          <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <CardContent className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div className="bg-muted/50 rounded-lg p-3 text-center">
               <p className="text-xs text-muted-foreground">Product</p>
               <p className="font-semibold text-sm">{batch.productName}</p>
@@ -462,9 +474,13 @@ export default function PackagingEntry() {
               <p className="text-xs text-muted-foreground">Total Produced</p>
               <p className="font-semibold text-sm">{batch.producedQuantity} kg</p>
             </div>
+            <div className="bg-blue-100 dark:bg-blue-900/30 rounded-lg p-3 text-center">
+              <p className="text-xs text-black">Semi-Packaged</p>
+              <p className="font-semibold text-sm">{batchSemiPackagedWeightKg.toFixed(3)} kg</p>
+            </div>
             <div className="bg-primary/10 rounded-lg p-3 text-center">
-              <p className="text-xs text-primary">Remaining</p>
-              <p className="font-semibold text-primary">{batch.remainingQuantity} kg</p>
+              <p className="text-xs text-black">Remaining</p>
+              <p className="font-semibold text-sm">{batch.remainingQuantity} kg</p>
             </div>
           </CardContent>
         </Card>
@@ -815,7 +831,7 @@ export default function PackagingEntry() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
               <div className="bg-muted/50 p-3 text-center rounded-lg">
                 <p className="text-xs text-muted-foreground">Total Packets</p>
                 <p className="font-semibold">{totalPackets.toLocaleString("en-IN")}</p>
@@ -823,6 +839,10 @@ export default function PackagingEntry() {
               <div className="bg-muted/50 p-3 text-center rounded-lg">
                 <p className="text-xs text-muted-foreground">Packaged</p>
                 <p className="font-semibold">{totalPackagedWeightKg.toFixed(3)} kg</p>
+              </div>
+              <div className="bg-blue-100 dark:bg-blue-900/30 p-3 text-center rounded-lg">
+                <p className="text-xs text-foreground">Semi-Packaged</p>
+                <p className="font-semibold text-foreground">{currentSessionSemiPackagedWeightKg.toFixed(3)} kg</p>
               </div>
               <div className="bg-amber-100 dark:bg-amber-900/30 p-3 text-center rounded-lg">
                 <p className="text-xs">Loss</p>

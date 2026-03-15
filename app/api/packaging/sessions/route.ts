@@ -96,38 +96,45 @@ export async function POST(request: NextRequest) {
 
     // ── Pre-fetch label records OUTSIDE transaction ─────────────────────────
     let labelRecordsForTx: Array<{ id: string; name: string }> = [];
+    let hasSemiPackagedLabels = false;
 
     if (labelsArray.length > 0) {
+      // Check if any labels are semi-packaged
+      hasSemiPackagedLabels = labelsArray.some(l => l.semiPackaged);
+
       const labelNames = labelsArray.map((l) => l.type.toLowerCase().trim());
       const foundLabels = await prisma.label.findMany({
         where: { name: { in: labelNames } },
         include: { labelMovements: true },
       });
 
-      for (const entry of labelsArray) {
-        const labelRecord = foundLabels.find(
-          (fl) => fl.name === entry.type.toLowerCase().trim()
-        );
-
-        if (!labelRecord) {
-          return NextResponse.json(
-            { error: `Label "${entry.type}" not found in inventory. Please add it first.` },
-            { status: 404 }
+      // Only validate stock for non-semi-packaged sessions
+      if (!hasSemiPackagedLabels) {
+        for (const entry of labelsArray) {
+          const labelRecord = foundLabels.find(
+            (fl) => fl.name === entry.type.toLowerCase().trim()
           );
-        }
 
-        const currentStock = labelRecord.labelMovements.reduce(
-          (total, m) => (m.action === "add" ? total + m.quantity : total - m.quantity),
-          0
-        );
+          if (!labelRecord) {
+            return NextResponse.json(
+              { error: `Label "${entry.type}" not found in inventory. Please add it first.` },
+              { status: 404 }
+            );
+          }
 
-        if (currentStock < entry.quantity) {
-          return NextResponse.json(
-            {
-              error: `Insufficient stock for label "${entry.type}". Available: ${currentStock} pcs, Required: ${entry.quantity} pcs.`,
-            },
-            { status: 400 }
+          const currentStock = labelRecord.labelMovements.reduce(
+            (total, m) => (m.action === "add" ? total + m.quantity : total - m.quantity),
+            0
           );
+
+          if (currentStock < entry.quantity) {
+            return NextResponse.json(
+              {
+                error: `Insufficient stock for label "${entry.type}". Available: ${currentStock} pcs, Required: ${entry.quantity} pcs.`,
+              },
+              { status: 400 }
+            );
+          }
         }
       }
 
@@ -204,23 +211,55 @@ export async function POST(request: NextRequest) {
 
         // 5. Create session label records
         let labelRecords: any[] = [];
+        let totalSemiPackagedWeight = 0;
+        
         if (labelsArray.length > 0) {
           labelRecords = await Promise.all(
-            labelsArray.map((l) =>
-              tx.sessionLabel.create({
+            labelsArray.map((l) => {
+              // Calculate semi-packaged weight for this label
+              const semiPackagedWeight = l.semiPackaged ? 
+                items.reduce((sum: number, item: any) => {
+                  const product = products.find((p) => p.id === item.containerId);
+                  if (product) {
+                    return sum + parseFloat(item.totalWeight);
+                  }
+                  return sum;
+                }, 0) : 0;
+              
+              totalSemiPackagedWeight += semiPackagedWeight;
+              
+              return tx.sessionLabel.create({
                 data: {
                   sessionId: packagingSession.id,
                   type: l.type.trim(),
                   quantity: l.quantity,
                   semiPackaged: l.semiPackaged || false,
                 },
-              })
-            )
+              });
+            })
           );
         }
 
-        // 6. Deduct label stock from inventory
-        if (labelsArray.length > 0 && labelRecordsForTx.length > 0) {
+        // 6. Update packaging session with semi-packaged weight
+        if (totalSemiPackagedWeight > 0) {
+          await tx.packagingSession.update({
+            where: { id: packagingSession.id },
+            data: {
+              semiPackaged: totalSemiPackagedWeight,
+            },
+          });
+
+          // 7. Update production batch with cumulative semi-packaged weight
+          await tx.productionBatch.update({
+            where: { id: batch.id },
+            data: {
+              semiPackaged: (batch.semiPackaged || 0) + totalSemiPackagedWeight,
+            },
+          });
+        }
+
+        // 8. Deduct label stock from inventory (only for non-semi-packaged sessions)
+        if (labelsArray.length > 0 && labelRecordsForTx.length > 0 && totalSemiPackagedWeight === 0) {
           for (const entry of labelsArray) {
             const labelRecord = labelRecordsForTx.find(
               (fl) => fl.name === entry.type.toLowerCase().trim()
@@ -273,6 +312,7 @@ export async function POST(request: NextRequest) {
         items: [],
         packagingLoss: createdSession.packagingLoss,
         totalPackagedWeight,
+        semiPackaged: createdSession.semiPackaged,
         remarks: createdSession.remarks,
         performedBy: createdSession.performedBy?.fullName ?? null,
         courierBox: createdSession.courierBoxes[0] ?? null,
