@@ -591,11 +591,22 @@ export default function PackagingEntry() {
                       </div>
 
                       {/* Per box chip */}
-                      <div className="hidden md:flex md:col-span-2 justify-center items-center">
-                        <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                          {entry.qtyPerBox} pcs
-                        </span>
-                      </div>
+                      {
+                        !semiPackageableToggles[entry.type] ? (
+                          <div className="hidden md:flex md:col-span-2 justify-center items-center">
+                            <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                              {entry.qtyPerBox} pcs
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="hidden md:flex md:col-span-2 justify-center items-center">
+                            <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                              NA
+                            </span>
+                          </div>
+                        )
+                      }
+                      
 
                       {/* Packets input */}
                       <div className="col-span-1 md:col-span-2">
@@ -621,14 +632,26 @@ export default function PackagingEntry() {
                       </div>
 
                       {/* Auto boxes (hidden for courier box — user enters boxes directly) */}
-                      <div className="col-span-1 md:col-span-2">
-                        <Label className="text-xs text-muted-foreground md:hidden mb-1 block">Boxes</Label>
-                        <div className="flex items-center justify-center h-10 px-3 rounded-md border bg-muted/50 text-sm font-medium">
-                          {entry.isCourierBox
-                            ? (entry.packets > 0 ? entry.packets.toLocaleString("en-IN") : "—")
-                            : (entry.boxes > 0 ? entry.boxes.toLocaleString("en-IN") : "—")}
-                        </div>
-                      </div>
+                      {
+                        !semiPackageableToggles[entry.type] ? (
+                          <div className="col-span-1 md:col-span-2">
+                            <Label className="text-xs text-muted-foreground md:hidden mb-1 block">Boxes</Label>
+                            <div className="flex items-center justify-center h-10 px-3 rounded-md border bg-muted/50 text-sm font-medium">
+                              {entry.isCourierBox
+                                ? (entry.packets > 0 ? entry.packets.toLocaleString("en-IN") : "—")
+                                : (entry.boxes > 0 ? entry.boxes.toLocaleString("en-IN") : "—")}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="col-span-1 md:col-span-2">
+                            <Label className="text-xs text-muted-foreground md:hidden mb-1 block">Boxes</Label>
+                            <div className="flex items-center justify-center h-10 px-3 rounded-md border bg-muted/50 text-sm font-medium">
+                              NA
+                            </div>
+                          </div>
+                        )
+                      }
+                      
 
                       {/* Weight — courier box shows "—" since it doesn't contribute to weight */}
                       <div className="col-span-2 md:col-span-3">

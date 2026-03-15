@@ -280,6 +280,7 @@ model SessionLabel {
   session   PackagingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   type      String
   quantity  Int
+  semiPackaged Boolean @default(false)
   createdAt DateTime         @default(now())
 }
 
