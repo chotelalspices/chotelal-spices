@@ -302,7 +302,11 @@ export default function PackagingEntry() {
         : [],
       labels: labelEntries
         .filter((e) => e.packets > 0)
-        .map((e) => ({ type: e.type, quantity: e.packets })),
+        .map((e) => ({ 
+          type: e.type, 
+          quantity: e.packets,
+          semiPackaged: semiPackageableToggles[e.type] || false
+        })),
       // Populate CourierBox DB record automatically from the courier box label entry
       courierBox: courierEntry
         ? {

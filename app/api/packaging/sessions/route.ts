@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const labelsArray: Array<{ type: string; quantity: number }> =
+    const labelsArray: Array<{ type: string; quantity: number; semiPackaged?: boolean }> =
       Array.isArray(labels) ? labels.filter((l) => l.type?.trim() && l.quantity > 0) : [];
 
     // ── Find batch ──────────────────────────────────────────────────────────
@@ -212,6 +212,7 @@ export async function POST(request: NextRequest) {
                   sessionId: packagingSession.id,
                   type: l.type.trim(),
                   quantity: l.quantity,
+                  semiPackaged: l.semiPackaged || false,
                 },
               })
             )
@@ -278,10 +279,12 @@ export async function POST(request: NextRequest) {
         labels: createdSession.sessionLabels.map((l) => ({
           type: l.type,
           quantity: l.quantity,
+          semiPackaged: l.semiPackaged,
         })),
       },
       { status: 201 }
     );
+
   } catch (error) {
     console.error("Error creating packaging session:", error);
     if (error instanceof Error && error.message.includes("not found")) {
