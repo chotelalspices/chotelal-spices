@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -70,11 +70,16 @@ import {
   CheckCircle2,
   ArrowUpRight,
   ArrowDownRight,
+  ChevronDown,
+  ChevronRight,
+  Search,
+  X,
 } from 'lucide-react';
 
 import { StatCard } from '@/components/inventory/StatCard';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/use-auth';
+import { cn } from '@/libs/utils';
 
 import {
   calculateSalesSummary,
@@ -96,14 +101,6 @@ interface ClientGroup {
   records: SalesRecord[];
   groupTotal: number;
   groupProfit: number;
-}
-
-interface PaymentStatus {
-  status: 'paid' | 'unpaid' | 'partial';
-  amountPaid: number;
-  amountDue: number;
-  paymentDate?: string;
-  paymentNote?: string;
 }
 
 function groupByClient(records: SalesRecord[]): ClientGroup[] {
@@ -133,7 +130,199 @@ function groupByClient(records: SalesRecord[]): ClientGroup[] {
 }
 
 /* ================================================================
-   COMPONENT
+   COLLAPSIBLE CLIENT ROW
+================================================================ */
+function ClientGroupRow({
+  group,
+  colSpan,
+  isAdmin,
+  getPaymentBadge,
+  handleDeleteSale,
+  router,
+}: {
+  group: ClientGroup;
+  colSpan: number;
+  isAdmin: boolean;
+  getPaymentBadge: (record: SalesRecord) => React.ReactNode;
+  handleDeleteSale: (id: string) => void;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      {/* CLIENT HEADER ROW — clickable */}
+      <TableRow
+        className="bg-primary/5 border-t-2 border-primary/20 hover:bg-primary/10 cursor-pointer select-none"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <TableCell colSpan={colSpan} className="py-2.5 px-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-3">
+              {/* Expand indicator */}
+              <div className="h-5 w-5 flex items-center justify-center text-primary">
+                {open
+                  ? <ChevronDown className="h-4 w-4 transition-transform" />
+                  : <ChevronRight className="h-4 w-4 transition-transform" />}
+              </div>
+              <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+                <User className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <div>
+                <p className="font-semibold text-sm leading-tight">{group.clientName}</p>
+                <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
+                  <span>{formatSaleDate(group.saleDate)}</span>
+                  {group.voucherType && (
+                    <>
+                      <span className="text-muted-foreground/40">|</span>
+                      <span>{group.voucherType}</span>
+                    </>
+                  )}
+                  {group.voucherNo && (
+                    <>
+                      <span className="text-muted-foreground/40">|</span>
+                      <span className="font-mono">{group.voucherNo}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <Badge variant="outline" className="border-green-300 text-green-700 bg-green-50 gap-1">
+                <CheckCircle2 className="h-3 w-3" />
+                {group.records.length} item{group.records.length !== 1 ? 's' : ''}
+              </Badge>
+              <span className="font-semibold text-sm">{formatCurrency(group.groupTotal)}</span>
+            </div>
+          </div>
+        </TableCell>
+      </TableRow>
+
+      {/* PRODUCT ROWS — only when open */}
+      {open && (
+        <>
+          {group.records.map((record, idx) => {
+            const productionCostTotal = (record.productionCostPerUnit ?? 0) * record.quantitySold;
+            const isFree = record.sellingPricePerUnit === 0;
+
+            return (
+              <TableRow key={record.id} className="hover:bg-muted/20 bg-white animate-in fade-in slide-in-from-top-1 duration-150">
+                <TableCell className="text-muted-foreground text-xs pl-14">{idx + 1}</TableCell>
+                <TableCell className="font-medium text-sm">{record.productName}</TableCell>
+                <TableCell className="text-right text-sm">{record.quantitySold}</TableCell>
+                <TableCell className="text-right text-sm">
+                  {isFree ? (
+                    <Badge variant="secondary" className="bg-blue-100 text-blue-800">FREE</Badge>
+                  ) : (
+                    formatCurrency(record.sellingPricePerUnit)
+                  )}
+                </TableCell>
+                <TableCell className="text-right text-sm">
+                  {record.discount > 0 ? (
+                    <span className="text-green-600">{record.discount}</span>
+                  ) : (
+                    <span className="text-muted-foreground">0</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right font-medium text-sm">
+                  {isFree ? (
+                    <Badge variant="secondary" className="bg-blue-100 text-blue-800">FREE</Badge>
+                  ) : (
+                    formatCurrency(record.totalAmount)
+                  )}
+                </TableCell>
+                <TableCell className="text-right text-sm text-muted-foreground">
+                  {formatCurrency(productionCostTotal)}
+                </TableCell>
+                {SHOW_PROFIT_TO_STAFF && (
+                  <TableCell className="text-right text-sm">
+                    {isFree ? (
+                      <span className="text-muted-foreground text-xs">N/A</span>
+                    ) : (
+                      <span className={`font-semibold ${record.profit >= 0 ? 'text-green-600' : 'text-destructive'}`}>
+                        {record.profit >= 0
+                          ? <ArrowUpRight className="h-3.5 w-3.5 inline mr-0.5" />
+                          : <ArrowDownRight className="h-3.5 w-3.5 inline mr-0.5" />}
+                        {formatCurrency(Math.abs(record.profit))}
+                      </span>
+                    )}
+                  </TableCell>
+                )}
+                <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                  {getPaymentBadge(record)}
+                </TableCell>
+                {isAdmin && (
+                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => router.push(`/sales/${record.id}/edit`)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete Sales Record</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Are you sure? This cannot be undone. Product quantity will be restored.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleDeleteSale(record.id)}
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            >
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </TableCell>
+                )}
+              </TableRow>
+            );
+          })}
+
+          {/* SUBTOTAL ROW */}
+          <TableRow className="bg-muted/30 border-b-2 border-muted/60">
+            <TableCell colSpan={5} className="pl-14 py-1.5 text-xs text-muted-foreground">
+              {group.records.length} item{group.records.length !== 1 ? 's' : ''} for {group.clientName}
+            </TableCell>
+            <TableCell className="text-right font-semibold text-sm py-1.5">
+              {formatCurrency(group.groupTotal)}
+            </TableCell>
+            <TableCell className="text-right text-xs text-muted-foreground py-1.5">
+              {formatCurrency(
+                group.records.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0)
+              )}
+            </TableCell>
+            {SHOW_PROFIT_TO_STAFF && (
+              <TableCell className="text-right py-1.5">
+                <span className={`text-xs font-semibold ${group.groupProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {formatCurrency(group.groupProfit)}
+                </span>
+              </TableCell>
+            )}
+            <TableCell colSpan={isAdmin ? 2 : 1} />
+          </TableRow>
+        </>
+      )}
+    </>
+  );
+}
+
+/* ================================================================
+   MAIN COMPONENT
 ================================================================ */
 export default function SalesSummary() {
   const router = useRouter();
@@ -141,13 +330,19 @@ export default function SalesSummary() {
 
   const [salesRecords, setSalesRecords] = useState<SalesRecord[]>([]);
   const [loading, setLoading]           = useState(true);
+
+  // Search
+  const [clientSearch, setClientSearch] = useState('');
+  const [productSearch, setProductSearch] = useState('');
+
+  // Filters
   const [productFilter, setProductFilter] = useState('all');
   const [clientFilter,  setClientFilter]  = useState('all');
   const [startDate, setStartDate]         = useState('');
   const [endDate,   setEndDate]           = useState('');
   const [filterOpen, setFilterOpen]       = useState(false);
 
-  // ── Payment modal state ──
+  // Payment modal
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<SalesRecord | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'unpaid' | 'partial'>('paid');
@@ -178,6 +373,7 @@ export default function SalesSummary() {
     [salesRecords]
   );
 
+  // Apply dropdown filters first
   const filteredRecords = useMemo(() =>
     salesRecords.filter((r) => {
       if (productFilter !== 'all' && r.productName !== productFilter) return false;
@@ -188,13 +384,57 @@ export default function SalesSummary() {
     }),
   [salesRecords, productFilter, clientFilter, startDate, endDate]);
 
-  const clientGroups = useMemo(() => groupByClient(filteredRecords), [filteredRecords]);
-  const summary      = useMemo(() => calculateSalesSummary(filteredRecords), [filteredRecords]);
+  // Group by client
+  const allClientGroups = useMemo(() => groupByClient(filteredRecords), [filteredRecords]);
+
+  // Apply search on top of groups
+  const clientGroups = useMemo(() => {
+    let groups = allClientGroups;
+
+    // Filter by client name search
+    if (clientSearch.trim()) {
+      groups = groups.filter((g) =>
+        g.clientName.toLowerCase().includes(clientSearch.toLowerCase().trim())
+      );
+    }
+
+    // Filter by product search — keep group if any record matches
+    if (productSearch.trim()) {
+      groups = groups
+        .map((g) => ({
+          ...g,
+          records: g.records.filter((r) =>
+            r.productName.toLowerCase().includes(productSearch.toLowerCase().trim())
+          ),
+        }))
+        .filter((g) => g.records.length > 0)
+        .map((g) => ({
+          ...g,
+          groupTotal: g.records.reduce((s, r) => s + (r.totalAmount ?? 0), 0),
+          groupProfit: g.records.reduce((s, r) => s + (r.profit ?? 0), 0),
+        }));
+    }
+
+    return groups;
+  }, [allClientGroups, clientSearch, productSearch]);
+
+  const searchFilteredRecords = useMemo(
+    () => clientGroups.flatMap((g) => g.records),
+    [clientGroups]
+  );
+
+  const summary = useMemo(() => calculateSalesSummary(searchFilteredRecords), [searchFilteredRecords]);
   const hasActiveFilters = productFilter !== 'all' || clientFilter !== 'all' || startDate || endDate;
+  const hasSearch = clientSearch.trim() || productSearch.trim();
 
   const clearFilters = () => {
     setProductFilter('all'); setClientFilter('all');
     setStartDate(''); setEndDate(''); setFilterOpen(false);
+  };
+
+  const clearSearch = () => {
+    setClientSearch('');
+    setProductSearch('');
   };
 
   const handleDeleteSale = async (saleId: string) => {
@@ -208,14 +448,11 @@ export default function SalesSummary() {
     }
   };
 
-  // ── Payment modal handlers ──
+  // Payment modal
   const openPaymentModal = (record: SalesRecord) => {
     setSelectedRecord(record);
-    
-    // Initialize with existing payment data if available
     const existingStatus = (record as any).paymentStatus || 'paid';
     const existingPaid = (record as any).amountPaid || record.totalAmount;
-    
     setPaymentStatus(existingStatus);
     setAmountPaid(existingPaid.toString());
     setPaymentNote((record as any).paymentNote || '');
@@ -232,39 +469,23 @@ export default function SalesSummary() {
 
   const savePaymentStatus = async () => {
     if (!selectedRecord) return;
-
     const parsedAmount = parseFloat(amountPaid);
-    if (isNaN(parsedAmount) || parsedAmount < 0) {
-      toast.error('Please enter a valid amount');
-      return;
-    }
-
-    if (parsedAmount > selectedRecord.totalAmount) {
-      toast.error('Amount paid cannot exceed total amount');
-      return;
-    }
+    if (isNaN(parsedAmount) || parsedAmount < 0) { toast.error('Please enter a valid amount'); return; }
+    if (parsedAmount > selectedRecord.totalAmount) { toast.error('Amount paid cannot exceed total amount'); return; }
 
     try {
       setIsSavingPayment(true);
-
-      const payload = {
-        paymentStatus,
-        amountPaid: parsedAmount,
-        amountDue: selectedRecord.totalAmount - parsedAmount,
-        paymentNote: paymentNote.trim() || null,
-      };
-
       const res = await fetch(`/api/sales/records/${selectedRecord.id}/payment`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          paymentStatus,
+          amountPaid: parsedAmount,
+          amountDue: selectedRecord.totalAmount - parsedAmount,
+          paymentNote: paymentNote.trim() || null,
+        }),
       });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to update payment status');
-      }
-
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed to update');
       toast.success('Payment status updated successfully');
       closePaymentModal();
       fetchRecords();
@@ -275,52 +496,33 @@ export default function SalesSummary() {
     }
   };
 
-  // Automatically set amount based on status
   useEffect(() => {
     if (!selectedRecord) return;
-    
-    if (paymentStatus === 'paid') {
-      setAmountPaid(selectedRecord.totalAmount.toString());
-    } else if (paymentStatus === 'unpaid') {
-      setAmountPaid('0');
-    }
-    // For 'partial', let user enter amount manually
+    if (paymentStatus === 'paid') setAmountPaid(selectedRecord.totalAmount.toString());
+    else if (paymentStatus === 'unpaid') setAmountPaid('0');
   }, [paymentStatus, selectedRecord]);
 
   const getPaymentBadge = (record: SalesRecord) => {
     const isFree = record.sellingPricePerUnit === 0;
-    if (isFree) {
-      return <Badge variant="secondary" className="bg-blue-100 text-blue-800 text-xs cursor-default">FREE</Badge>;
-    }
+    if (isFree) return <Badge variant="secondary" className="bg-blue-100 text-blue-800 text-xs cursor-default">FREE</Badge>;
 
     const status = (record as any).paymentStatus || 'paid';
-    const amountPaid = (record as any).amountPaid || record.totalAmount;
-    const amountDue = record.totalAmount - amountPaid;
+    const paid = (record as any).amountPaid || record.totalAmount;
 
     let badgeClass = '';
     let label = '';
-
-    if (status === 'paid') {
-      badgeClass = 'bg-green-100 text-green-800 border-green-300';
-      label = 'PAID';
-    } else if (status === 'unpaid') {
-      badgeClass = 'bg-red-100 text-red-800 border-red-300';
-      label = 'UNPAID';
-    } else {
-      badgeClass = 'bg-orange-100 text-orange-800 border-orange-300';
-      label = `PARTIAL (${formatCurrency(amountPaid)})`;
-    }
+    if (status === 'paid') { badgeClass = 'bg-green-100 text-green-800 border-green-300'; label = 'PAID'; }
+    else if (status === 'unpaid') { badgeClass = 'bg-red-100 text-red-800 border-red-300'; label = 'UNPAID'; }
+    else { badgeClass = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
 
     return (
-      <Badge
-        variant="outline"
-        className={`${badgeClass} text-xs cursor-pointer hover:opacity-80`}
-        onClick={() => openPaymentModal(record)}
-      >
+      <Badge variant="outline" className={`${badgeClass} text-xs cursor-pointer hover:opacity-80`} onClick={() => openPaymentModal(record)}>
         {label}
       </Badge>
     );
   };
+
+  const totalColSpan = 7 + (SHOW_PROFIT_TO_STAFF ? 1 : 0) + (isAdmin ? 1 : 0) + 1; // +1 for payment
 
   const FilterContent = () => (
     <div className="space-y-4">
@@ -402,6 +604,64 @@ export default function SalesSummary() {
           </div>
         )}
 
+        {/* ── Search bar ── */}
+        <Card>
+          <CardContent className="py-4">
+            <div className="flex flex-col sm:flex-row gap-3">
+              {/* Client search */}
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search client name..."
+                  value={clientSearch}
+                  onChange={(e) => setClientSearch(e.target.value)}
+                  className="pl-9 pr-9"
+                />
+                {clientSearch && (
+                  <button
+                    onClick={() => setClientSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Product search */}
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search product name..."
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  className="pl-9 pr-9"
+                />
+                {productSearch && (
+                  <button
+                    onClick={() => setProductSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {hasSearch && (
+                <Button variant="ghost" size="sm" onClick={clearSearch} className="shrink-0">
+                  Clear search
+                </Button>
+              )}
+            </div>
+
+            {/* Active search indicator */}
+            {hasSearch && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Showing {clientGroups.length} client{clientGroups.length !== 1 ? 's' : ''} · {searchFilteredRecords.length} record{searchFilteredRecords.length !== 1 ? 's' : ''}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Desktop filter bar */}
         <Card className="hidden md:block">
           <CardContent className="py-4">
@@ -409,9 +669,7 @@ export default function SalesSummary() {
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Client</Label>
                 <Select value={clientFilter} onValueChange={setClientFilter}>
-                  <SelectTrigger className="w-52">
-                    <SelectValue placeholder="All clients" />
-                  </SelectTrigger>
+                  <SelectTrigger className="w-52"><SelectValue placeholder="All clients" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Clients</SelectItem>
                     {uniqueClients.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
@@ -421,9 +679,7 @@ export default function SalesSummary() {
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Product</Label>
                 <Select value={productFilter} onValueChange={setProductFilter}>
-                  <SelectTrigger className="w-44">
-                    <SelectValue placeholder="All products" />
-                  </SelectTrigger>
+                  <SelectTrigger className="w-44"><SelectValue placeholder="All products" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Products</SelectItem>
                     {uniqueProducts.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
@@ -466,7 +722,8 @@ export default function SalesSummary() {
               <div>
                 <CardTitle>Sales Records</CardTitle>
                 <CardDescription>
-                  {clientGroups.length} client{clientGroups.length !== 1 ? 's' : ''} · {filteredRecords.length} line item{filteredRecords.length !== 1 ? 's' : ''}
+                  {clientGroups.length} client{clientGroups.length !== 1 ? 's' : ''} · {searchFilteredRecords.length} line item{searchFilteredRecords.length !== 1 ? 's' : ''}
+                  {' '}<span className="text-muted-foreground/60 text-xs">· Click a client row to expand</span>
                 </CardDescription>
               </div>
             </div>
@@ -479,7 +736,7 @@ export default function SalesSummary() {
               </div>
             ) : clientGroups.length === 0 ? (
               <div className="p-10 text-center text-muted-foreground">
-                {salesRecords.length === 0 ? 'No sales records found' : 'No records match the current filters'}
+                {salesRecords.length === 0 ? 'No sales records found' : 'No records match the current filters or search'}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -493,9 +750,7 @@ export default function SalesSummary() {
                       <TableHead className="text-right">Discount %</TableHead>
                       <TableHead className="text-right">Final Amt</TableHead>
                       <TableHead className="text-right">Prod. Cost</TableHead>
-                      {SHOW_PROFIT_TO_STAFF && (
-                        <TableHead className="text-right">Profit / Loss</TableHead>
-                      )}
+                      {SHOW_PROFIT_TO_STAFF && <TableHead className="text-right">Profit / Loss</TableHead>}
                       <TableHead className="text-center">Payment</TableHead>
                       {isAdmin && <TableHead className="text-right">Actions</TableHead>}
                     </TableRow>
@@ -503,177 +758,25 @@ export default function SalesSummary() {
 
                   <TableBody>
                     {clientGroups.map((group) => (
-                      <>
-                        {/* CLIENT HEADER ROW */}
-                        <TableRow
-                          key={`grp-${group.groupKey}`}
-                          className="bg-primary/5 border-t-2 border-primary/20 hover:bg-primary/5"
-                        >
-                          <TableCell
-                            colSpan={7 + (SHOW_PROFIT_TO_STAFF ? 1 : 0) + (isAdmin ? 1 : 0)}
-                            className="py-2.5 px-4"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-3">
-                                <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
-                                  <User className="h-3.5 w-3.5 text-primary" />
-                                </div>
-                                <div>
-                                  <p className="font-semibold text-sm leading-tight">{group.clientName}</p>
-                                  <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
-                                    <span>{formatSaleDate(group.saleDate)}</span>
-                                    {group.voucherType && (
-                                      <>
-                                        <span className="text-muted-foreground/40">|</span>
-                                        <span>{group.voucherType}</span>
-                                      </>
-                                    )}
-                                    {group.voucherNo && (
-                                      <>
-                                        <span className="text-muted-foreground/40">|</span>
-                                        <span className="font-mono">{group.voucherNo}</span>
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-3 flex-shrink-0">
-                                <Badge variant="outline" className="border-green-300 text-green-700 bg-green-50 gap-1">
-                                  <CheckCircle2 className="h-3 w-3" />
-                                  {group.records.length} valid
-                                </Badge>
-                                <span className="font-semibold text-sm">{formatCurrency(group.groupTotal)}</span>
-                              </div>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-
-                        {/* PRODUCT ROWS */}
-                        {group.records.map((record, idx) => {
-                          const productionCostTotal = (record.productionCostPerUnit ?? 0) * record.quantitySold;
-                          const isFree = record.sellingPricePerUnit === 0;
-
-                          return (
-                            <TableRow key={record.id} className="hover:bg-muted/20 bg-white">
-                              <TableCell className="text-muted-foreground text-xs pl-8">{idx + 1}</TableCell>
-                              <TableCell className="font-medium text-sm">{record.productName}</TableCell>
-                              <TableCell className="text-right text-sm">{record.quantitySold}</TableCell>
-                              <TableCell className="text-right text-sm">
-                                {isFree ? (
-                                  <Badge variant="secondary" className="bg-blue-100 text-blue-800">FREE</Badge>
-                                ) : (
-                                  formatCurrency(record.sellingPricePerUnit)
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right text-sm">
-                                {record.discount > 0 ? (
-                                  <span className="text-green-600">{record.discount}</span>
-                                ) : (
-                                  <span className="text-muted-foreground">0</span>
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right font-medium text-sm">
-                                {isFree ? (
-                                  <Badge variant="secondary" className="bg-blue-100 text-blue-800">FREE</Badge>
-                                ) : (
-                                  formatCurrency(record.totalAmount)
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right text-sm text-muted-foreground">
-                                {formatCurrency(productionCostTotal)}
-                              </TableCell>
-                              {SHOW_PROFIT_TO_STAFF && (
-                                <TableCell className="text-right text-sm">
-                                  {isFree ? (
-                                    <span className="text-muted-foreground text-xs">N/A</span>
-                                  ) : (
-                                    <span className={`font-semibold ${record.profit >= 0 ? 'text-green-600' : 'text-destructive'}`}>
-                                      {record.profit >= 0
-                                        ? <ArrowUpRight className="h-3.5 w-3.5 inline mr-0.5" />
-                                        : <ArrowDownRight className="h-3.5 w-3.5 inline mr-0.5" />}
-                                      {formatCurrency(Math.abs(record.profit))}
-                                    </span>
-                                  )}
-                                </TableCell>
-                              )}
-                              <TableCell className="text-center">
-                                {getPaymentBadge(record)}
-                              </TableCell>
-                              {isAdmin && (
-                                <TableCell className="text-right">
-                                  <div className="flex justify-end gap-1">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-7 w-7"
-                                      onClick={() => router.push(`/sales/${record.id}/edit`)}
-                                    >
-                                      <Pencil className="h-3.5 w-3.5" />
-                                    </Button>
-                                    <AlertDialog>
-                                      <AlertDialogTrigger asChild>
-                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive">
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                        </Button>
-                                      </AlertDialogTrigger>
-                                      <AlertDialogContent>
-                                        <AlertDialogHeader>
-                                          <AlertDialogTitle>Delete Sales Record</AlertDialogTitle>
-                                          <AlertDialogDescription>
-                                            Are you sure? This cannot be undone. Product quantity will be restored.
-                                          </AlertDialogDescription>
-                                        </AlertDialogHeader>
-                                        <AlertDialogFooter>
-                                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                          <AlertDialogAction
-                                            onClick={() => handleDeleteSale(record.id)}
-                                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                          >
-                                            Delete
-                                          </AlertDialogAction>
-                                        </AlertDialogFooter>
-                                      </AlertDialogContent>
-                                    </AlertDialog>
-                                  </div>
-                                </TableCell>
-                              )}
-                            </TableRow>
-                          );
-                        })}
-
-                        {/* SUBTOTAL ROW */}
-                        <TableRow key={`sub-${group.groupKey}`} className="bg-muted/30 border-b-2 border-muted/60">
-                          <TableCell colSpan={5} className="pl-8 py-1.5 text-xs text-muted-foreground">
-                            {group.records.length} item{group.records.length !== 1 ? 's' : ''} for {group.clientName}
-                          </TableCell>
-                          <TableCell className="text-right font-semibold text-sm py-1.5">
-                            {formatCurrency(group.groupTotal)}
-                          </TableCell>
-                          <TableCell className="text-right text-xs text-muted-foreground py-1.5">
-                            {formatCurrency(
-                              group.records.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0)
-                            )}
-                          </TableCell>
-                          {SHOW_PROFIT_TO_STAFF && (
-                            <TableCell className="text-right py-1.5">
-                              <span className={`text-xs font-semibold ${group.groupProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                {formatCurrency(group.groupProfit)}
-                              </span>
-                            </TableCell>
-                          )}
-                          <TableCell colSpan={isAdmin ? 2 : 1} />
-                        </TableRow>
-                      </>
+                      <ClientGroupRow
+                        key={group.groupKey}
+                        group={group}
+                        colSpan={totalColSpan}
+                        isAdmin={isAdmin}
+                        getPaymentBadge={getPaymentBadge}
+                        handleDeleteSale={handleDeleteSale}
+                        router={router}
+                      />
                     ))}
 
                     {/* GRAND TOTAL */}
                     <TableRow className="bg-muted/60 font-semibold border-t-2">
                       <TableCell colSpan={5} className="py-3 pl-4 text-sm">
-                        Grand Total — {clientGroups.length} client{clientGroups.length !== 1 ? 's' : ''} · {filteredRecords.length} record{filteredRecords.length !== 1 ? 's' : ''}
+                        Grand Total — {clientGroups.length} client{clientGroups.length !== 1 ? 's' : ''} · {searchFilteredRecords.length} record{searchFilteredRecords.length !== 1 ? 's' : ''}
                       </TableCell>
                       <TableCell className="text-right text-sm py-3">{formatCurrency(summary.totalRevenue)}</TableCell>
                       <TableCell className="text-right text-sm py-3 text-muted-foreground">
-                        {formatCurrency(filteredRecords.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}
+                        {formatCurrency(searchFilteredRecords.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}
                       </TableCell>
                       {SHOW_PROFIT_TO_STAFF && (
                         <TableCell className="text-right py-3">
@@ -691,7 +794,7 @@ export default function SalesSummary() {
           </CardContent>
         </Card>
 
-        {/* MOBILE VIEW - Similar structure with payment badges */}
+        {/* MOBILE VIEW */}
         <div className="md:hidden space-y-4">
           {loading ? (
             <div className="flex items-center justify-center py-8">
@@ -700,145 +803,39 @@ export default function SalesSummary() {
           ) : clientGroups.length === 0 ? (
             <Card>
               <CardContent className="pt-6 text-center text-muted-foreground">
-                {salesRecords.length === 0 ? 'No sales records found' : 'No records match the current filters'}
+                {salesRecords.length === 0 ? 'No sales records found' : 'No records match the current filters or search'}
               </CardContent>
             </Card>
           ) : (
             clientGroups.map((group) => (
-              <Card key={group.groupKey} className="overflow-hidden">
-                <div className="bg-primary/5 border-b border-primary/15 px-4 py-3 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
-                      <User className="h-3.5 w-3.5 text-primary" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-semibold text-sm truncate">{group.clientName}</p>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-                        <span>{formatSaleDate(group.saleDate)}</span>
-                        {group.voucherType && <span>{group.voucherType}</span>}
-                        {group.voucherNo && <span className="font-mono">{group.voucherNo}</span>}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <Badge variant="outline" className="border-green-300 text-green-700 bg-green-50 gap-1 mb-1">
-                      <CheckCircle2 className="h-3 w-3" />{group.records.length} valid
-                    </Badge>
-                    <p className="font-semibold text-sm">{formatCurrency(group.groupTotal)}</p>
-                  </div>
-                </div>
-
-                <CardContent className="p-0 divide-y">
-                  {group.records.map((record, idx) => {
-                    const prodCost = (record.productionCostPerUnit ?? 0) * record.quantitySold;
-                    const isFree = record.sellingPricePerUnit === 0;
-                    return (
-                      <div key={record.id} className="px-4 py-3">
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground w-4">{idx + 1}</span>
-                            <p className="font-medium text-sm">{record.productName}</p>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {getPaymentBadge(record)}
-                            {isAdmin && (
-                              <>
-                                <Button variant="ghost" size="icon" className="h-7 w-7"
-                                  onClick={() => router.push(`/sales/${record.id}/edit`)}>
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-                                <AlertDialog>
-                                  <AlertDialogTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive">
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </AlertDialogTrigger>
-                                  <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                      <AlertDialogTitle>Delete Sales Record</AlertDialogTitle>
-                                      <AlertDialogDescription>
-                                        Are you sure? Quantity will be restored to inventory.
-                                      </AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                      <AlertDialogAction onClick={() => handleDeleteSale(record.id)}
-                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                        Delete
-                                      </AlertDialogAction>
-                                    </AlertDialogFooter>
-                                  </AlertDialogContent>
-                                </AlertDialog>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-4 gap-2 text-xs">
-                          <div>
-                            <p className="text-muted-foreground">Packets</p>
-                            <p className="font-medium">{record.quantitySold}</p>
-                          </div>
-                          <div>
-                            <p className="text-muted-foreground">Price/Pkt</p>
-                            <p className="font-medium">{formatCurrency(record.sellingPricePerUnit)}</p>
-                          </div>
-                          <div>
-                            <p className="text-muted-foreground">Prod. Cost</p>
-                            <p className="font-medium">{formatCurrency(prodCost)}</p>
-                          </div>
-                          <div>
-                            <p className="text-muted-foreground">Final Amt</p>
-                            <p className="font-semibold">{formatCurrency(record.totalAmount)}</p>
-                          </div>
-                        </div>
-                        {SHOW_PROFIT_TO_STAFF && !isFree && (
-                          <div className="mt-1.5">
-                            <span className={`text-xs font-semibold flex items-center gap-0.5 ${record.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                              {record.profit >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                              {formatCurrency(Math.abs(record.profit))}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  <div className="px-4 py-2 bg-muted/30 flex justify-between text-xs font-medium">
-                    <span className="text-muted-foreground">
-                      {group.records.length} item{group.records.length !== 1 ? 's' : ''} for {group.clientName}
-                    </span>
-                    <span>{formatCurrency(group.groupTotal)}</span>
-                  </div>
-                </CardContent>
-              </Card>
+              <MobileClientCard
+                key={group.groupKey}
+                group={group}
+                isAdmin={isAdmin}
+                getPaymentBadge={getPaymentBadge}
+                handleDeleteSale={handleDeleteSale}
+                router={router}
+              />
             ))
           )}
         </div>
 
-        {/* ── PAYMENT STATUS MODAL ── */}
+        {/* PAYMENT MODAL */}
         <Dialog open={paymentModalOpen} onOpenChange={setPaymentModalOpen}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>Payment Status</DialogTitle>
-              <DialogDescription>
-                Update payment details for {selectedRecord?.productName}
-              </DialogDescription>
+              <DialogDescription>Update payment details for {selectedRecord?.productName}</DialogDescription>
             </DialogHeader>
-
             <div className="space-y-4 py-4">
-              {/* Total Amount */}
               <div className="bg-muted/50 rounded-lg p-3">
                 <p className="text-sm text-muted-foreground mb-1">Total Amount</p>
                 <p className="text-2xl font-bold">{selectedRecord && formatCurrency(selectedRecord.totalAmount)}</p>
               </div>
-
-              {/* Payment Status */}
               <div className="space-y-2">
                 <Label>Payment Status</Label>
                 <Select value={paymentStatus} onValueChange={(v: 'paid' | 'unpaid' | 'partial') => setPaymentStatus(v)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="paid">Paid (Full)</SelectItem>
                     <SelectItem value="partial">Partial Payment</SelectItem>
@@ -846,8 +843,6 @@ export default function SalesSummary() {
                   </SelectContent>
                 </Select>
               </div>
-
-              {/* Amount Paid */}
               <div className="space-y-2">
                 <Label>Amount Paid</Label>
                 <Input
@@ -863,31 +858,15 @@ export default function SalesSummary() {
                   </p>
                 )}
               </div>
-
-              {/* Payment Note */}
               <div className="space-y-2">
                 <Label>Note (Optional)</Label>
-                <Input
-                  placeholder="Payment reference, remarks..."
-                  value={paymentNote}
-                  onChange={(e) => setPaymentNote(e.target.value)}
-                />
+                <Input placeholder="Payment reference, remarks..." value={paymentNote} onChange={(e) => setPaymentNote(e.target.value)} />
               </div>
             </div>
-
             <DialogFooter>
-              <Button variant="outline" onClick={closePaymentModal} disabled={isSavingPayment}>
-                Cancel
-              </Button>
+              <Button variant="outline" onClick={closePaymentModal} disabled={isSavingPayment}>Cancel</Button>
               <Button onClick={savePaymentStatus} disabled={isSavingPayment}>
-                {isSavingPayment ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  'Save Payment Status'
-                )}
+                {isSavingPayment ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving...</> : 'Save Payment Status'}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -895,5 +874,122 @@ export default function SalesSummary() {
 
       </div>
     </AppLayout>
+  );
+}
+
+/* ================================================================
+   MOBILE CLIENT CARD — collapsible
+================================================================ */
+function MobileClientCard({
+  group, isAdmin, getPaymentBadge, handleDeleteSale, router,
+}: {
+  group: ClientGroup;
+  isAdmin: boolean;
+  getPaymentBadge: (r: SalesRecord) => React.ReactNode;
+  handleDeleteSale: (id: string) => void;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Card className="overflow-hidden">
+      {/* Client header — clickable */}
+      <button
+        className="w-full bg-primary/5 border-b border-primary/15 px-4 py-3 flex items-center justify-between gap-2 hover:bg-primary/10 transition-colors text-left"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="h-5 w-5 flex items-center justify-center shrink-0 text-primary">
+            {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </div>
+          <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+            <User className="h-3.5 w-3.5 text-primary" />
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold text-sm truncate">{group.clientName}</p>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+              <span>{formatSaleDate(group.saleDate)}</span>
+              {group.voucherType && <span>{group.voucherType}</span>}
+              {group.voucherNo && <span className="font-mono">{group.voucherNo}</span>}
+            </div>
+          </div>
+        </div>
+        <div className="text-right flex-shrink-0">
+          <Badge variant="outline" className="border-green-300 text-green-700 bg-green-50 gap-1 mb-1">
+            <CheckCircle2 className="h-3 w-3" />{group.records.length} item{group.records.length !== 1 ? 's' : ''}
+          </Badge>
+          <p className="font-semibold text-sm">{formatCurrency(group.groupTotal)}</p>
+        </div>
+      </button>
+
+      {/* Product rows — only when open */}
+      {open && (
+        <CardContent className="p-0 divide-y animate-in fade-in slide-in-from-top-1 duration-150">
+          {group.records.map((record, idx) => {
+            const prodCost = (record.productionCostPerUnit ?? 0) * record.quantitySold;
+            const isFree = record.sellingPricePerUnit === 0;
+            return (
+              <div key={record.id} className="px-4 py-3">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground w-4">{idx + 1}</span>
+                    <p className="font-medium text-sm">{record.productName}</p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {getPaymentBadge(record)}
+                    {isAdmin && (
+                      <>
+                        <Button variant="ghost" size="icon" className="h-7 w-7"
+                          onClick={() => router.push(`/sales/${record.id}/edit`)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete Sales Record</AlertDialogTitle>
+                              <AlertDialogDescription>Are you sure? Quantity will be restored to inventory.</AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => handleDeleteSale(record.id)}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="grid grid-cols-4 gap-2 text-xs">
+                  <div><p className="text-muted-foreground">Packets</p><p className="font-medium">{record.quantitySold}</p></div>
+                  <div><p className="text-muted-foreground">Price/Pkt</p><p className="font-medium">{formatCurrency(record.sellingPricePerUnit)}</p></div>
+                  <div><p className="text-muted-foreground">Prod. Cost</p><p className="font-medium">{formatCurrency(prodCost)}</p></div>
+                  <div><p className="text-muted-foreground">Final Amt</p><p className="font-semibold">{formatCurrency(record.totalAmount)}</p></div>
+                </div>
+                {SHOW_PROFIT_TO_STAFF && !isFree && (
+                  <div className="mt-1.5">
+                    <span className={`text-xs font-semibold flex items-center gap-0.5 ${record.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {record.profit >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                      {formatCurrency(Math.abs(record.profit))}
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <div className="px-4 py-2 bg-muted/30 flex justify-between text-xs font-medium">
+            <span className="text-muted-foreground">{group.records.length} item{group.records.length !== 1 ? 's' : ''} for {group.clientName}</span>
+            <span>{formatCurrency(group.groupTotal)}</span>
+          </div>
+        </CardContent>
+      )}
+    </Card>
   );
 }
