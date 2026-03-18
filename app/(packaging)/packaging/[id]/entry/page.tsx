@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   Package, ArrowLeft, AlertTriangle, CheckCircle2,
-  Loader2, Tag, Info, XCircle,
+  Loader2, Tag, Info, XCircle, RefreshCw,
 } from "lucide-react";
 
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -31,7 +31,7 @@ import { getStatusColor } from "@/data/packagingData";
 
 interface ProductLabel {
   type: string;
-  quantity: number; // qty per courier box
+  quantity: number;
   semiPackageable: boolean;
 }
 
@@ -63,7 +63,7 @@ interface LabelBoxEntry {
   weightKg: number;
   availableStock: number;
   stockStatus: StockStatus;
-  isCourierBox: boolean; // true if label name contains "courier box"
+  isCourierBox: boolean;
 }
 
 interface PackagingBatch {
@@ -77,6 +77,7 @@ interface PackagingBatch {
   status: "Not Started" | "Partial" | "Completed";
   sessions: any[];
   semiPackaged: number;
+  semiPackagedLabels: Array<{ type: string; quantity: number }>;
 }
 
 const WEIGHT_TOLERANCE = 0.01;
@@ -102,21 +103,18 @@ export default function PackagingEntry() {
 
   const [selectedProductId, setSelectedProductId] = useState("");
   const [labelEntries, setLabelEntries] = useState<LabelBoxEntry[]>([]);
-  const [semiPackageableToggles, setSemiPackageableToggles] = useState<Record<string, boolean>>({});
+
+  // Per-label semi toggle state
+  // true  = packaging as semi (no label deduction)
+  // false = converting existing semi → fully packaged (label deducted)
+  const [semiToggles, setSemiToggles] = useState<Record<string, boolean>>({});
 
   const [packagingLoss, setPackagingLoss] = useState("0");
   const [remarks, setRemarks] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
 
-  const toggleSemiPackageable = (type: string) => {
-    setSemiPackageableToggles(prev => ({
-      ...prev,
-      [type]: !prev[type]
-    }));
-  };
-
-  // ─── Fetch batch + products + label inventory in parallel ─────────────────
+  // ─── Fetch batch + products + label inventory ─────────────────────────────
 
   useEffect(() => {
     const fetchData = async () => {
@@ -155,7 +153,8 @@ export default function PackagingEntry() {
         setProducts(productsData);
         setInventoryLabels(labelsData);
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to load packaging entry data";
+        const message =
+          err instanceof Error ? err.message : "Failed to load packaging entry data";
         setError(message);
         toast({ title: "Error", description: message, variant: "destructive" });
       } finally {
@@ -182,10 +181,29 @@ export default function PackagingEntry() {
     return { availableStock, stockStatus: "ok" };
   };
 
-  // ─── When product selected, init label entries ────────────────────────────
+  // ─── Helper: semi-packaged qty for a label type ───────────────────────────
+
+  const getSemiPackagedQty = (type: string): number => {
+    if (!batch?.semiPackagedLabels) return 0;
+    return batch.semiPackagedLabels.find((l) => l.type === type)?.quantity ?? 0;
+  };
+
+  // ─── Helper: is this label's toggle locked ON? ────────────────────────────
+  // Locked ON (forced semi) when:
+  //   - label is semiPackageable AND
+  //   - there are NO previously semi-packaged packets waiting to be converted
+  const isToggleLocked = (type: string): boolean => {
+    const isSemiPackageable = !!selectedProduct?.labels.find(
+      (pl) => pl.type === type && pl.semiPackageable
+    );
+    if (!isSemiPackageable) return false;
+    return getSemiPackagedQty(type) === 0;
+  };
+
+  // ─── When product selected, init label entries + toggles ─────────────────
 
   useEffect(() => {
-    if (!selectedProductId) {
+    if (!selectedProductId || !batch) {
       setLabelEntries([]);
       return;
     }
@@ -208,17 +226,25 @@ export default function PackagingEntry() {
       })
     );
 
-    // Initialize semiPackageable toggles
+    // Set toggle defaults:
+    // - semiPackageable with NO previous semi → locked ON (true)
+    // - semiPackageable with previous semi → default OFF (false) = conversion mode
+    // - not semiPackageable → irrelevant (not shown)
     const initialToggles: Record<string, boolean> = {};
     product.labels.forEach((pl) => {
       if (pl.semiPackageable) {
-        initialToggles[pl.type] = false;
+        const hasPreviousSemi = (batch.semiPackagedLabels ?? []).some(
+          (sl) => sl.type === pl.type && sl.quantity > 0
+        );
+        // If previous semi exists → start in conversion mode (OFF)
+        // If no previous semi → locked ON
+        initialToggles[pl.type] = !hasPreviousSemi;
       }
     });
-    setSemiPackageableToggles(initialToggles);
-  }, [selectedProductId, products, inventoryLabels]);
+    setSemiToggles(initialToggles);
+  }, [selectedProductId, products, inventoryLabels, batch]);
 
-  // ─── Derived calculations ─────────────────────────────────────────────────
+  // ─── Derived values ───────────────────────────────────────────────────────
 
   const selectedProduct = useMemo(
     () => products.find((p) => p.id === selectedProductId) ?? null,
@@ -232,107 +258,192 @@ export default function PackagingEntry() {
       : selectedProduct.quantity / 1000;
   }, [selectedProduct]);
 
-  // Only non-courier-box labels contribute to packaged weight
-  const totalPackets = useMemo(
-    () => labelEntries
-      .filter((e) => !e.isCourierBox)
-      .reduce((sum, e) => sum + e.packets, 0),
-    [labelEntries]
+  // Semi-packaged weight this session (toggle ON entries)
+  const currentSessionSemiWeightKg = useMemo(
+    () =>
+      labelEntries
+        .filter((e) => !e.isCourierBox && semiToggles[e.type] === true)
+        .reduce((sum, e) => sum + e.weightKg, 0),
+    [labelEntries, semiToggles]
   );
 
-  const totalPackagedWeightKg = useMemo(
-    () => labelEntries
-      .filter((e) => !e.isCourierBox && !semiPackageableToggles[e.type])
-      .reduce((sum, e) => sum + e.weightKg, 0),
-    [labelEntries, semiPackageableToggles]
+  // Fully-packaged weight this session:
+  // - non-semiPackageable labels (regular)
+  // - semiPackageable labels with toggle OFF (= conversion)
+  const totalNewPackagedWeightKg = useMemo(
+    () =>
+      labelEntries
+        .filter((e) => !e.isCourierBox && semiToggles[e.type] !== true)
+        .reduce((sum, e) => sum + e.weightKg, 0),
+    [labelEntries, semiToggles]
   );
 
-  // Calculate semi-packaged weight (only for labels with toggle ON) - current session only
-  const currentSessionSemiPackagedWeightKg = useMemo(
-    () => labelEntries
-      .filter((e) => !e.isCourierBox && semiPackageableToggles[e.type])
-      .reduce((sum, e) => sum + e.weightKg, 0),
-    [labelEntries, semiPackageableToggles]
+  // Total new packets (for session summary display — fully packaged only)
+  const totalNewPackets = useMemo(
+    () =>
+      labelEntries
+        .filter((e) => !e.isCourierBox && semiToggles[e.type] !== true)
+        .reduce((sum, e) => sum + e.packets, 0),
+    [labelEntries, semiToggles]
   );
-
-  // Get cumulative batch semi-packaged weight from database
-  const batchSemiPackagedWeightKg = useMemo(() => batch?.semiPackaged || 0, [batch]);
 
   const lossValue = parseFloat(packagingLoss) || 0;
 
   const isExactMatch = batch
-    ? Math.abs(totalPackagedWeightKg - batch.remainingQuantity) <= WEIGHT_TOLERANCE
+    ? Math.abs(totalNewPackagedWeightKg - batch.remainingQuantity) <= WEIGHT_TOLERANCE
     : false;
 
   const exceedsRemaining = batch
-    ? totalPackagedWeightKg > batch.remainingQuantity + WEIGHT_TOLERANCE
+    ? totalNewPackagedWeightKg > batch.remainingQuantity + WEIGHT_TOLERANCE
     : false;
 
-  const labelStockErrors = labelEntries.filter(
-    (e) => e.packets > 0 && e.stockStatus === "out"
-  );
+  // Stock errors only for fully-packaged (toggle OFF) entries
+  const labelStockErrors = labelEntries.filter((e) => {
+    if (e.isCourierBox || semiToggles[e.type] === true) return false;
+    return e.packets > 0 && e.stockStatus === "out";
+  });
 
   const hasStockErrors = labelStockErrors.length > 0;
 
-  // ─── Packet entry handler (real-time stock check) ─────────────────────────
+  // ─── Packet update handler ────────────────────────────────────────────────
 
   const updatePackets = (type: string, packetsStr: string) => {
-    const packets = Math.max(0, parseInt(packetsStr) || 0);
+    const semiQty = getSemiPackagedQty(type);
+    const isConversionMode = semiToggles[type] === false;
+
+    let packets = Math.max(0, parseInt(packetsStr) || 0);
+
+    // In conversion mode, cap at available semi-packaged qty
+    if (isConversionMode && semiQty > 0) {
+      packets = Math.min(packets, semiQty);
+    }
+
     setLabelEntries((prev) =>
       prev.map((entry) => {
         if (entry.type !== type) return entry;
-        // For courier box labels: boxes = packets (1 packet = 1 box)
-        // For regular labels: boxes = ceil(packets / qtyPerBox)
         const boxes = entry.isCourierBox
           ? packets
           : packets > 0
-            ? Math.ceil(packets / entry.qtyPerBox)
-            : 0;
-        // Courier box labels don't contribute to weight
+          ? Math.ceil(packets / entry.qtyPerBox)
+          : 0;
         const weightKg = entry.isCourierBox ? 0 : packets * weightPerPacketKg;
-        const { availableStock, stockStatus } = lookupStock(type, packets);
+        // Only check stock for fully-packaged (conversion or regular)
+        const needsStockCheck = semiToggles[type] !== true;
+        const { availableStock, stockStatus } = needsStockCheck
+          ? lookupStock(type, packets)
+          : { availableStock: entry.availableStock, stockStatus: entry.stockStatus };
         return { ...entry, packets, boxes, weightKg, availableStock, stockStatus };
       })
+    );
+  };
+
+  // ─── Toggle handler ───────────────────────────────────────────────────────
+
+  const handleToggle = (type: string) => {
+    // Locked labels cannot be toggled
+    if (isToggleLocked(type)) return;
+
+    setSemiToggles((prev) => {
+      const next = !prev[type];
+      return { ...prev, [type]: next };
+    });
+
+    // Reset packets when switching modes to avoid stale values
+    setLabelEntries((prev) =>
+      prev.map((entry) =>
+        entry.type === type
+          ? { ...entry, packets: 0, boxes: 0, weightKg: 0 }
+          : entry
+      )
     );
   };
 
   // ─── Build payload ────────────────────────────────────────────────────────
 
   const buildPayload = () => {
-    // Regular (non-courier-box) label entries for product inventory update
-    const regularEntries = labelEntries.filter((e) => !e.isCourierBox && e.packets > 0);
-    // Courier box entry (if any)
     const courierEntry = labelEntries.find((e) => e.isCourierBox && e.packets > 0);
 
-    // Detect semi-package to full package conversions
-    const conversionEntries = labelEntries.filter((entry) => {
-      if (entry.packets <= 0 || entry.isCourierBox) return false;
-      
-      const isSemiPackageableLabel = selectedProduct?.labels.find(
-        (pl) => pl.type === entry.type && pl.semiPackageable
-      );
-      
-      // Conversion happens when label is semi-packageable but toggle is OFF
-      return isSemiPackageableLabel && !semiPackageableToggles[entry.type];
-    });
+    // Semi entries: semiPackageable label with toggle ON
+    const semiEntries = labelEntries.filter(
+      (e) => !e.isCourierBox && semiToggles[e.type] === true && e.packets > 0
+    );
+
+    // Conversion entries: semiPackageable label with toggle OFF and packets > 0
+    const conversionEntries = labelEntries.filter(
+      (e) =>
+        !e.isCourierBox &&
+        semiToggles[e.type] === false &&
+        e.packets > 0 &&
+        !!selectedProduct?.labels.find((pl) => pl.type === e.type && pl.semiPackageable)
+    );
+
+    // Regular fully-packaged entries: non-semiPackageable labels
+    const regularEntries = labelEntries.filter(
+      (e) =>
+        !e.isCourierBox &&
+        e.packets > 0 &&
+        !selectedProduct?.labels.find((pl) => pl.type === e.type && pl.semiPackageable)
+    );
+
+    // Items array for product inventory update
+    const fullPackagedWeight =
+      regularEntries.reduce((s, e) => s + e.weightKg, 0) +
+      conversionEntries.reduce((s, e) => s + e.weightKg, 0);
+
+    const fullPackagedPackets =
+      regularEntries.reduce((s, e) => s + e.packets, 0) +
+      conversionEntries.reduce((s, e) => s + e.packets, 0);
+
+    const semiWeight = semiEntries.reduce((s, e) => s + e.weightKg, 0);
+    const semiPackets = semiEntries.reduce((s, e) => s + e.packets, 0);
+
+    const items: any[] = [];
+    if (selectedProduct) {
+      if (fullPackagedPackets > 0) {
+        items.push({
+          containerId: selectedProduct.id,
+          numberOfPackets: fullPackagedPackets,
+          totalWeight: fullPackagedWeight,
+        });
+      } else if (semiPackets > 0) {
+        items.push({
+          containerId: selectedProduct.id,
+          numberOfPackets: semiPackets,
+          totalWeight: semiWeight,
+        });
+      }
+    }
+
+    // Labels payload
+    const labelsPayload = [
+      ...regularEntries.map((e) => ({
+        type: e.type,
+        quantity: e.packets,
+        semiPackaged: false,
+        isConversion: false,
+      })),
+      ...semiEntries.map((e) => ({
+        type: e.type,
+        quantity: e.packets,
+        semiPackaged: true,
+        isConversion: false,
+      })),
+      ...conversionEntries.map((e) => ({
+        type: e.type,
+        quantity: e.packets,
+        semiPackaged: false,
+        isConversion: true,
+      })),
+      ...(courierEntry
+        ? [{ type: courierEntry.type, quantity: courierEntry.packets, semiPackaged: false, isConversion: false }]
+        : []),
+    ];
+
+    const totalPackets = fullPackagedPackets;
 
     return {
-      items: selectedProduct
-        ? regularEntries.map((e) => ({
-            containerId: selectedProduct.id,
-            numberOfPackets: e.packets,
-            totalWeight: e.weightKg,
-          }))
-        : [],
-      labels: labelEntries
-        .filter((e) => e.packets > 0)
-        .map((e) => ({ 
-          type: e.type, 
-          quantity: e.packets,
-          semiPackaged: semiPackageableToggles[e.type] || false,
-          isConversion: conversionEntries.some(ce => ce.type === e.type)
-        })),
-      // Populate CourierBox DB record automatically from the courier box label entry
+      items,
+      labels: labelsPayload,
       courierBox: courierEntry
         ? {
             label: courierEntry.type,
@@ -349,18 +460,33 @@ export default function PackagingEntry() {
   // ─── Save partial ─────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
-    if (totalPackagedWeightKg <= 0 && currentSessionSemiPackagedWeightKg <= 0) {
-      toast({ title: "Nothing to save", description: "Please enter packet quantities before saving.", variant: "destructive" });
+    const hasAnything = totalNewPackagedWeightKg > 0 || currentSessionSemiWeightKg > 0;
+
+    if (!hasAnything) {
+      toast({
+        title: "Nothing to save",
+        description: "Please enter packet quantities before saving.",
+        variant: "destructive",
+      });
       return;
     }
     if (exceedsRemaining) {
-      toast({ title: "Exceeds remaining quantity", description: `Total (${totalPackagedWeightKg.toFixed(3)} kg) exceeds remaining (${batch!.remainingQuantity.toFixed(3)} kg).`, variant: "destructive" });
+      toast({
+        title: "Exceeds remaining quantity",
+        description: `Total (${totalNewPackagedWeightKg.toFixed(3)} kg) exceeds remaining (${batch!.remainingQuantity.toFixed(3)} kg).`,
+        variant: "destructive",
+      });
       return;
     }
     if (hasStockErrors) {
-      toast({ title: "Insufficient Stock", description: "Some labels don't have enough stock. Please restock before saving.", variant: "destructive" });
+      toast({
+        title: "Insufficient Stock",
+        description: "Some labels don't have enough stock. Please restock before saving.",
+        variant: "destructive",
+      });
       return;
     }
+
     setIsSubmitting(true);
     try {
       const response = await fetch("/api/packaging/sessions", {
@@ -376,10 +502,17 @@ export default function PackagingEntry() {
         const err = await response.json().catch(() => null);
         throw new Error(err?.error || "Failed to save packaging session");
       }
-      toast({ title: "Packaging Saved", description: `Recorded ${totalPackagedWeightKg.toFixed(3)} kg.` });
+      toast({
+        title: "Packaging Saved",
+        description: `Recorded ${(totalNewPackagedWeightKg + currentSessionSemiWeightKg).toFixed(3)} kg.`,
+      });
       router.push(`/packaging/${encodeURIComponent(batch!.batchNumber)}/summary`);
     } catch (err) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to save.", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to save.",
+        variant: "destructive",
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -389,7 +522,11 @@ export default function PackagingEntry() {
 
   const handleFinishBatch = async () => {
     if (hasStockErrors) {
-      toast({ title: "Insufficient Stock", description: "Some labels don't have enough stock. Please restock before finishing.", variant: "destructive" });
+      toast({
+        title: "Insufficient Stock",
+        description: "Some labels don't have enough stock. Please restock before finishing.",
+        variant: "destructive",
+      });
       return;
     }
     setIsFinishing(true);
@@ -401,7 +538,9 @@ export default function PackagingEntry() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...buildPayload(),
-            remarks: remarks || `Batch marked as finished. Remaining ${batch!.remainingQuantity.toFixed(3)} kg counted as loss.`,
+            remarks:
+              remarks ||
+              `Batch marked as finished. Remaining ${batch!.remainingQuantity.toFixed(3)} kg counted as loss.`,
           }),
         }
       );
@@ -412,7 +551,11 @@ export default function PackagingEntry() {
       toast({ title: "Batch Finished", description: "Batch marked as finished and label stock deducted." });
       router.push(`/packaging/${encodeURIComponent(batch!.batchNumber)}/summary`);
     } catch (err) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to finish batch.", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to finish batch.",
+        variant: "destructive",
+      });
     } finally {
       setIsFinishing(false);
     }
@@ -461,7 +604,9 @@ export default function PackagingEntry() {
           </Button>
           <div className="flex-1">
             <h1 className="text-2xl font-bold">Packaging Entry</h1>
-            <p className="text-sm text-muted-foreground">Record packaging for {batch.productName}</p>
+            <p className="text-sm text-muted-foreground">
+              Record packaging for {batch.productName}
+            </p>
           </div>
         </div>
 
@@ -487,13 +632,29 @@ export default function PackagingEntry() {
               <p className="text-xs text-muted-foreground">Total Produced</p>
               <p className="font-semibold text-sm">{batch.producedQuantity} kg</p>
             </div>
-            <div className="bg-blue-100 dark:bg-blue-900/30 rounded-lg p-3 text-center">
-              <p className="text-xs text-black">Semi-Packaged</p>
-              <p className="font-semibold text-sm">{batchSemiPackagedWeightKg.toFixed(3)} kg</p>
+            <div className="bg-orange-100 dark:bg-orange-900/30 rounded-lg p-3 text-center">
+              <p className="text-xs text-white-700 dark:text-white-300">Semi-Packaged</p>
+              <p className="font-semibold text-sm text-white-700 dark:text-white-300">
+                {batch.semiPackaged.toFixed(3)} kg
+              </p>
+              {batch.semiPackagedLabels && batch.semiPackagedLabels.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1 justify-center">
+                  {batch.semiPackagedLabels.map((sl) => (
+                    <span
+                      key={sl.type}
+                      className="text-[10px] bg-orange-200 dark:bg-orange-800 text-orange-800 dark:text-orange-200 rounded px-1"
+                    >
+                      {sl.type}: {sl.quantity}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="bg-primary/10 rounded-lg p-3 text-center">
-              <p className="text-xs text-black">Remaining</p>
-              <p className="font-semibold text-sm">{batch.remainingQuantity} kg</p>
+              <p className="text-xs text-primary">Remaining</p>
+              <p className="font-semibold text-primary text-sm">
+                {Number(batch.remainingQuantity).toFixed(2)} kg
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -538,7 +699,7 @@ export default function PackagingEntry() {
           </CardContent>
         </Card>
 
-        {/* Label Quantities — all labels including courier box */}
+        {/* Label Quantities */}
         {selectedProduct && selectedProduct.labels.length > 0 && (
           <Card>
             <CardHeader>
@@ -564,163 +725,247 @@ export default function PackagingEntry() {
 
               <div className="space-y-3">
                 {labelEntries.map((entry) => {
-                  const isError = entry.packets > 0 && entry.stockStatus === "out";
-                  const isLow = entry.packets > 0 && entry.stockStatus === "low";
+                  const isSemiPackageable = !!selectedProduct?.labels.find(
+                    (pl) => pl.type === entry.type && pl.semiPackageable
+                  );
+                  const semiQty = getSemiPackagedQty(entry.type);
+                  const locked = isToggleLocked(entry.type);
+                  // toggle is ON = semi mode; OFF = conversion/fully-packaged mode
+                  const isSemiMode = isSemiPackageable && semiToggles[entry.type] === true;
+                  // conversion mode = semiPackageable label, toggle OFF, has previous semi
+                  const isConversionMode = isSemiPackageable && !semiToggles[entry.type] && semiQty > 0;
+
+                  const isError =
+                    !isSemiMode && entry.packets > 0 && entry.stockStatus === "out";
+                  const isLow =
+                    !isSemiMode && entry.packets > 0 && entry.stockStatus === "low";
 
                   return (
                     <div
                       key={entry.type}
                       className={cn(
-                        "grid grid-cols-2 md:grid-cols-12 gap-3 items-start p-4 border rounded-lg bg-muted/20",
-                        entry.packets > 0 && !isError && !isLow && "border-primary/30 bg-primary/5",
+                        "border rounded-lg bg-muted/20 overflow-hidden",
+                        // Semi mode styling
+                        isSemiMode && entry.packets > 0 && "border-orange-400/50 bg-orange-50/50 dark:bg-orange-900/10",
+                        // Conversion mode styling
+                        isConversionMode && entry.packets > 0 && "border-primary/30 bg-primary/5",
+                        // Regular fully-packaged
+                        !isSemiMode && !isConversionMode && entry.packets > 0 && !isError && !isLow && "border-primary/30 bg-primary/5",
                         isError && "border-destructive/50 bg-destructive/5",
                         isLow && "border-amber-400/50 bg-amber-50/50 dark:bg-amber-900/10",
                       )}
                     >
-                      {/* Label name + stock indicator */}
-                      <div className="col-span-2 md:col-span-3 flex items-start gap-2">
-                        <div className="h-8 w-8 rounded-md bg-muted flex items-center justify-center shrink-0 mt-0.5">
-                          <Tag className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <p className="font-medium text-sm">{entry.type}</p>
-                            {entry.isCourierBox && (
-                              <span className="text-[10px] font-medium bg-muted text-muted-foreground rounded px-1.5 py-0.5 uppercase tracking-wide">
-                                Box
-                              </span>
+                      {/* Main row */}
+                      <div className="grid grid-cols-2 md:grid-cols-12 gap-3 items-start p-4">
+
+                        {/* Label name + stock + semi info */}
+                        <div className="col-span-2 md:col-span-3 flex items-start gap-2">
+                          <div className="h-8 w-8 rounded-md bg-muted flex items-center justify-center shrink-0 mt-0.5">
+                            <Tag className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className="font-medium text-sm">{entry.type}</p>
+                              {entry.isCourierBox && (
+                                <span className="text-[10px] font-medium bg-muted text-muted-foreground rounded px-1.5 py-0.5 uppercase tracking-wide">
+                                  Box
+                                </span>
+                              )}
+                              {isSemiMode && (
+                                <span className="text-[10px] font-medium bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300 rounded px-1.5 py-0.5 uppercase tracking-wide">
+                                  Semi
+                                </span>
+                              )}
+                              {isConversionMode && (
+                                <span className="text-[10px] font-medium bg-primary/10 text-primary rounded px-1.5 py-0.5 uppercase tracking-wide">
+                                  Converting
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="text-xs text-muted-foreground">
+                              {entry.isCourierBox
+                                ? `${entry.qtyPerBox} pcs/box · tracks box stock`
+                                : isSemiMode
+                                ? `${entry.qtyPerBox} pcs/box · label stock deferred`
+                                : `${entry.qtyPerBox} pcs/box`}
+                            </p>
+
+                            {/* Previous semi-packaged count */}
+                            {isSemiPackageable && semiQty > 0 && (
+                              <p className="text-xs text-orange-600 dark:text-orange-400 mt-0.5 flex items-center gap-1">
+                                <RefreshCw className="h-3 w-3" />
+                                {semiQty} semi-packaged pending
+                              </p>
+                            )}
+
+                            {/* Stock status (only in fully-packaged / conversion mode) */}
+                            {!isSemiMode && (
+                              <>
+                                {entry.stockStatus === "unknown" && (
+                                  <p className="text-xs text-muted-foreground mt-0.5">Not in inventory</p>
+                                )}
+                                {entry.stockStatus === "ok" && (
+                                  <p className="text-xs text-success mt-0.5 flex items-center gap-1">
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    {entry.availableStock.toLocaleString("en-IN")} in stock
+                                  </p>
+                                )}
+                                {entry.stockStatus === "low" && (
+                                  <p className="text-xs text-amber-600 mt-0.5 flex items-center gap-1">
+                                    <AlertTriangle className="h-3 w-3" />
+                                    Low — {entry.availableStock.toLocaleString("en-IN")} left
+                                  </p>
+                                )}
+                                {entry.stockStatus === "out" && (
+                                  <p className="text-xs text-destructive mt-0.5 flex items-center gap-1">
+                                    <XCircle className="h-3 w-3" />
+                                    {entry.availableStock === 0
+                                      ? "Out of stock"
+                                      : `Only ${entry.availableStock.toLocaleString("en-IN")} available`}
+                                  </p>
+                                )}
+                              </>
                             )}
                           </div>
-                          <p className="text-xs text-muted-foreground">
-                            {entry.isCourierBox
-                              ? `${entry.qtyPerBox} pcs/box · tracks box stock`
-                              : `${entry.qtyPerBox} pcs/box`}
-                          </p>
-                          {/* Live stock status */}
-                          {entry.stockStatus === "unknown" && (
-                            <p className="text-xs text-muted-foreground mt-0.5">Not in inventory</p>
-                          )}
-                          {entry.stockStatus === "ok" && (
-                            <p className="text-xs text-success mt-0.5 flex items-center gap-1">
-                              <CheckCircle2 className="h-3 w-3" />
-                              {entry.availableStock.toLocaleString("en-IN")} in stock
-                            </p>
-                          )}
-                          {entry.stockStatus === "low" && (
-                            <p className="text-xs text-amber-600 mt-0.5 flex items-center gap-1">
-                              <AlertTriangle className="h-3 w-3" />
-                              Low — {entry.availableStock.toLocaleString("en-IN")} left
-                            </p>
-                          )}
-                          {entry.stockStatus === "out" && (
-                            <p className="text-xs text-destructive mt-0.5 flex items-center gap-1">
-                              <XCircle className="h-3 w-3" />
-                              {entry.availableStock === 0
-                                ? "Out of stock"
-                                : `Only ${entry.availableStock.toLocaleString("en-IN")} available`}
-                            </p>
-                          )}
                         </div>
-                      </div>
 
-                      {/* Per box chip */}
-                      {
-                        !semiPackageableToggles[entry.type] ? (
-                          <div className="hidden md:flex md:col-span-2 justify-center items-center">
-                            <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                              {entry.qtyPerBox} pcs
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="hidden md:flex md:col-span-2 justify-center items-center">
-                            <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                              NA
-                            </span>
-                          </div>
-                        )
-                      }
-                      
-
-                      {/* Packets input */}
-                      <div className="col-span-1 md:col-span-2">
-                        <Label className="text-xs text-muted-foreground md:hidden mb-1 block">
-                          {entry.isCourierBox ? "Boxes" : "Packets"}
-                        </Label>
-                        <div className="relative">
-                          <Input
-                            type="number"
-                            min="0"
-                            value={entry.packets || ""}
-                            onChange={(e) => updatePackets(entry.type, e.target.value)}
-                            placeholder="0"
-                            className={cn(
-                              "pr-10 text-center",
-                              isError && "border-destructive focus-visible:ring-destructive"
-                            )}
-                          />
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                            {entry.isCourierBox ? "box" : "pcs"}
+                        {/* Per box chip */}
+                        <div className="hidden md:flex md:col-span-2 justify-center items-center">
+                          <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                            {isSemiMode ? "NA" : `${entry.qtyPerBox} pcs`}
                           </span>
                         </div>
-                      </div>
 
-                      {/* Auto boxes (hidden for courier box — user enters boxes directly) */}
-                      {
-                        !semiPackageableToggles[entry.type] ? (
-                          <div className="col-span-1 md:col-span-2">
-                            <Label className="text-xs text-muted-foreground md:hidden mb-1 block">Boxes</Label>
-                            <div className="flex items-center justify-center h-10 px-3 rounded-md border bg-muted/50 text-sm font-medium">
-                              {entry.isCourierBox
-                                ? (entry.packets > 0 ? entry.packets.toLocaleString("en-IN") : "—")
-                                : (entry.boxes > 0 ? entry.boxes.toLocaleString("en-IN") : "—")}
-                            </div>
+                        {/* Packets input */}
+                        <div className="col-span-1 md:col-span-2">
+                          <Label className="text-xs text-muted-foreground md:hidden mb-1 block">
+                            {entry.isCourierBox ? "Boxes" : isConversionMode ? "Convert" : "Packets"}
+                          </Label>
+                          <div className="relative">
+                            <Input
+                              type="number"
+                              min="0"
+                              max={isConversionMode ? semiQty : undefined}
+                              value={entry.packets || ""}
+                              onChange={(e) => updatePackets(entry.type, e.target.value)}
+                              placeholder="0"
+                              className={cn(
+                                "pr-10 text-center",
+                                isError && "border-destructive focus-visible:ring-destructive",
+                                isConversionMode && "border-primary/50"
+                              )}
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                              {entry.isCourierBox ? "box" : "pcs"}
+                            </span>
                           </div>
-                        ) : (
-                          <div className="col-span-1 md:col-span-2">
-                            <Label className="text-xs text-muted-foreground md:hidden mb-1 block">Boxes</Label>
-                            <div className="flex items-center justify-center h-10 px-3 rounded-md border bg-muted/50 text-sm font-medium">
-                              NA
-                            </div>
-                          </div>
-                        )
-                      }
-                      
+                          {/* Cap hint for conversion mode */}
+                          {isConversionMode && (
+                            <p className="text-[10px] text-muted-foreground mt-1 text-center">
+                              max {semiQty}
+                            </p>
+                          )}
+                        </div>
 
-                      {/* Weight — courier box shows "—" since it doesn't contribute to weight */}
-                      <div className="col-span-2 md:col-span-3">
-                        <Label className="text-xs text-muted-foreground md:hidden mb-1 block">Weight (kg)</Label>
-                        <div className={cn(
-                          "flex items-center justify-center h-10 px-3 rounded-md border text-sm font-semibold",
-                          entry.isCourierBox
-                            ? "bg-muted/50 text-muted-foreground"
-                            : isError
-                              ? "bg-destructive/10 border-destructive/30 text-destructive"
-                              : entry.weightKg > 0
+                        {/* Boxes */}
+                        <div className="col-span-1 md:col-span-2">
+                          <Label className="text-xs text-muted-foreground md:hidden mb-1 block">Boxes</Label>
+                          <div className="flex items-center justify-center h-10 px-3 rounded-md border bg-muted/50 text-sm font-medium">
+                            {isSemiMode
+                              ? "NA"
+                              : entry.isCourierBox
+                              ? entry.packets > 0
+                                ? entry.packets.toLocaleString("en-IN")
+                                : "—"
+                              : entry.boxes > 0
+                              ? entry.boxes.toLocaleString("en-IN")
+                              : "—"}
+                          </div>
+                        </div>
+
+                        {/* Weight */}
+                        <div className="col-span-2 md:col-span-3">
+                          <Label className="text-xs text-muted-foreground md:hidden mb-1 block">Weight (kg)</Label>
+                          <div
+                            className={cn(
+                              "flex items-center justify-center h-10 px-3 rounded-md border text-sm font-semibold",
+                              entry.isCourierBox
+                                ? "bg-muted/50 text-muted-foreground"
+                                : isSemiMode && entry.weightKg > 0
+                                ? "bg-orange-50 border-orange-300 text-orange-700 dark:bg-orange-900/20 dark:text-white-300"
+                                : isError
+                                ? "bg-destructive/10 border-destructive/30 text-destructive"
+                                : entry.weightKg > 0
                                 ? "bg-primary/10 border-primary/30 text-primary"
                                 : "bg-muted/50 text-muted-foreground"
-                        )}>
-                          {entry.isCourierBox
-                            ? "—"
-                            : entry.weightKg > 0
+                            )}
+                          >
+                            {entry.isCourierBox
+                              ? "—"
+                              : entry.weightKg > 0
                               ? `${entry.weightKg.toFixed(3)} kg`
                               : "—"}
+                          </div>
                         </div>
                       </div>
-                      
 
-                      {/* Semi-packageable toggle - only shown if label is semi-packageable */}
-                      {selectedProduct?.labels.find((pl) => pl.type === entry.type && pl.semiPackageable) && (
-                        <div className="col-span-1 md:col-span-2 flex items-center justify-center">
-                          <div className="flex items-center space-x-2">
-                            <Label htmlFor={`semi-packageable-${entry.type}`} className="text-xs text-muted-foreground">
-                              Semi-packageable
-                            </Label>
+                      {/* ── Semi-packageable toggle row (below main row) ── */}
+                      {isSemiPackageable && (
+                        <div className="px-4 pb-4 border-t border-border/50">
+                          <div className="flex items-center gap-3 pt-3">
                             <Switch
-                              id={`semi-packageable-${entry.type}`}
-                              checked={semiPackageableToggles[entry.type] || false}
-                              onCheckedChange={(checked) => toggleSemiPackageable(entry.type)}
+                              id={`semi-toggle-${entry.type}`}
+                              checked={isSemiMode}
+                              onCheckedChange={() => handleToggle(entry.type)}
+                              disabled={locked}
+                              className={locked ? "opacity-60 cursor-not-allowed" : ""}
                             />
+                            <Label
+                              htmlFor={`semi-toggle-${entry.type}`}
+                              className={cn(
+                                "text-sm select-none",
+                                locked ? "cursor-not-allowed text-muted-foreground" : "cursor-pointer"
+                              )}
+                            >
+                              {locked
+                                ? "Semi-packaging required first"
+                                : isSemiMode
+                                ? (
+                                  <span>
+                                    Semi-packaging mode{" "}
+                                    <span className="text-xs text-orange-600 dark:text-orange-400">
+                                      (label stock deferred until fully packaged)
+                                    </span>
+                                  </span>
+                                )
+                                : (
+                                  <span>
+                                    Converting to fully packaged{" "}
+                                    <span className="text-xs text-muted-foreground">
+                                      (toggle ON to add more semi-packaged instead)
+                                    </span>
+                                  </span>
+                                )}
+                            </Label>
                           </div>
+
+                          {/* Locked explanation */}
+                          {locked && (
+                            <p className="text-xs text-muted-foreground mt-2 ml-10">
+                              This label must be semi-packaged before it can be fully packaged.
+                              Complete semi-packaging first, then come back to convert.
+                            </p>
+                          )}
+
+                          {/* Conversion mode: show remaining semi count */}
+                          {isConversionMode && (
+                            <p className="text-xs text-orange-600 dark:text-orange-400 mt-2 ml-10">
+                              Entering packets here converts from the{" "}
+                              <span className="font-semibold">{semiQty} semi-packaged</span> available.
+                              Remaining after this session stays semi-packaged for later.
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -737,8 +982,11 @@ export default function PackagingEntry() {
                     <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
                       {labelStockErrors.map((e) => (
                         <p key={e.type}>
-                          • {e.type}: need {e.packets.toLocaleString("en-IN")} {e.isCourierBox ? "boxes" : "pcs"},{" "}
-                          {e.availableStock === 0 ? "none" : `only ${e.availableStock.toLocaleString("en-IN")}`} available
+                          • {e.type}: need {e.packets.toLocaleString("en-IN")} pcs,{" "}
+                          {e.availableStock === 0
+                            ? "none"
+                            : `only ${e.availableStock.toLocaleString("en-IN")}`}{" "}
+                          available
                         </p>
                       ))}
                     </div>
@@ -747,15 +995,17 @@ export default function PackagingEntry() {
               )}
 
               {/* Weight summary bar */}
-              {totalPackagedWeightKg > 0 && (
-                <div className={cn(
-                  "mt-4 rounded-lg p-4 flex items-center justify-between",
-                  exceedsRemaining
-                    ? "bg-destructive/10 border border-destructive/30"
-                    : isExactMatch
+              {(totalNewPackagedWeightKg > 0 || currentSessionSemiWeightKg > 0) && (
+                <div
+                  className={cn(
+                    "mt-4 rounded-lg p-4 flex items-center justify-between",
+                    exceedsRemaining
+                      ? "bg-destructive/10 border border-destructive/30"
+                      : isExactMatch
                       ? "bg-success/10 border border-success/30"
                       : "bg-muted/50 border border-border"
-                )}>
+                  )}
+                >
                   <div className="flex items-center gap-2">
                     {exceedsRemaining ? (
                       <AlertTriangle className="h-5 w-5 text-destructive" />
@@ -769,25 +1019,40 @@ export default function PackagingEntry() {
                         {exceedsRemaining
                           ? "Exceeds remaining quantity"
                           : isExactMatch
-                            ? "Exact match — ready to finish"
-                            : "Partial packaging"}
+                          ? "Exact match — ready to finish"
+                          : "Partial packaging"}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {exceedsRemaining
                           ? `Reduce packets — max ${batch.remainingQuantity.toFixed(3)} kg remaining`
                           : isExactMatch
-                            ? "Total weight matches remaining quantity"
-                            : `${(batch.remainingQuantity - totalPackagedWeightKg).toFixed(3)} kg still unpackaged`}
+                          ? "Total weight matches remaining quantity"
+                          : `${(batch.remainingQuantity - totalNewPackagedWeightKg).toFixed(3)} kg still unpackaged`}
                       </p>
+                      {currentSessionSemiWeightKg > 0 && (
+                        <p className="text-xs text-orange-600 dark:text-orange-400 mt-0.5">
+                          + {currentSessionSemiWeightKg.toFixed(3)} kg being semi-packaged this session
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Total weight</p>
-                    <p className={cn(
-                      "text-lg font-bold",
-                      exceedsRemaining ? "text-destructive" : isExactMatch ? "text-success" : "text-foreground"
-                    )}>
-                      {totalPackagedWeightKg.toFixed(3)} kg
+                    <p className="text-xs text-muted-foreground">
+                      {totalNewPackagedWeightKg > 0 ? "Fully packaged" : "Semi-packaged"}
+                    </p>
+                    <p
+                      className={cn(
+                        "text-lg font-bold",
+                        exceedsRemaining
+                          ? "text-destructive"
+                          : isExactMatch
+                          ? "text-success"
+                          : "text-foreground"
+                      )}
+                    >
+                      {totalNewPackagedWeightKg > 0
+                        ? `${totalNewPackagedWeightKg.toFixed(3)} kg`
+                        : `${currentSessionSemiWeightKg.toFixed(3)} kg`}
                     </p>
                   </div>
                 </div>
@@ -826,16 +1091,22 @@ export default function PackagingEntry() {
         </Card>
 
         {/* Session Summary + Actions */}
-        <Card className={cn(
-          hasStockErrors && "border-destructive",
-          !hasStockErrors && exceedsRemaining && "border-destructive",
-          !hasStockErrors && !exceedsRemaining && isExactMatch && totalPackagedWeightKg > 0 && "border-success/50",
-        )}>
+        <Card
+          className={cn(
+            hasStockErrors && "border-destructive",
+            !hasStockErrors && exceedsRemaining && "border-destructive",
+            !hasStockErrors &&
+              !exceedsRemaining &&
+              isExactMatch &&
+              totalNewPackagedWeightKg > 0 &&
+              "border-success/50"
+          )}
+        >
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
               {hasStockErrors ? (
                 <XCircle className="h-5 w-5 text-destructive" />
-              ) : isExactMatch && totalPackagedWeightKg > 0 ? (
+              ) : isExactMatch && totalNewPackagedWeightKg > 0 ? (
                 <CheckCircle2 className="h-5 w-5 text-success" />
               ) : exceedsRemaining ? (
                 <AlertTriangle className="h-5 w-5 text-destructive" />
@@ -844,18 +1115,20 @@ export default function PackagingEntry() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
               <div className="bg-muted/50 p-3 text-center rounded-lg">
                 <p className="text-xs text-muted-foreground">Total Packets</p>
-                <p className="font-semibold">{totalPackets.toLocaleString("en-IN")}</p>
+                <p className="font-semibold">{totalNewPackets.toLocaleString("en-IN")}</p>
               </div>
               <div className="bg-muted/50 p-3 text-center rounded-lg">
-                <p className="text-xs text-muted-foreground">Packaged</p>
-                <p className="font-semibold">{totalPackagedWeightKg.toFixed(3)} kg</p>
+                <p className="text-xs text-muted-foreground">Fully Packaged</p>
+                <p className="font-semibold">{totalNewPackagedWeightKg.toFixed(3)} kg</p>
               </div>
-              <div className="bg-blue-100 dark:bg-blue-900/30 p-3 text-center rounded-lg">
-                <p className="text-xs text-foreground">Semi-Packaged</p>
-                <p className="font-semibold text-foreground">{currentSessionSemiPackagedWeightKg.toFixed(3)} kg</p>
+              <div className="bg-orange-100 dark:bg-orange-900/30 p-3 text-center rounded-lg">
+                <p className="text-xs text-white-700 dark:text-white-300">Semi-Packaged</p>
+                <p className="font-semibold text-white-700 dark:text-white-300">
+                  {currentSessionSemiWeightKg.toFixed(3)} kg
+                </p>
               </div>
               <div className="bg-amber-100 dark:bg-amber-900/30 p-3 text-center rounded-lg">
                 <p className="text-xs">Loss</p>
@@ -864,7 +1137,10 @@ export default function PackagingEntry() {
               <div className="bg-primary/10 p-3 text-center rounded-lg">
                 <p className="text-xs text-primary">Remaining After</p>
                 <p className="font-semibold text-primary">
-                  {batch ? Math.max(0, batch.remainingQuantity - totalPackagedWeightKg).toFixed(3) : "0.000"} kg
+                  {batch
+                    ? Math.max(0, batch.remainingQuantity - totalNewPackagedWeightKg).toFixed(3)
+                    : "0.000"}{" "}
+                  kg
                 </p>
               </div>
             </div>
@@ -872,23 +1148,29 @@ export default function PackagingEntry() {
             {/* Label summary badges */}
             {validLabels.length > 0 && (
               <div className="mb-4 flex flex-wrap gap-2">
-                {validLabels.map((l) => (
-                  <Badge
-                    key={l.type}
-                    variant="secondary"
-                    className={cn(
-                      l.stockStatus === "out" && "border-destructive/50 bg-destructive/10 text-destructive",
-                      l.stockStatus === "low" && "border-amber-400/50 bg-amber-50 text-amber-700 dark:bg-amber-900/20",
-                    )}
-                  >
-                    <Tag className="h-3 w-3 mr-1" />
-                    {l.isCourierBox
-                      ? `${l.type}: ${l.packets.toLocaleString("en-IN")} boxes`
-                      : `${l.type}: ${l.packets.toLocaleString("en-IN")} pcs (${l.boxes} boxes)`}
-                    {l.stockStatus === "out" && <XCircle className="h-3 w-3 ml-1" />}
-                    {l.stockStatus === "low" && <AlertTriangle className="h-3 w-3 ml-1" />}
-                  </Badge>
-                ))}
+                {validLabels.map((l) => {
+                  const isSemi = semiToggles[l.type] === true;
+                  return (
+                    <Badge
+                      key={l.type}
+                      variant="secondary"
+                      className={cn(
+                        isSemi && "border-orange-400/50 bg-orange-50 text-orange-700 dark:bg-orange-900/20",
+                        l.stockStatus === "out" && !isSemi && "border-destructive/50 bg-destructive/10 text-destructive",
+                        l.stockStatus === "low" && !isSemi && "border-amber-400/50 bg-amber-50 text-amber-700 dark:bg-amber-900/20",
+                      )}
+                    >
+                      <Tag className="h-3 w-3 mr-1" />
+                      {l.isCourierBox
+                        ? `${l.type}: ${l.packets.toLocaleString("en-IN")} boxes`
+                        : isSemi
+                        ? `${l.type}: ${l.packets.toLocaleString("en-IN")} pcs (semi)`
+                        : `${l.type}: ${l.packets.toLocaleString("en-IN")} pcs (${l.boxes} boxes)`}
+                      {l.stockStatus === "out" && !isSemi && <XCircle className="h-3 w-3 ml-1" />}
+                      {l.stockStatus === "low" && !isSemi && <AlertTriangle className="h-3 w-3 ml-1" />}
+                    </Badge>
+                  );
+                })}
               </div>
             )}
 
@@ -897,7 +1179,9 @@ export default function PackagingEntry() {
               <div className="mb-4 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
                 <XCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-medium text-destructive text-sm">Cannot proceed — insufficient stock</p>
+                  <p className="font-medium text-destructive text-sm">
+                    Cannot proceed — insufficient stock
+                  </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     Please go to Labels Inventory and restock the items above before saving or finishing.
                   </p>
@@ -913,19 +1197,31 @@ export default function PackagingEntry() {
                   <AlertDialogTrigger asChild>
                     <Button
                       variant="outline"
-                      disabled={(totalPackagedWeightKg <= 0 && currentSessionSemiPackagedWeightKg <= 0) || exceedsRemaining || isSubmitting || isFinishing || hasStockErrors}
+                      disabled={
+                        (totalNewPackagedWeightKg <= 0 && currentSessionSemiWeightKg <= 0) ||
+                        exceedsRemaining ||
+                        isSubmitting ||
+                        isFinishing ||
+                        hasStockErrors
+                      }
                       className="flex-1"
                     >
-                      Save Packaging (Partial)
+                      {isSubmitting ? (
+                        <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</>
+                      ) : (
+                        "Save Packaging (Partial)"
+                      )}
                     </Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
                       <AlertDialogTitle>Save Partial Packaging</AlertDialogTitle>
                       <AlertDialogDescription>
-                        This will record {totalPackagedWeightKg.toFixed(3)} kg as packaged.{" "}
-                        {(batch.remainingQuantity - totalPackagedWeightKg).toFixed(3)} kg will remain for future sessions.
-                        Label stock will be deducted when the batch is marked as finished.
+                        {totalNewPackagedWeightKg > 0 &&
+                          `${totalNewPackagedWeightKg.toFixed(3)} kg will be recorded as fully packaged. `}
+                        {currentSessionSemiWeightKg > 0 &&
+                          `${currentSessionSemiWeightKg.toFixed(3)} kg will be recorded as semi-packaged (label stock deferred). `}
+                        {(batch.remainingQuantity - totalNewPackagedWeightKg).toFixed(3)} kg will remain for future sessions.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -940,17 +1236,23 @@ export default function PackagingEntry() {
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button
-                    disabled={exceedsRemaining || isSubmitting || isFinishing || batch.remainingQuantity <= 0 || hasStockErrors}
+                    disabled={
+                      exceedsRemaining ||
+                      isSubmitting ||
+                      isFinishing ||
+                      batch.remainingQuantity <= 0 ||
+                      hasStockErrors
+                    }
                     className={cn(
                       "flex-1",
-                      isExactMatch && totalPackagedWeightKg > 0 && !hasStockErrors
+                      isExactMatch && totalNewPackagedWeightKg > 0 && !hasStockErrors
                         ? "bg-success hover:bg-success/90"
                         : ""
                     )}
                   >
                     {isFinishing ? (
                       <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Finishing...</>
-                    ) : isExactMatch && totalPackagedWeightKg > 0 ? (
+                    ) : isExactMatch && totalNewPackagedWeightKg > 0 ? (
                       <><CheckCircle2 className="h-4 w-4 mr-2" /> Mark as Finished</>
                     ) : (
                       "Mark as Finished (with remaining as loss)"
@@ -961,28 +1263,31 @@ export default function PackagingEntry() {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Mark Batch as Finished</AlertDialogTitle>
                     <AlertDialogDescription>
-                      {isExactMatch && totalPackagedWeightKg > 0 ? (
+                      {isExactMatch && totalNewPackagedWeightKg > 0 ? (
                         <>All {batch.remainingQuantity.toFixed(3)} kg will be recorded as packaged.</>
                       ) : (
                         <>
-                          {totalPackagedWeightKg > 0
-                            ? `${totalPackagedWeightKg.toFixed(3)} kg will be packaged and `
+                          {totalNewPackagedWeightKg > 0
+                            ? `${totalNewPackagedWeightKg.toFixed(3)} kg will be packaged and `
                             : ""}
-                          {Math.max(0, batch.remainingQuantity - totalPackagedWeightKg).toFixed(3)} kg will be counted as loss.
+                          {Math.max(0, batch.remainingQuantity - totalNewPackagedWeightKg).toFixed(3)}{" "}
+                          kg will be counted as loss.
                         </>
                       )}
-                      {validLabels.length > 0 && (
+                      {validLabels.filter((l) => semiToggles[l.type] !== true).length > 0 && (
                         <>
                           <br /><br />
                           <strong>Label stock will be deducted:</strong>
                           <br />
-                          {validLabels.map((l) => (
-                            <span key={l.type} className="block">
-                              {l.isCourierBox
-                                ? `• ${l.type}: ${l.packets.toLocaleString("en-IN")} boxes`
-                                : `• ${l.type}: ${l.packets.toLocaleString("en-IN")} pcs (${l.boxes} boxes)`}
-                            </span>
-                          ))}
+                          {validLabels
+                            .filter((l) => semiToggles[l.type] !== true)
+                            .map((l) => (
+                              <span key={l.type} className="block">
+                                {l.isCourierBox
+                                  ? `• ${l.type}: ${l.packets.toLocaleString("en-IN")} boxes`
+                                  : `• ${l.type}: ${l.packets.toLocaleString("en-IN")} pcs (${l.boxes} boxes)`}
+                              </span>
+                            ))}
                         </>
                       )}
                     </AlertDialogDescription>
@@ -991,7 +1296,11 @@ export default function PackagingEntry() {
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
                     <AlertDialogAction
                       onClick={handleFinishBatch}
-                      className={isExactMatch ? "" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}
+                      className={
+                        isExactMatch
+                          ? ""
+                          : "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      }
                     >
                       Confirm
                     </AlertDialogAction>

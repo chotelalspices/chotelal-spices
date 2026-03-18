@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -14,9 +14,6 @@ import {
 } from "lucide-react";
 
 import { AppLayout } from "@/components/layout/AppLayout";
-import {
-  FormulationIngredient,
-} from "@/data/formulationData";
 import { formatCurrency } from "@/data/sampleData";
 
 import { Button } from "@/components/ui/button";
@@ -69,12 +66,16 @@ interface CalculatedIngredient {
   costContribution: number;
 }
 
+type NameStatus = "idle" | "checking" | "available" | "taken";
+
 export default function NewFormulationPage() {
   const router = useRouter();
   const { toast } = useToast();
 
-  /* ================= STATE ================= */
+  // ─── State ────────────────────────────────────────────────────────────────
+
   const [name, setName] = useState("");
+  const [nameStatus, setNameStatus] = useState<NameStatus>("idle");
   const [baseUnit, setBaseUnit] = useState<"kg" | "gm">("kg");
   const [defaultQuantity, setDefaultQuantity] = useState("100");
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
@@ -85,21 +86,18 @@ export default function NewFormulationPage() {
     { id: "1", rawMaterialId: "", quantity: "" },
   ]);
 
-  /* ================= FETCH RAW MATERIALS ================= */
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ─── Fetch raw materials ──────────────────────────────────────────────────
+
   useEffect(() => {
     const fetchRawMaterials = async () => {
       try {
         setIsLoadingMaterials(true);
         const response = await fetch('/api/inventory');
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch raw materials');
-        }
-
+        if (!response.ok) throw new Error('Failed to fetch raw materials');
         const data = await response.json();
-        // Filter only active materials
-        const activeMaterials = data.filter((rm: RawMaterial) => rm.status === 'active');
-        setRawMaterials(activeMaterials);
+        setRawMaterials(data.filter((rm: RawMaterial) => rm.status === 'active'));
       } catch (error) {
         console.error('Error fetching raw materials:', error);
         toast({
@@ -111,34 +109,57 @@ export default function NewFormulationPage() {
         setIsLoadingMaterials(false);
       }
     };
-
     fetchRawMaterials();
   }, [toast]);
 
-  /* ================= CALCULATIONS ================= */
+  // ─── Debounced name uniqueness check ─────────────────────────────────────
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setNameStatus("idle");
+      return;
+    }
+
+    setNameStatus("checking");
+
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/formulations/check-name?name=${encodeURIComponent(trimmed)}`
+        );
+        if (!res.ok) throw new Error();
+        const { exists } = await res.json();
+        setNameStatus(exists ? "taken" : "available");
+      } catch {
+        // Silently fail — don't block the user on a network error
+        setNameStatus("idle");
+      }
+    }, 500);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [name]);
+
+  // ─── Calculations ─────────────────────────────────────────────────────────
+
   const calculations = useMemo(() => {
     const validIngredients = ingredients.filter(
       (i) => i.rawMaterialId && i.quantity && parseFloat(i.quantity) > 0
     );
 
     if (validIngredients.length === 0) {
-      return {
-        calculatedIngredients: [],
-        totalQuantity: 0,
-        totalCost: 0,
-        costPerKg: 0,
-      };
+      return { calculatedIngredients: [], totalQuantity: 0, totalCost: 0, costPerKg: 0 };
     }
 
-    // Calculate total quantity in base unit
     let totalQuantityInBaseUnit = 0;
-    validIngredients.forEach(ingredient => {
+    validIngredients.forEach((ingredient) => {
       const qty = parseFloat(ingredient.quantity);
-      const rawMaterial = rawMaterials.find(rm => rm.id === ingredient.rawMaterialId);
-      
+      const rawMaterial = rawMaterials.find((rm) => rm.id === ingredient.rawMaterialId);
       if (!rawMaterial) return;
-
-      // Convert to base unit if needed
       if (baseUnit === 'kg' && rawMaterial.unit === 'gm') {
         totalQuantityInBaseUnit += qty / 1000;
       } else if (baseUnit === 'gm' && rawMaterial.unit === 'kg') {
@@ -151,34 +172,17 @@ export default function NewFormulationPage() {
     const calculatedIngredients: CalculatedIngredient[] = [];
     let totalCost = 0;
 
-    validIngredients.forEach(ingredient => {
-      const rawMaterial = rawMaterials.find(rm => rm.id === ingredient.rawMaterialId);
+    validIngredients.forEach((ingredient) => {
+      const rawMaterial = rawMaterials.find((rm) => rm.id === ingredient.rawMaterialId);
       if (!rawMaterial) return;
 
       const quantity = parseFloat(ingredient.quantity);
-
-      // Calculate percentage based on quantity
       let quantityInBaseUnit = quantity;
-      if (baseUnit === 'kg' && rawMaterial.unit === 'gm') {
-        quantityInBaseUnit = quantity / 1000;
-      } else if (baseUnit === 'gm' && rawMaterial.unit === 'kg') {
-        quantityInBaseUnit = quantity * 1000;
-      }
-      
+      if (baseUnit === 'kg' && rawMaterial.unit === 'gm') quantityInBaseUnit = quantity / 1000;
+      else if (baseUnit === 'gm' && rawMaterial.unit === 'kg') quantityInBaseUnit = quantity * 1000;
+
       const percentage = (quantityInBaseUnit / totalQuantityInBaseUnit) * 100;
-
-      // Calculate cost contribution
-      let costContribution: number;
-      if (baseUnit === rawMaterial.unit) {
-        costContribution = quantity * rawMaterial.costPerUnit;
-      } else if (baseUnit === 'kg' && rawMaterial.unit === 'gm') {
-        // Material quantity is in gm, need to convert to match pricing
-        costContribution = quantity * rawMaterial.costPerUnit;
-      } else {
-        // Material quantity is in kg, need to convert to match pricing
-        costContribution = quantity * rawMaterial.costPerUnit;
-      }
-
+      const costContribution = quantity * rawMaterial.costPerUnit;
       totalCost += costContribution;
 
       calculatedIngredients.push({
@@ -192,46 +196,33 @@ export default function NewFormulationPage() {
       });
     });
 
-    // Calculate cost per kg
     const totalQuantityInKg = baseUnit === 'kg' ? totalQuantityInBaseUnit : totalQuantityInBaseUnit / 1000;
     const costPerKg = totalQuantityInKg > 0 ? totalCost / totalQuantityInKg : 0;
 
-    return {
-      calculatedIngredients,
-      totalQuantity: totalQuantityInBaseUnit,
-      totalCost,
-      costPerKg,
-    };
+    return { calculatedIngredients, totalQuantity: totalQuantityInBaseUnit, totalCost, costPerKg };
   }, [ingredients, baseUnit, rawMaterials]);
 
   const totalPercentage = calculations.calculatedIngredients.reduce(
-    (sum, ing) => sum + ing.percentage,
-    0
+    (sum, ing) => sum + ing.percentage, 0
   );
-
   const isPercentageValid = Math.abs(totalPercentage - 100) < 0.01;
 
   const usedMaterialIds = ingredients
     .filter((i) => i.rawMaterialId)
     .map((i) => i.rawMaterialId);
 
-  /* ================= HANDLERS ================= */
+  // ─── Handlers ─────────────────────────────────────────────────────────────
+
   const addIngredient = () => {
     setIngredients((prev) => [
       ...prev,
-      {
-        id: Date.now().toString(),
-        rawMaterialId: "",
-        quantity: "",
-      },
+      { id: Date.now().toString(), rawMaterialId: "", quantity: "" },
     ]);
   };
 
   const removeIngredient = (rowId: string) => {
     if (ingredients.length === 1) return;
-    setIngredients((prev) =>
-      prev.filter((i) => i.id !== rowId)
-    );
+    setIngredients((prev) => prev.filter((i) => i.id !== rowId));
   };
 
   const updateIngredient = (
@@ -240,9 +231,7 @@ export default function NewFormulationPage() {
     value: string
   ) => {
     setIngredients((prev) =>
-      prev.map((i) =>
-        i.id === rowId ? { ...i, [field]: value } : i
-      )
+      prev.map((i) => (i.id === rowId ? { ...i, [field]: value } : i))
     );
   };
 
@@ -250,32 +239,25 @@ export default function NewFormulationPage() {
     e.preventDefault();
 
     if (!name.trim()) {
-      toast({
-        title: "Error",
-        description: "Please enter a product name",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Please enter a product name", variant: "destructive" });
       return;
     }
 
-    // Validate that all ingredients have valid quantities
+    if (nameStatus === "taken") {
+      toast({ title: "Name already exists", description: "Please choose a different formulation name.", variant: "destructive" });
+      return;
+    }
+
     const validIngredients = ingredients.filter(
       (i) => i.rawMaterialId && i.quantity && parseFloat(i.quantity) > 0
     );
-    
     if (validIngredients.length === 0) {
-      toast({
-        title: "Error",
-        description: "Please add at least one ingredient with a quantity",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Please add at least one ingredient with a quantity", variant: "destructive" });
       return;
     }
 
     setIsSubmitting(true);
-
     try {
-      // Convert quantities to percentages for storage
       const ingredientsWithPercentages = calculations.calculatedIngredients.map((calc) => ({
         rawMaterialId: calc.rawMaterialId,
         percentage: calc.percentage,
@@ -283,13 +265,11 @@ export default function NewFormulationPage() {
 
       const response = await fetch('/api/formulations', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: name.trim(),
           baseQuantity: calculations.totalQuantity,
-          baseUnit: baseUnit,
+          baseUnit,
           defaultQuantity: parseFloat(defaultQuantity),
           status: 'active',
           ingredients: ingredientsWithPercentages,
@@ -297,16 +277,9 @@ export default function NewFormulationPage() {
       });
 
       const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to create formulation');
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to create formulation');
-      }
-
-      toast({
-        title: "Formulation created",
-        description: `${name} has been created successfully.`,
-      });
-
+      toast({ title: "Formulation created", description: `${name} has been created successfully.` });
       router.push("/formulations");
     } catch (error) {
       console.error('Error creating formulation:', error);
@@ -321,9 +294,15 @@ export default function NewFormulationPage() {
   };
 
   const getIngredientCalc = (rawMaterialId: string) =>
-    calculations.calculatedIngredients.find(
-      (c) => c.rawMaterialId === rawMaterialId
-    );
+    calculations.calculatedIngredients.find((c) => c.rawMaterialId === rawMaterialId);
+
+  const canSubmit =
+    !isSubmitting &&
+    !isLoadingMaterials &&
+    nameStatus !== "taken" &&
+    nameStatus !== "checking";
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <AppLayout>
@@ -339,20 +318,52 @@ export default function NewFormulationPage() {
           </div>
         </div>
 
-        {/* PRODUCT NAME */}
+        {/* Product Name */}
         <div className="industrial-card p-6">
           <Label htmlFor="productName">Masala / Product Name</Label>
-          <Input
-            id="productName"
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Enter product name (e.g., Garam Masala)"
-            className="mt-2"
-          />
+          <div className="relative mt-2">
+            <Input
+              id="productName"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Enter product name (e.g., Garam Masala)"
+              className={cn(
+                "pr-10",
+                nameStatus === "taken" && "border-destructive focus-visible:ring-destructive",
+                nameStatus === "available" && "border-success focus-visible:ring-success",
+              )}
+            />
+            {/* Status icon inside input */}
+            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+              {nameStatus === "checking" && (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              )}
+              {nameStatus === "available" && (
+                <CheckCircle2 className="h-4 w-4 text-success" />
+              )}
+              {nameStatus === "taken" && (
+                <AlertCircle className="h-4 w-4 text-destructive" />
+              )}
+            </div>
+          </div>
+
+          {/* Status message below input */}
+          {nameStatus === "taken" && (
+            <p className="text-sm text-destructive mt-1.5 flex items-center gap-1">
+              <AlertCircle className="h-3.5 w-3.5" />
+              A formulation with this name already exists. Please choose a different name.
+            </p>
+          )}
+          {nameStatus === "available" && (
+            <p className="text-sm text-success mt-1.5 flex items-center gap-1">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Name is available.
+            </p>
+          )}
         </div>
 
-        {/* BASE UNIT */}
+        {/* Base Unit */}
         <div className="industrial-card p-6 mt-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -388,17 +399,11 @@ export default function NewFormulationPage() {
           </div>
         </div>
 
-        {/* INGREDIENTS */}
+        {/* Ingredients */}
         <div className="industrial-card p-6 mt-6">
           <div className="flex justify-between mb-4">
-            <h2 className="section-title">
-              Raw Material Breakdown
-            </h2>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={addIngredient}
-            >
+            <h2 className="section-title">Raw Material Breakdown</h2>
+            <Button type="button" variant="outline" onClick={addIngredient}>
               <Plus className="h-4 w-4 mr-1" />
               Add Row
             </Button>
@@ -417,20 +422,14 @@ export default function NewFormulationPage() {
             <TableBody>
               {ingredients.map((ing) => {
                 const calc = getIngredientCalc(ing.rawMaterialId);
-                const rawMaterial = rawMaterials.find(rm => rm.id === ing.rawMaterialId);
-                
+                const rawMaterial = rawMaterials.find((rm) => rm.id === ing.rawMaterialId);
+
                 return (
                   <TableRow key={ing.id}>
                     <TableCell>
                       <Select
                         value={ing.rawMaterialId}
-                        onValueChange={(v) =>
-                          updateIngredient(
-                            ing.id,
-                            "rawMaterialId",
-                            v
-                          )
-                        }
+                        onValueChange={(v) => updateIngredient(ing.id, "rawMaterialId", v)}
                         disabled={isLoadingMaterials}
                       >
                         <SelectTrigger>
@@ -440,17 +439,10 @@ export default function NewFormulationPage() {
                           {rawMaterials
                             .filter(
                               (rm) =>
-                                !usedMaterialIds.includes(
-                                  rm.id
-                                ) ||
-                                rm.id ===
-                                  ing.rawMaterialId
+                                !usedMaterialIds.includes(rm.id) || rm.id === ing.rawMaterialId
                             )
                             .map((rm) => (
-                              <SelectItem
-                                key={rm.id}
-                                value={rm.id}
-                              >
+                              <SelectItem key={rm.id} value={rm.id}>
                                 {rm.name}
                               </SelectItem>
                             ))}
@@ -465,46 +457,25 @@ export default function NewFormulationPage() {
                           step="0.01"
                           min="0"
                           value={ing.quantity}
-                          onChange={(e) =>
-                            updateIngredient(
-                              ing.id,
-                              "quantity",
-                              e.target.value
-                            )
-                          }
+                          onChange={(e) => updateIngredient(ing.id, "quantity", e.target.value)}
                           placeholder="0"
                           className="w-24"
                         />
                         {rawMaterial && (
-                          <span className="text-sm text-muted-foreground">
-                            {rawMaterial.unit}
-                          </span>
+                          <span className="text-sm text-muted-foreground">{rawMaterial.unit}</span>
                         )}
                       </div>
                     </TableCell>
 
-                    <TableCell>
-                      {calc
-                        ? `${calc.percentage.toFixed(1)}%`
-                        : "-"}
-                    </TableCell>
-
-                    <TableCell>
-                      {calc
-                        ? formatCurrency(
-                            calc.costContribution
-                          )
-                        : "-"}
-                    </TableCell>
+                    <TableCell>{calc ? `${calc.percentage.toFixed(1)}%` : "-"}</TableCell>
+                    <TableCell>{calc ? formatCurrency(calc.costContribution) : "-"}</TableCell>
 
                     <TableCell>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        onClick={() =>
-                          removeIngredient(ing.id)
-                        }
+                        onClick={() => removeIngredient(ing.id)}
                         disabled={ingredients.length === 1}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -513,72 +484,61 @@ export default function NewFormulationPage() {
                   </TableRow>
                 );
               })}
-              
-              {/* TOTALS ROW */}
+
+              {/* Totals row */}
               {calculations.calculatedIngredients.length > 0 && (
                 <TableRow className="font-semibold bg-muted/50">
                   <TableCell>Total</TableCell>
-                  <TableCell>
-                    {calculations.totalQuantity.toFixed(2)} {baseUnit}
-                  </TableCell>
-                  <TableCell>
-                    {totalPercentage.toFixed(1)}%
-                  </TableCell>
-                  <TableCell>
-                    {formatCurrency(calculations.totalCost)}
-                  </TableCell>
+                  <TableCell>{calculations.totalQuantity.toFixed(2)} {baseUnit}</TableCell>
+                  <TableCell>{totalPercentage.toFixed(1)}%</TableCell>
+                  <TableCell>{formatCurrency(calculations.totalCost)}</TableCell>
                   <TableCell />
                 </TableRow>
               )}
             </TableBody>
           </Table>
 
-          {/* SUMMARY CARDS */}
+          {/* Summary cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-            <div
-              className={cn(
-                "p-4 rounded-lg flex items-center gap-3",
-                isPercentageValid
-                  ? "bg-success/10 border border-success/20"
-                  : "bg-destructive/10 border border-destructive/20"
-              )}
-            >
+            <div className={cn(
+              "p-4 rounded-lg flex items-center gap-3",
+              isPercentageValid
+                ? "bg-success/10 border border-success/20"
+                : "bg-destructive/10 border border-destructive/20"
+            )}>
               {isPercentageValid ? (
                 <CheckCircle2 className="h-5 w-5 text-success flex-shrink-0" />
               ) : (
                 <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0" />
               )}
               <div>
-                <div className="text-sm text-muted-foreground">
-                  Total Percentage
-                </div>
-                <div className="text-lg font-semibold">
-                  {totalPercentage.toFixed(1)}%
-                </div>
+                <div className="text-sm text-muted-foreground">Total Percentage</div>
+                <div className="text-lg font-semibold">{totalPercentage.toFixed(1)}%</div>
               </div>
             </div>
 
             <div className="p-4 rounded-lg bg-primary/10 border border-primary/20">
-              <div className="text-sm text-muted-foreground">
-                Cost per kg
-              </div>
-              <div className="text-lg font-semibold">
-                {formatCurrency(calculations.costPerKg)} / kg
-              </div>
+              <div className="text-sm text-muted-foreground">Cost per kg</div>
+              <div className="text-lg font-semibold">{formatCurrency(calculations.costPerKg)} / kg</div>
             </div>
           </div>
         </div>
 
-        {/* ACTIONS */}
+        {/* Actions */}
         <div className="flex justify-end gap-3 mt-6">
           <Button variant="outline" asChild>
             <Link href="/formulations">Cancel</Link>
           </Button>
-          <Button type="submit" disabled={isSubmitting || isLoadingMaterials}>
+          <Button type="submit" disabled={!canSubmit}>
             {isSubmitting ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 Creating...
+              </>
+            ) : nameStatus === "checking" ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Checking name...
               </>
             ) : (
               <>

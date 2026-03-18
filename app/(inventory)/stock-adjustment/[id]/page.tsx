@@ -52,6 +52,7 @@ interface FormData {
   reason: ReasonType | '';
   adjustmentDate: string;
   remarks: string;
+  revisedCostPerUnit: string;
 }
 
 export default function StockAdjustmentPage() {
@@ -68,6 +69,7 @@ export default function StockAdjustmentPage() {
     reason: '',
     adjustmentDate: new Date().toISOString().split('T')[0],
     remarks: '',
+    revisedCostPerUnit: '',
   });
 
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
@@ -82,23 +84,15 @@ export default function StockAdjustmentPage() {
       try {
         setLoading(true);
         const response = await fetch('/api/inventory');
-        if (!response.ok) {
-          throw new Error('Failed to fetch raw materials');
-        }
+        if (!response.ok) throw new Error('Failed to fetch raw materials');
         const data = await response.json();
         setRawMaterials(data);
         setError(null);
-        
-        // If materialIdFromUrl exists and materials are loaded, set it in formData
         if (materialIdFromUrl && data.find((m: RawMaterial) => m.id === materialIdFromUrl)) {
-          setFormData(prev => ({
-            ...prev,
-            materialId: materialIdFromUrl,
-          }));
+          setFormData(prev => ({ ...prev, materialId: materialIdFromUrl }));
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'An error occurred');
-        console.error('Error fetching materials:', err);
         toast({
           title: 'Error',
           description: 'Failed to load raw materials. Please refresh the page.',
@@ -108,7 +102,6 @@ export default function StockAdjustmentPage() {
         setLoading(false);
       }
     };
-
     fetchMaterials();
   }, [materialIdFromUrl, toast]);
 
@@ -117,71 +110,71 @@ export default function StockAdjustmentPage() {
     [rawMaterials, formData.materialId]
   );
 
+  // Pre-fill revised cost when material changes
+  useEffect(() => {
+    if (selectedMaterial) {
+      setFormData(prev => ({
+        ...prev,
+        revisedCostPerUnit: (selectedMaterial.costPerUnit ?? 0).toString(),
+      }));
+    }
+  }, [formData.materialId, rawMaterials]);
+
   const adjustmentPreview = useMemo(() => {
     if (!selectedMaterial || !formData.quantity) return null;
-
     const qty = parseFloat(formData.quantity);
     if (isNaN(qty) || qty <= 0) return null;
-
     const currentStock = selectedMaterial.availableStock;
-    const newStock =
-      formData.adjustmentType === 'add'
-        ? currentStock + qty
-        : currentStock - qty;
-
+    const newStock = formData.adjustmentType === 'add' ? currentStock + qty : currentStock - qty;
+    const currentCost = selectedMaterial.costPerUnit ?? 0;
+    const revisedCost = parseFloat(formData.revisedCostPerUnit);
+    const costChanged =
+      formData.adjustmentType === 'add' &&
+      !isNaN(revisedCost) &&
+      revisedCost !== currentCost &&
+      formData.revisedCostPerUnit !== '';
     return {
       currentStock,
       quantity: qty,
       newStock,
       isValid: newStock >= 0,
+      currentCost,
+      costChanged,
+      revisedCost,
     };
-  }, [selectedMaterial, formData.quantity, formData.adjustmentType]);
+  }, [selectedMaterial, formData.quantity, formData.adjustmentType, formData.revisedCostPerUnit]);
 
   const validateForm = () => {
     const newErrors: Partial<Record<keyof FormData, string>> = {};
-
-    if (!formData.materialId) {
-      newErrors.materialId = 'Please select a raw material';
-    }
-
+    if (!formData.materialId) newErrors.materialId = 'Please select a raw material';
     if (!formData.quantity || parseFloat(formData.quantity) <= 0) {
       newErrors.quantity = 'Enter a valid positive quantity';
     }
-
-    if (!formData.reason) {
-      newErrors.reason = 'Please select a reason';
-    }
-
+    if (!formData.reason) newErrors.reason = 'Please select a reason';
     if (adjustmentPreview && !adjustmentPreview.isValid) {
       newErrors.quantity = 'Cannot reduce more than current stock';
     }
-
+    if (formData.revisedCostPerUnit !== '' && parseFloat(formData.revisedCostPerUnit) < 0) {
+      newErrors.revisedCostPerUnit = 'Cost cannot be negative';
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const updateField = <K extends keyof FormData>(
-    field: K,
-    value: FormData[K]
-  ) => {
+  const updateField = <K extends keyof FormData>(field: K, value: FormData[K]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    if (errors[field]) {
-      setErrors(prev => ({ ...prev, [field]: undefined }));
-    }
+    if (errors[field]) setErrors(prev => ({ ...prev, [field]: undefined }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm()) return;
-
     setIsSubmitting(true);
 
     try {
       const response = await fetch('/api/stock-adjustment', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           materialId: formData.materialId,
           adjustmentType: formData.adjustmentType,
@@ -189,14 +182,18 @@ export default function StockAdjustmentPage() {
           reason: formData.reason,
           adjustmentDate: formData.adjustmentDate || undefined,
           remarks: formData.remarks || undefined,
+          // Only send if add + value actually changed
+          revisedCostPerUnit:
+            formData.adjustmentType === 'add' &&
+            formData.revisedCostPerUnit !== '' &&
+            parseFloat(formData.revisedCostPerUnit) !== (selectedMaterial?.costPerUnit ?? 0)
+              ? parseFloat(formData.revisedCostPerUnit)
+              : undefined,
         }),
       });
 
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to adjust stock');
-      }
+      if (!response.ok) throw new Error(data.error || 'Failed to adjust stock');
 
       toast({
         title: 'Stock adjusted successfully',
@@ -207,7 +204,6 @@ export default function StockAdjustmentPage() {
 
       router.push('/inventory');
     } catch (error) {
-      console.error('Error adjusting stock:', error);
       toast({
         title: 'Error',
         description: error instanceof Error ? error.message : 'Failed to adjust stock. Please try again.',
@@ -265,19 +261,19 @@ export default function StockAdjustmentPage() {
         </div>
       </div>
 
-      {/* Form */}
       <form onSubmit={handleSubmit} className="max-w-4xl">
         <div className="grid gap-6 md:grid-cols-5">
+
           {/* Main Form */}
           <div className="md:col-span-3">
             <div className="industrial-card p-6 animate-fade-in">
               <h2 className="section-title">Adjustment Details</h2>
 
               <div className="form-section">
+
                 {/* Raw Material Selection */}
                 <div className="space-y-2">
                   <Label>Raw Material *</Label>
-
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button
@@ -294,12 +290,10 @@ export default function StockAdjustmentPage() {
                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                       </Button>
                     </PopoverTrigger>
-
                     <PopoverContent className="w-full p-0">
                       <Command>
                         <CommandInput placeholder="Search raw material..." />
                         <CommandEmpty>No material found.</CommandEmpty>
-
                         <CommandGroup>
                           {rawMaterials
                             .filter(m => m.status === "active")
@@ -307,9 +301,7 @@ export default function StockAdjustmentPage() {
                               <CommandItem
                                 key={material.id}
                                 value={material.name}
-                                onSelect={() => {
-                                  updateField("materialId", material.id)
-                                }}
+                                onSelect={() => updateField("materialId", material.id)}
                               >
                                 <div className="flex justify-between w-full">
                                   <span>{material.name}</span>
@@ -317,7 +309,6 @@ export default function StockAdjustmentPage() {
                                     ({formatQuantity(material.availableStock, material.unit)})
                                   </span>
                                 </div>
-
                                 {formData.materialId === material.id && (
                                   <Check className="ml-auto h-4 w-4" />
                                 )}
@@ -327,25 +318,23 @@ export default function StockAdjustmentPage() {
                       </Command>
                     </PopoverContent>
                   </Popover>
-
                   {errors.materialId && (
                     <p className="text-xs text-destructive">{errors.materialId}</p>
                   )}
                 </div>
 
-
-                {/* Current Stock Display */}
+                {/* Current Stock + Cost Display */}
                 {selectedMaterial && (
-                  <div className="rounded-lg bg-muted/50 p-4">
+                  <div className="rounded-lg bg-muted/50 p-4 space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Current Stock</span>
                       <span className="text-lg font-bold text-foreground">
                         {formatQuantity(selectedMaterial.availableStock, selectedMaterial.unit)}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between mt-1">
-                      <span className="text-xs text-muted-foreground">Cost per Unit</span>
-                      <span className="text-sm text-muted-foreground">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Current Cost per Unit</span>
+                      <span className="text-sm font-medium text-foreground">
                         {formatCurrency(selectedMaterial.costPerUnit)} / {selectedMaterial.unit}
                       </span>
                     </div>
@@ -371,7 +360,10 @@ export default function StockAdjustmentPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => updateField('adjustmentType', 'reduce')}
+                      onClick={() => {
+                        updateField('adjustmentType', 'reduce');
+                        updateField('revisedCostPerUnit', '');
+                      }}
                       className={cn(
                         'flex items-center justify-center gap-2 rounded-lg border-2 p-4 transition-all',
                         formData.adjustmentType === 'reduce'
@@ -439,6 +431,54 @@ export default function StockAdjustmentPage() {
                   </div>
                 </div>
 
+                {/* Revised Cost — only for Add Stock */}
+                {formData.adjustmentType === 'add' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="revisedCost">
+                      Revised Cost per Unit{' '}
+                      <span className="text-muted-foreground font-normal text-xs">
+                        (leave unchanged if cost hasn't changed)
+                      </span>
+                    </Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                        ₹
+                      </span>
+                      <Input
+                        id="revisedCost"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={formData.revisedCostPerUnit}
+                        onChange={(e) => updateField('revisedCostPerUnit', e.target.value)}
+                        placeholder="0.00"
+                        className={`pl-7 ${errors.revisedCostPerUnit ? 'border-destructive' : ''}`}
+                      />
+                    </div>
+                    {errors.revisedCostPerUnit && (
+                      <p className="text-xs text-destructive">{errors.revisedCostPerUnit}</p>
+                    )}
+                    {/* Live cost change indicator */}
+                    {selectedMaterial &&
+                      formData.revisedCostPerUnit !== '' &&
+                      parseFloat(formData.revisedCostPerUnit) !== selectedMaterial.costPerUnit &&
+                      !isNaN(parseFloat(formData.revisedCostPerUnit)) && (
+                        <div className="flex items-center gap-2 text-sm mt-1">
+                          <span className="text-muted-foreground">
+                            {formatCurrency(selectedMaterial.costPerUnit)} / {selectedMaterial.unit}
+                          </span>
+                          <span className="text-muted-foreground">→</span>
+                          <span className="font-medium text-success">
+                            ₹{parseFloat(formData.revisedCostPerUnit).toFixed(2)} / {selectedMaterial.unit}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            (will update material cost)
+                          </span>
+                        </div>
+                      )}
+                  </div>
+                )}
+
                 {/* Date */}
                 <div className="space-y-2">
                   <Label htmlFor="date">Adjustment Date</Label>
@@ -480,7 +520,6 @@ export default function StockAdjustmentPage() {
                         {formatQuantity(adjustmentPreview.currentStock, selectedMaterial!.unit)}
                       </span>
                     </div>
-
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">
                         {formData.adjustmentType === 'add' ? 'Adding' : 'Reducing'}
@@ -493,7 +532,6 @@ export default function StockAdjustmentPage() {
                         {formatQuantity(adjustmentPreview.quantity, selectedMaterial!.unit)}
                       </span>
                     </div>
-
                     <div className="border-t border-border pt-3">
                       <div className="flex items-center justify-between">
                         <span className="font-medium text-foreground">Stock After Adjustment</span>
@@ -505,17 +543,46 @@ export default function StockAdjustmentPage() {
                         </span>
                       </div>
                     </div>
+
+                    {/* Cost change preview */}
+                    {adjustmentPreview.costChanged && (
+                      <div className="border-t border-border pt-3 space-y-1">
+                        <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+                          Cost Update
+                        </p>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Previous Cost</span>
+                          <span className="text-muted-foreground">
+                            {formatCurrency(adjustmentPreview.currentCost)} / {selectedMaterial!.unit}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">New Cost</span>
+                          <span className="font-semibold text-success">
+                            ₹{adjustmentPreview.revisedCost.toFixed(2)} / {selectedMaterial!.unit}
+                          </span>
+                        </div>
+                        <div className="rounded-md bg-muted/50 px-3 py-2 mt-2">
+                          <p className="text-xs text-muted-foreground">
+                            Recorded in history as{' '}
+                            <span className="font-medium text-foreground">
+                              {formatCurrency(adjustmentPreview.currentCost)} → ₹{adjustmentPreview.revisedCost.toFixed(2)}
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {!adjustmentPreview.isValid && (
                     <div className="flex items-start gap-2 rounded-lg bg-destructive/10 p-3">
                       <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
                       <p className="text-xs text-destructive">
-                        Cannot reduce stock below zero. Maximum reduction: {formatQuantity(adjustmentPreview.currentStock, selectedMaterial!.unit)}
+                        Cannot reduce stock below zero. Maximum reduction:{' '}
+                        {formatQuantity(adjustmentPreview.currentStock, selectedMaterial!.unit)}
                       </p>
                     </div>
                   )}
-
                   {adjustmentPreview.isValid && (
                     <div className="flex items-start gap-2 rounded-lg bg-muted/50 p-3">
                       <AlertCircle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />

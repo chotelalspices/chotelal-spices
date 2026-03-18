@@ -218,7 +218,7 @@ export default function DashboardPage() {
             href="/packaging"
           />
           <MetricCard
-            title="Net Profit"
+            title="Net"
             value={formatCurrency(dashboardData.profitSnapshot.profit)}
             subtitle={`Revenue: ${formatCurrency(dashboardData.profitSnapshot.revenue)}`}
             icon={TrendingUp}

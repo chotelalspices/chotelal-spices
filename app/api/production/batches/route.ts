@@ -42,16 +42,24 @@ function formatBatch(batch: any) {
   const costPerKg = finalOutputQuantity > 0 ? totalProductionCost / finalOutputQuantity : 0;
 
   const materialRequirements = batch.materialUsages.map((usage: any) => ({
-    rawMaterialId: usage.rawMaterialId,
-    rawMaterialName: usage.rawMaterial.name,
-    requiredQuantity: usage.quantityUsed,
-    unit: batch.unit.toLowerCase() as "kg" | "gm",
-    availableStock: 0,
-    stockStatus: "sufficient" as const,
-    ratePerUnit: usage.ratePerUnit,
-    cost: usage.cost,
-    isChecked: true,
-  }));
+  rawMaterialId: usage.rawMaterialId,
+  originalRawMaterialId: usage.rawMaterialId,        // ← add
+  rawMaterialName: usage.rawMaterial.name,
+  originalRawMaterialName: usage.rawMaterial.name,   // ← add
+  requiredQuantity: usage.quantityUsed,
+  actualQuantity: usage.quantityUsed,                // ← add
+  unit: batch.unit.toLowerCase() as "kg" | "gm",
+  availableStock: 0,
+  stockStatus: "sufficient" as const,
+  ratePerUnit: usage.ratePerUnit,
+  originalRatePerUnit: usage.ratePerUnit,            // ← add
+  cost: usage.cost,
+  isChecked: true,                                   // already there
+  status: "active" as const,                         // ← add
+  originalStatus: "active" as const,                 // ← add
+  originalAvailableStock: 0,                         // ← add
+  alternativeRawMaterials: [],                       // ← add
+}));
 
   let displayStatus: "draft" | "confirmed" = "draft";
   if (batch.status === "confirmed" || batch.status === "ready_for_packaging") {

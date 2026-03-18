@@ -7,9 +7,7 @@ import { authOptions } from "../auth/[...nextauth]/route";
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify authentication
     const session = await getServerSession(authOptions);
-
     if (!session || !session.user) {
       return NextResponse.json(
         { error: 'Unauthorized. Please log in to perform this action.' },
@@ -17,28 +15,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the authenticated user's ID
     const authenticatedUserId = (session.user as any).id as string;
-
     if (!authenticatedUserId) {
-      return NextResponse.json(
-        { error: 'User ID not found in session.' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'User ID not found in session.' }, { status: 401 });
     }
 
-    // Verify the user exists and is active in the database
-    const user = await prisma.user.findUnique({
-      where: { id: authenticatedUserId },
-    });
-
+    const user = await prisma.user.findUnique({ where: { id: authenticatedUserId } });
     if (!user) {
-      return NextResponse.json(
-        { error: 'User not found in database.' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'User not found in database.' }, { status: 401 });
     }
-
     if (user.status !== 'active') {
       return NextResponse.json(
         { error: 'Your account is not active. Please contact an administrator.' },
@@ -54,9 +39,9 @@ export async function POST(request: NextRequest) {
       reason,
       adjustmentDate,
       remarks,
+      revisedCostPerUnit, // optional — only on 'add' if cost changed
     } = body;
 
-    // Validate required fields
     if (!materialId || !adjustmentType || !quantity || !reason) {
       return NextResponse.json(
         { error: 'Missing required fields: materialId, adjustmentType, quantity, and reason are required' },
@@ -64,7 +49,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate adjustmentType enum
     if (!['add', 'reduce'].includes(adjustmentType.toLowerCase())) {
       return NextResponse.json(
         { error: 'Invalid adjustmentType. Must be "add" or "reduce"' },
@@ -72,7 +56,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate reason enum
     const validReasons = ['purchase', 'wastage', 'damage', 'correction', 'production'];
     if (!validReasons.includes(reason.toLowerCase())) {
       return NextResponse.json(
@@ -81,34 +64,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate quantity
     const quantityNum = parseFloat(quantity);
     if (isNaN(quantityNum) || quantityNum <= 0) {
-      return NextResponse.json(
-        { error: 'Quantity must be a positive number' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Quantity must be a positive number' }, { status: 400 });
     }
 
-    // Check if material exists
     const rawMaterial = await prisma.rawMaterial.findUnique({
       where: { id: materialId },
-      include: {
-        stockMovements: {
-          orderBy: {
-            createdAt: 'asc',
-          },
-        },
-      },
+      include: { stockMovements: { orderBy: { createdAt: 'asc' } } },
     });
 
     if (!rawMaterial) {
-      return NextResponse.json(
-        { error: 'Raw material not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Raw material not found' }, { status: 404 });
     }
-
     if (rawMaterial.status !== 'active') {
       return NextResponse.json(
         { error: 'Cannot adjust stock for inactive material' },
@@ -116,70 +84,73 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Calculate current stock
-    const currentStock = rawMaterial.stockMovements.reduce((total, movement) => {
-      if (movement.action === 'add') {
-        return total + movement.quantity;
-      } else {
-        return total - movement.quantity;
-      }
-    }, 0);
+    const currentStock = rawMaterial.stockMovements.reduce((total, movement) =>
+      movement.action === 'add' ? total + movement.quantity : total - movement.quantity, 0);
 
-    // Validate that reducing stock won't go below zero
     if (adjustmentType === 'reduce' && quantityNum > currentStock) {
       return NextResponse.json(
-        {
-          error: 'Cannot reduce stock below zero',
-          currentStock,
-          requestedReduction: quantityNum,
-        },
+        { error: 'Cannot reduce stock below zero', currentStock, requestedReduction: quantityNum },
         { status: 400 }
       );
     }
 
-    // Parse adjustment date if provided, otherwise use current date
     let createdAt: Date;
     if (adjustmentDate) {
       createdAt = new Date(adjustmentDate);
       if (isNaN(createdAt.getTime())) {
-        return NextResponse.json(
-          { error: 'Invalid adjustment date format' },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: 'Invalid adjustment date format' }, { status: 400 });
       }
     } else {
       createdAt = new Date();
     }
 
-    // Create stock movement
-    const stockMovement = await prisma.stockMovement.create({
-      data: {
-        rawMaterialId: materialId,
-        action: adjustmentType.toLowerCase() as 'add' | 'reduce',
-        quantity: quantityNum,
-        reason: reason.toLowerCase() as 'purchase' | 'wastage' | 'damage' | 'correction' | 'production',
-        reference: remarks?.trim() || null,
-        performedById: authenticatedUserId,
-        createdAt,
-      },
-      include: {
-        rawMaterial: {
-          select: {
-            id: true,
-            name: true,
-            unit: true,
-          },
+    // Determine if cost is being revised
+    const previousCost = rawMaterial.costPerUnit;
+    const hasRevisedCost =
+      adjustmentType === 'add' &&
+      revisedCostPerUnit !== undefined &&
+      revisedCostPerUnit !== null &&
+      revisedCostPerUnit !== '' &&
+      parseFloat(revisedCostPerUnit) !== previousCost;
+
+    const newCost = hasRevisedCost ? parseFloat(revisedCostPerUnit) : undefined;
+
+    // Build movement data
+    const movementData: any = {
+      rawMaterialId: materialId,
+      action: adjustmentType.toLowerCase() as 'add' | 'reduce',
+      quantity: quantityNum,
+      reason: reason.toLowerCase() as 'purchase' | 'wastage' | 'damage' | 'correction' | 'production',
+      reference: remarks?.trim() || null,
+      performedById: authenticatedUserId,
+      createdAt,
+    };
+
+    if (hasRevisedCost) {
+      movementData.previousCostPerUnit = previousCost;
+      movementData.newCostPerUnit = newCost;
+    }
+
+    // Transaction: create movement + optionally update material cost
+    const stockMovement = await prisma.$transaction(async (tx) => {
+      const created = await tx.stockMovement.create({
+        data: movementData,
+        include: {
+          rawMaterial: { select: { id: true, name: true, unit: true } },
+          performedBy: { select: { id: true, fullName: true } },
         },
-        performedBy: {
-          select: {
-            id: true,
-            fullName: true,
-          },
-        },
-      },
+      });
+
+      if (hasRevisedCost) {
+        await tx.rawMaterial.update({
+          where: { id: materialId },
+          data: { costPerUnit: newCost! },
+        });
+      }
+
+      return created;
     });
 
-    // Calculate new stock after adjustment
     const newStock = adjustmentType === 'add'
       ? currentStock + quantityNum
       : currentStock - quantityNum;
@@ -198,11 +169,10 @@ export async function POST(request: NextRequest) {
         reference: stockMovement.reference,
         currentStock,
         newStock,
+        previousCostPerUnit: (stockMovement as any).previousCostPerUnit ?? undefined,
+        newCostPerUnit: (stockMovement as any).newCostPerUnit ?? undefined,
         performedBy: stockMovement.performedBy
-          ? {
-            id: stockMovement.performedBy.id,
-            fullName: stockMovement.performedBy.fullName,
-          }
+          ? { id: stockMovement.performedBy.id, fullName: stockMovement.performedBy.fullName }
           : null,
         createdAt: stockMovement.createdAt.toISOString(),
       },
@@ -210,21 +180,12 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error('Error creating stock adjustment:', error);
-
-    // Handle Prisma validation errors
-    if (error instanceof Error) {
-      if (error.message.includes('Unique constraint')) {
-        return NextResponse.json(
-          { error: 'A stock movement with this reference already exists' },
-          { status: 409 }
-        );
-      }
+    if (error instanceof Error && error.message.includes('Unique constraint')) {
+      return NextResponse.json(
+        { error: 'A stock movement with this reference already exists' },
+        { status: 409 }
+      );
     }
-
-    return NextResponse.json(
-      { error: 'Failed to create stock adjustment' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to create stock adjustment' }, { status: 500 });
   }
 }
-

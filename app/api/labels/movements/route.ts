@@ -46,6 +46,8 @@ export async function GET(request: NextRequest) {
       adjustmentDate: m.adjustmentDate.toISOString(),
       createdAt: m.createdAt.toISOString(),
       performedBy: m.performedBy?.fullName || undefined,
+      previousCostPerUnit: (m as any).previousCostPerUnit ?? undefined,
+      newCostPerUnit: (m as any).newCostPerUnit ?? undefined,
     }));
 
     return NextResponse.json(result, { status: 200 });
@@ -66,7 +68,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { labelId, adjustmentType, quantity, reason, adjustmentDate, remarks } = await request.json();
+    const {
+      labelId,
+      adjustmentType,
+      quantity,
+      reason,
+      adjustmentDate,
+      remarks,
+      revisedCostPerUnit, // optional — only provided on 'add' if cost changed
+    } = await request.json();
 
     if (!labelId || !quantity || !reason || !adjustmentType) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -81,8 +91,10 @@ export async function POST(request: NextRequest) {
 
     // Check stock won't go negative on reduce
     if (adjustmentType === 'reduce') {
-      const currentStock = label.labelMovements.reduce((total, m) =>
-        m.action === 'add' ? total + m.quantity : total - m.quantity, 0);
+      const currentStock = label.labelMovements.reduce(
+        (total, m) => (m.action === 'add' ? total + m.quantity : total - m.quantity),
+        0
+      );
       if (currentStock - parseInt(quantity) < 0) {
         return NextResponse.json(
           { error: 'Insufficient stock. Cannot reduce below zero.' },
@@ -91,20 +103,51 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const movement = await prisma.labelMovement.create({
-      data: {
-        labelId,
-        action: adjustmentType,
-        quantity: parseInt(quantity),
-        reason,
-        remarks: remarks?.trim() || null,
-        adjustmentDate: adjustmentDate ? new Date(adjustmentDate) : new Date(),
-        performedById: authenticatedUserId,
-      },
-      include: {
-        label: { select: { name: true } },
-        performedBy: { select: { fullName: true } },
-      },
+    // Determine previous cost and whether to update
+    const previousCost = (label as any).costPerUnit ?? 0;
+    const hasRevisedCost =
+      revisedCostPerUnit !== undefined &&
+      revisedCostPerUnit !== null &&
+      revisedCostPerUnit !== '' &&
+      parseFloat(revisedCostPerUnit) !== previousCost;
+
+    const newCost = hasRevisedCost ? parseFloat(revisedCostPerUnit) : undefined;
+
+    // Build movement data
+    const movementData: any = {
+      labelId,
+      action: adjustmentType,
+      quantity: parseInt(quantity),
+      reason,
+      remarks: remarks?.trim() || null,
+      adjustmentDate: adjustmentDate ? new Date(adjustmentDate) : new Date(),
+      performedById: authenticatedUserId,
+    };
+
+    if (hasRevisedCost) {
+      movementData.previousCostPerUnit = previousCost;
+      movementData.newCostPerUnit = newCost;
+    }
+
+    // Run in transaction: create movement + optionally update label cost
+    const movement = await prisma.$transaction(async (tx) => {
+      const created = await tx.labelMovement.create({
+        data: movementData,
+        include: {
+          label: { select: { name: true } },
+          performedBy: { select: { fullName: true } },
+        },
+      });
+
+      // Update label's costPerUnit if revised cost was provided
+      if (hasRevisedCost) {
+        await tx.label.update({
+          where: { id: labelId },
+          data: { costPerUnit: newCost } as any,
+        });
+      }
+
+      return created;
     });
 
     return NextResponse.json({
@@ -118,6 +161,8 @@ export async function POST(request: NextRequest) {
       adjustmentDate: movement.adjustmentDate.toISOString(),
       createdAt: movement.createdAt.toISOString(),
       performedBy: movement.performedBy?.fullName || undefined,
+      previousCostPerUnit: (movement as any).previousCostPerUnit ?? undefined,
+      newCostPerUnit: (movement as any).newCostPerUnit ?? undefined,
     }, { status: 201 });
 
   } catch (error) {

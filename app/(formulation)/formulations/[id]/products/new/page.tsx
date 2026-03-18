@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -31,6 +32,7 @@ interface LabelEntry {
   id: string;
   type: string;
   quantity: number;
+  semiPackageable: boolean;
 }
 
 interface NewProduct {
@@ -91,7 +93,7 @@ export default function CreateProductPage() {
       ...prev,
       labels: [
         ...prev.labels,
-        { id: `label-${Date.now()}`, type: '', quantity: 0 },
+        { id: `label-${Date.now()}`, type: '', quantity: 0, semiPackageable: false },
       ],
     }));
   };
@@ -103,11 +105,17 @@ export default function CreateProductPage() {
     }));
   };
 
-  const updateLabel = (id: string, field: 'type' | 'quantity', value: string | number) => {
+  const updateLabel = (
+    id: string,
+    field: 'type' | 'quantity' | 'semiPackageable',
+    value: string | number | boolean
+  ) => {
     setFormData((prev) => ({
       ...prev,
       labels: prev.labels.map((label) =>
-        label.id === id ? { ...label, [field]: value } : label
+        label.id === id
+          ? { ...label, [field]: field === 'quantity' ? Number(value) : value }
+          : label
       ),
     }));
   };
@@ -152,7 +160,11 @@ export default function CreateProductPage() {
           name: formData.name,
           quantity: formData.quantity,
           unit: formData.unit,
-          labels: formData.labels.map((l) => ({ type: l.type, quantity: l.quantity })),
+          labels: formData.labels.map((l) => ({
+            type: l.type,
+            quantity: l.quantity,
+            semiPackageable: l.semiPackageable,
+          })),
         }),
       });
 
@@ -340,7 +352,7 @@ export default function CreateProductPage() {
                       key={label.id}
                       className="flex items-end gap-3 p-4 border rounded-lg bg-muted/30"
                     >
-                      {/* Label type — free text input */}
+                      {/* Label type */}
                       <div className="flex-1 space-y-2">
                         <Label htmlFor={`label-type-${label.id}`}>
                           Label Type {index + 1}
@@ -376,6 +388,23 @@ export default function CreateProductPage() {
                         </div>
                       </div>
 
+                      {/* Semi-packageable checkbox */}
+                      <div className="w-36 space-y-2">
+                        <Label htmlFor={`label-semi-${label.id}`}>
+                          Semi-packageable
+                        </Label>
+                        <div className="flex items-center justify-center h-10">
+                          <Checkbox
+                            id={`label-semi-${label.id}`}
+                            checked={label.semiPackageable}
+                            onCheckedChange={(checked) =>
+                              updateLabel(label.id, 'semiPackageable', !!checked)
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      {/* Remove */}
                       <Button
                         type="button"
                         variant="ghost"

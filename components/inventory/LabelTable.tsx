@@ -24,6 +24,7 @@ interface Label {
   status: string;
   availableStock: number;
   minimumStock: number;
+  costPerUnit?: number;
   unit?: string;
 }
 
@@ -49,6 +50,7 @@ export function LabelTable({ labels }: LabelTableProps) {
             <TableHead>Label Name</TableHead>
             <TableHead>Available Stock</TableHead>
             <TableHead>Min. Level</TableHead>
+            <TableHead>Cost / Unit</TableHead>
             <TableHead>Stock Health</TableHead>
             <TableHead>Status</TableHead>
             <TableHead className="text-right">Actions</TableHead>
@@ -82,6 +84,8 @@ export function LabelTable({ labels }: LabelTableProps) {
                 ? 'bg-warning'
                 : 'bg-emerald-500';
 
+            const cost = label.costPerUnit ?? 0;
+
             return (
               <TableRow key={label.id}>
                 {/* Label Name */}
@@ -113,6 +117,20 @@ export function LabelTable({ labels }: LabelTableProps) {
                 <TableCell className="text-muted-foreground">
                   {formatLabelQty(label.minimumStock)}{' '}
                   <span className="text-xs">pcs</span>
+                </TableCell>
+
+                {/* Cost per Unit */}
+                <TableCell>
+                  {cost > 0 ? (
+                    <span className="font-medium text-foreground">
+                      ₹{cost.toLocaleString('en-IN', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground text-xs">—</span>
+                  )}
                 </TableCell>
 
                 {/* Stock Health Progress Bar */}

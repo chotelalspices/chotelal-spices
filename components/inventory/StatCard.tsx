@@ -16,18 +16,29 @@ const variantStyles = {
   success: 'bg-success/10 text-success',
 };
 
-export function StatCard({ title, value, subtitle, icon: Icon, variant = 'default' }: StatCardProps) {
+export function StatCard({
+  title,
+  value,
+  subtitle,
+  icon: Icon,
+  variant = 'default',
+}: StatCardProps) {
   return (
-    <div className="stat-card animate-fade-in bg-white border border-gray-200 p-4 rounded-md shadow-sm">
-      <div className="flex items-start justify-between">
+    <div className="stat-card animate-fade-in bg-white border border-gray-200 p-4 rounded-md shadow-sm h-full flex flex-col justify-between">
+      <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-muted-foreground mb-1">{title}</p>
-          <p className="text-2xl md:text-3xl font-bold text-foreground">{value}</p>
+          <p className="text-2xl md:text-3xl font-bold text-foreground break-words">{value}</p>
           {subtitle && (
             <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
           )}
         </div>
-        <div className={cn('flex h-10 w-10 items-center justify-center rounded-lg shrink-0', variantStyles[variant])}>
+        <div
+          className={cn(
+            'flex h-10 w-10 items-center justify-center rounded-lg shrink-0',
+            variantStyles[variant]
+          )}
+        >
           <Icon className="h-5 w-5" />
         </div>
       </div>

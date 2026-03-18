@@ -10,6 +10,7 @@ import {
   XCircle,
   AlertTriangle,
   Save,
+  Loader2,
 } from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -50,7 +51,6 @@ import {
 } from '@/data/productionData';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2 } from 'lucide-react';
 
 interface ProductionEntryData {
   formulationId: string;
@@ -69,11 +69,8 @@ export default function ProductionStockCheck() {
   const isMobile = useIsMobile();
   const { toast } = useToast();
 
-  const [entryData, setEntryData] =
-    useState<ProductionEntryData | null>(null);
-  const [requirements, setRequirements] = useState<
-    MaterialRequirement[]
-  >([]);
+  const [entryData, setEntryData] = useState<ProductionEntryData | null>(null);
+  const [requirements, setRequirements] = useState<MaterialRequirement[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -88,18 +85,40 @@ export default function ProductionStockCheck() {
       const data: ProductionEntryData = JSON.parse(stored);
       setEntryData(data);
 
+      // ── Check if we're resuming a draft with saved requirements ──
+      const savedRequirements = sessionStorage.getItem('materialRequirements');
+
       try {
         setIsLoading(true);
         const response = await fetch(
           `/api/production/materials?formulationId=${data.formulationId}&plannedQuantity=${data.producedQuantity}`
         );
 
-        if (!response.ok) {
-          throw new Error('Failed to fetch material requirements');
-        }
+        if (!response.ok) throw new Error('Failed to fetch material requirements');
 
-        const reqs = await response.json();
-        setRequirements(reqs);
+        const reqs: MaterialRequirement[] = await response.json();
+
+        // If we have saved requirements (draft resume), merge the saved
+        // rawMaterialId, actualQuantity, and isChecked back into fresh data
+        if (savedRequirements) {
+          const saved: MaterialRequirement[] = JSON.parse(savedRequirements);
+          const merged = reqs.map((req) => {
+            const match = saved.find(s => s.originalRawMaterialId === req.originalRawMaterialId);
+            if (match) {
+              return {
+                ...req,
+                rawMaterialId: match.rawMaterialId ?? req.rawMaterialId,
+                rawMaterialName: match.rawMaterialName ?? req.rawMaterialName,
+                actualQuantity: match.actualQuantity ?? req.actualQuantity,
+                isChecked: match.isChecked ?? false,
+              };
+            }
+            return req;
+          });
+          setRequirements(merged);
+        } else {
+          setRequirements(reqs);
+        }
       } catch (error) {
         console.error('Error fetching material requirements:', error);
         toast({
@@ -125,8 +144,7 @@ export default function ProductionStockCheck() {
     const updated = [...requirements];
     const req = updated[index];
     req.actualQuantity = newQuantity;
-    let availableInSameUnit = req.availableStock;
-    req.stockStatus = availableInSameUnit >= newQuantity ? 'sufficient' : 'insufficient';
+    req.stockStatus = req.availableStock >= newQuantity ? 'sufficient' : 'insufficient';
     req.cost = newQuantity * req.ratePerUnit;
     setRequirements(updated);
   };
@@ -154,11 +172,9 @@ export default function ProductionStockCheck() {
 
         let availableInSameUnit = selectedAlternative.availableStock;
         if (req.unit !== selectedAlternative.unit) {
-          if (req.unit === 'kg' && selectedAlternative.unit === 'gm') {
-            availableInSameUnit = selectedAlternative.availableStock / 1000;
-          } else {
-            availableInSameUnit = selectedAlternative.availableStock * 1000;
-          }
+          availableInSameUnit = req.unit === 'kg' && selectedAlternative.unit === 'gm'
+            ? selectedAlternative.availableStock / 1000
+            : selectedAlternative.availableStock * 1000;
         }
         req.stockStatus = availableInSameUnit >= req.requiredQuantity ? 'sufficient' : 'insufficient';
 
@@ -181,47 +197,32 @@ export default function ProductionStockCheck() {
   const hasAtLeastOneChecked = checkedCount > 0;
   const allChecked = allSufficientMaterialsChecked(requirements);
   const canProceed = allChecked && !hasInactiveMaterials(requirements);
-
-  // Show Save button when at least 1 is checked but not all are checked (partial save)
   const canSavePartial = hasAtLeastOneChecked && !canProceed && !hasInactiveMaterials(requirements);
 
   const handleSaveProduction = async () => {
     if (!entryData || !hasAtLeastOneChecked) return;
-
     try {
       setIsSaving(true);
-
       const payload = {
         ...entryData,
         materialRequirements: requirements,
         status: 'draft',
         savedAt: new Date().toISOString(),
       };
-
       const response = await fetch('/api/production/batches', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to save production batch');
-      }
-
-      const saved = await response.json();
-
-      // Clear session storage
+      if (!response.ok) throw new Error('Failed to save production batch');
       sessionStorage.removeItem('productionEntry');
       sessionStorage.removeItem('materialRequirements');
-
       toast({
         title: 'Production Saved',
-        description: `Draft batch saved successfully. You can complete it later from the production list.`,
+        description: 'Draft batch saved successfully. You can complete it later from the production list.',
       });
-
       router.push('/production');
     } catch (error) {
-      console.error('Error saving production:', error);
       toast({
         title: 'Error',
         description: 'Failed to save production batch. Please try again.',
@@ -234,12 +235,7 @@ export default function ProductionStockCheck() {
 
   const handleNext = () => {
     if (!canProceed) return;
-
-    sessionStorage.setItem(
-      'materialRequirements',
-      JSON.stringify(requirements)
-    );
-
+    sessionStorage.setItem('materialRequirements', JSON.stringify(requirements));
     router.push('/production/confirm');
   };
 
@@ -256,6 +252,7 @@ export default function ProductionStockCheck() {
   return (
     <AppLayout>
       <div className="space-y-6 max-w-4xl mx-auto">
+
         {/* Header */}
         <div className="page-header">
           <div className="flex items-center gap-4">
@@ -265,12 +262,8 @@ export default function ProductionStockCheck() {
               </Link>
             </Button>
             <div>
-              <h1 className="page-title">
-                Material Requirement & Stock Check
-              </h1>
-              <p className="text-muted-foreground mt-1">
-                Step 2: Verify raw material availability
-              </p>
+              <h1 className="page-title">Material Requirement & Stock Check</h1>
+              <p className="text-muted-foreground mt-1">Step 2: Verify raw material availability</p>
             </div>
           </div>
         </div>
@@ -281,31 +274,21 @@ export default function ProductionStockCheck() {
             <div className="h-8 w-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-sm font-medium">
               <CheckCircle className="h-4 w-4" />
             </div>
-            <span className={isMobile ? 'sr-only' : 'text-sm text-muted-foreground'}>
-              Entry
-            </span>
+            <span className={isMobile ? 'sr-only' : 'text-sm text-muted-foreground'}>Entry</span>
           </div>
-
           <div className="h-px w-8 bg-primary" />
-
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-medium">
               2
             </div>
-            <span className={isMobile ? 'sr-only' : 'text-sm font-medium'}>
-              Stock Check
-            </span>
+            <span className={isMobile ? 'sr-only' : 'text-sm font-medium'}>Stock Check</span>
           </div>
-
           <div className="h-px w-8 bg-border" />
-
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-full bg-muted text-muted-foreground flex items-center justify-center text-sm font-medium">
               3
             </div>
-            <span className={isMobile ? 'sr-only' : 'text-sm text-muted-foreground'}>
-              Confirm
-            </span>
+            <span className={isMobile ? 'sr-only' : 'text-sm text-muted-foreground'}>Confirm</span>
           </div>
         </div>
 
@@ -326,16 +309,12 @@ export default function ProductionStockCheck() {
               {entryData.availableQuantity > 0 && (
                 <div>
                   <p className="text-muted-foreground">Available Quantity</p>
-                  <p className="font-semibold">
-                    {entryData.availableQuantity} {entryData.unit}
-                  </p>
+                  <p className="font-semibold">{entryData.availableQuantity} {entryData.unit}</p>
                 </div>
               )}
               <div>
                 <p className="text-muted-foreground">Final Total</p>
-                <p className="font-semibold">
-                  {entryData.finalQuantity} {entryData.unit}
-                </p>
+                <p className="font-semibold">{entryData.finalQuantity} {entryData.unit}</p>
               </div>
               <div>
                 <p className="text-muted-foreground">Production Date</p>
@@ -350,9 +329,7 @@ export default function ProductionStockCheck() {
               {hasAtLeastOneChecked && (
                 <div>
                   <p className="text-muted-foreground">Confirmed</p>
-                  <p className="font-semibold">
-                    {checkedCount} / {requirements.length} materials
-                  </p>
+                  <p className="font-semibold">{checkedCount} / {requirements.length} materials</p>
                 </div>
               )}
             </div>
@@ -364,9 +341,7 @@ export default function ProductionStockCheck() {
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
             <XCircle className="h-5 w-5 text-red-600 mt-0.5" />
             <div>
-              <p className="font-medium text-red-800">
-                Production Blocked - Inactive Materials
-              </p>
+              <p className="font-medium text-red-800">Production Blocked - Inactive Materials</p>
               <p className="text-sm text-muted-foreground">
                 The following raw materials are inactive: {getInactiveMaterials(requirements).join(', ')}. Production cannot proceed until these materials are activated.
               </p>
@@ -386,7 +361,6 @@ export default function ProductionStockCheck() {
           </div>
         )}
 
-        {/* Partial save info banner */}
         {canSavePartial && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
             <Save className="h-5 w-5 text-blue-600 mt-0.5" />
@@ -404,9 +378,9 @@ export default function ProductionStockCheck() {
           <CardHeader>
             <CardTitle>Raw Material Requirements</CardTitle>
           </CardHeader>
-
           <CardContent className="p-0">
             {isMobile ? (
+              /* ── Mobile cards ── */
               <div className="divide-y">
                 {requirements.map((req, index) => (
                   <div key={`${req.originalRawMaterialId}-${index}`} className="p-4">
@@ -450,8 +424,8 @@ export default function ProductionStockCheck() {
                                 type="number"
                                 step="0.01"
                                 min="0"
-                                value={req.actualQuantity}
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleQuantityChange(index, parseFloat(e.target.value) || 0)}
+                                value={Number(req.actualQuantity).toFixed(2)}
+                                onChange={(e) => handleQuantityChange(index, parseFloat(e.target.value) || 0)}
                                 className="w-20 h-7 text-right text-sm"
                                 disabled={req.status === 'inactive'}
                               />
@@ -468,16 +442,11 @@ export default function ProductionStockCheck() {
                           </div>
                           <div className="col-span-2">
                             <p className="text-muted-foreground">Status</p>
-                            <div className="mt-1">
-                              <Badge
-                                variant={req.stockStatus === 'sufficient' ? 'default' : 'destructive'}
-                                className="mr-1 mb-1"
-                              >
-                                {req.stockStatus === 'sufficient' ? (
-                                  <><CheckCircle className="h-3 w-3 mr-1" />Sufficient</>
-                                ) : (
-                                  <><XCircle className="h-3 w-3 mr-1" />Insufficient</>
-                                )}
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              <Badge variant={req.stockStatus === 'sufficient' ? 'default' : 'destructive'}>
+                                {req.stockStatus === 'sufficient'
+                                  ? <><CheckCircle className="h-3 w-3 mr-1" />Sufficient</>
+                                  : <><XCircle className="h-3 w-3 mr-1" />Insufficient</>}
                               </Badge>
                               <Badge variant={req.status === 'active' ? 'default' : 'destructive'}>
                                 {req.status === 'active' ? 'Active' : 'Inactive'}
@@ -486,7 +455,6 @@ export default function ProductionStockCheck() {
                           </div>
                         </div>
                       </div>
-
                       <div className="mt-4">
                         <Checkbox
                           checked={req.isChecked}
@@ -499,30 +467,33 @@ export default function ProductionStockCheck() {
                 ))}
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Raw Material</TableHead>
-                    <TableHead className="text-right">Required Qty</TableHead>
-                    <TableHead className="text-right">Actual Qty</TableHead>
-                    <TableHead className="text-right">Available Stock</TableHead>
-                    <TableHead className="text-center">Stock Status</TableHead>
-                    <TableHead className="text-center">Material Status</TableHead>
-                    <TableHead className="text-right">Cost</TableHead>
-                    <TableHead className="text-center">Confirm</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {requirements.map((req, index) => (
-                    <TableRow key={`${req.originalRawMaterialId}-${index}`}>
-                      <TableCell className="font-medium">
-                        <div>
+              /* ── Desktop table — overflow hidden, no horizontal scroll ── */
+              <div className="w-full overflow-hidden">
+                <Table className="w-full table-fixed">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[22%]">Raw Material</TableHead>
+                      <TableHead className="w-[12%] text-right">Required</TableHead>
+                      <TableHead className="w-[14%] text-right">Actual Qty</TableHead>
+                      <TableHead className="w-[12%] text-right">Available</TableHead>
+                      <TableHead className="w-[12%] text-center">Stock</TableHead>
+                      <TableHead className="w-[10%] text-center">Status</TableHead>
+                      <TableHead className="w-[10%] text-right">Cost</TableHead>
+                      <TableHead className="w-[8%] text-center">✓</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {requirements.map((req, index) => (
+                      <TableRow key={`${req.originalRawMaterialId}-${index}`}>
+
+                        {/* Raw Material — select with alternative options */}
+                        <TableCell className="font-medium">
                           <Select
                             value={req.rawMaterialId}
                             onValueChange={(value) => handleRawMaterialChange(index, value)}
                             disabled={req.status === 'inactive'}
                           >
-                            <SelectTrigger className="w-48">
+                            <SelectTrigger className="w-full text-xs">
                               <SelectValue placeholder="Select material" />
                             </SelectTrigger>
                             <SelectContent>
@@ -537,56 +508,73 @@ export default function ProductionStockCheck() {
                             </SelectContent>
                           </Select>
                           {req.originalRawMaterialId !== req.rawMaterialId && (
-                            <Badge variant="secondary" className="mt-1 text-xs">Alternative</Badge>
+                            <Badge variant="secondary" className="mt-1 text-xs">Alt</Badge>
                           )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {req.requiredQuantity.toFixed(2)} {req.unit}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={req.actualQuantity}
-                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleQuantityChange(index, parseFloat(e.target.value) || 0)}
-                          className="w-24 h-8 text-right"
-                          disabled={req.status === 'inactive'}
-                        />
-                        <span className="ml-1 text-xs text-muted-foreground">{req.unit}</span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {Number(req.availableStock).toFixed(2)} {req.unit}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Badge variant={req.stockStatus === 'sufficient' ? 'default' : 'destructive'}>
-                          {req.stockStatus === 'sufficient' ? (
-                            <><CheckCircle className="h-3 w-3 mr-1" />Sufficient</>
-                          ) : (
-                            <><XCircle className="h-3 w-3 mr-1" />Insufficient</>
-                          )}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Badge variant={req.status === 'active' ? 'default' : 'destructive'}>
-                          {req.status === 'active' ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {formatCurrency(req.cost)}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Checkbox
-                          checked={req.isChecked}
-                          onCheckedChange={checked => handleCheckChange(index, checked as boolean)}
-                          disabled={req.status === 'inactive'}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                        </TableCell>
+
+                        {/* Required */}
+                        <TableCell className="text-right text-sm">
+                          {req.requiredQuantity.toFixed(2)}<br />
+                          <span className="text-xs text-muted-foreground">{req.unit}</span>
+                        </TableCell>
+
+                        {/* Actual Qty — capped to 2 decimal places */}
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={Number(req.actualQuantity).toFixed(2)}
+                              onChange={(e) => handleQuantityChange(index, parseFloat(e.target.value) || 0)}
+                              className="w-20 h-8 text-right text-sm"
+                              disabled={req.status === 'inactive'}
+                            />
+                            <span className="text-xs text-muted-foreground">{req.unit}</span>
+                          </div>
+                        </TableCell>
+
+                        {/* Available */}
+                        <TableCell className="text-right text-sm">
+                          {Number(req.availableStock).toFixed(2)}<br />
+                          <span className="text-xs text-muted-foreground">{req.unit}</span>
+                        </TableCell>
+
+                        {/* Stock Status */}
+                        <TableCell className="text-center">
+                          <Badge variant={req.stockStatus === 'sufficient' ? 'default' : 'destructive'} className="text-xs">
+                            {req.stockStatus === 'sufficient'
+                              ? <><CheckCircle className="h-3 w-3 mr-1" />OK</>
+                              : <><XCircle className="h-3 w-3 mr-1" />Low</>}
+                          </Badge>
+                        </TableCell>
+
+                        {/* Material Status */}
+                        <TableCell className="text-center">
+                          <Badge variant={req.status === 'active' ? 'default' : 'destructive'} className="text-xs">
+                            {req.status === 'active' ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </TableCell>
+
+                        {/* Cost */}
+                        <TableCell className="text-right text-sm">
+                          {formatCurrency(req.cost)}
+                        </TableCell>
+
+                        {/* Confirm checkbox */}
+                        <TableCell className="text-center">
+                          <Checkbox
+                            checked={req.isChecked}
+                            onCheckedChange={checked => handleCheckChange(index, checked as boolean)}
+                            disabled={req.status === 'inactive'}
+                          />
+                        </TableCell>
+
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -599,7 +587,7 @@ export default function ProductionStockCheck() {
             <br />• You can select alternative raw materials from the dropdown if needed.
             <br />• Alternative materials will be deducted instead of the original formulation materials.
             <br />• Production will be blocked if any selected raw material is inactive.
-            <br />• Production will proceed regardless of stock levels for active materials, and negative quantities will be recorded if necessary.
+            <br />• Production will proceed regardless of stock levels for active materials.
             <br />• If you can't complete all confirmations now, use <strong>Save as Draft</strong> to continue later.
           </p>
         </div>
@@ -614,7 +602,6 @@ export default function ProductionStockCheck() {
           </Button>
 
           <div className="flex items-center gap-3">
-            {/* Save as Draft — shown when at least 1 is checked but not all */}
             {canSavePartial && (
               <Button
                 variant="outline"
@@ -622,25 +609,19 @@ export default function ProductionStockCheck() {
                 disabled={isSaving}
                 className="gap-2 border-blue-300 text-blue-700 hover:bg-blue-50"
               >
-                {isSaving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
+                {isSaving
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Save className="h-4 w-4" />}
                 Save as Draft
               </Button>
             )}
-
-            <Button
-              onClick={handleNext}
-              disabled={!canProceed}
-              className="gap-2"
-            >
+            <Button onClick={handleNext} disabled={!canProceed} className="gap-2">
               Proceed to Confirmation
               <ArrowRight className="h-4 w-4" />
             </Button>
           </div>
         </div>
+
       </div>
     </AppLayout>
   );

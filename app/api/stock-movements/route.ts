@@ -85,6 +85,9 @@ export async function GET(request: NextRequest) {
       reference: movement.reference || undefined,
       performedBy: movement.performedBy ? movement.performedBy.fullName : undefined,
       createdAt: movement.createdAt.toISOString(),
+      // ── Add these two lines ──
+      previousCostPerUnit: (movement as any).previousCostPerUnit ?? undefined,
+      newCostPerUnit: (movement as any).newCostPerUnit ?? undefined,
     }));
 
     return NextResponse.json(transformedMovements, { status: 200 });

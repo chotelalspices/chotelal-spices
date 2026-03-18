@@ -15,6 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 interface FormData {
   name: string;
   minimumStock: string;
+  costPerUnit: string;
   status: 'active' | 'inactive';
   description: string;
 }
@@ -28,6 +29,7 @@ export default function EditLabel() {
   const [formData, setFormData] = useState<FormData>({
     name: '',
     minimumStock: '',
+    costPerUnit: '',
     status: 'active',
     description: '',
   });
@@ -62,6 +64,7 @@ export default function EditLabel() {
         setFormData({
           name: label.name,
           minimumStock: label.minimumStock.toString(),
+          costPerUnit: (label.costPerUnit ?? 0).toString(),
           status: label.status,
           description: label.description || '',
         });
@@ -78,9 +81,7 @@ export default function EditLabel() {
       }
     };
 
-    if (id) {
-      fetchLabel();
-    }
+    if (id) fetchLabel();
   }, [id, router, toast]);
 
   const validateForm = (): boolean => {
@@ -89,9 +90,11 @@ export default function EditLabel() {
     if (!formData.name.trim()) {
       newErrors.name = 'Label name is required';
     }
-
     if (!formData.minimumStock || parseFloat(formData.minimumStock) < 0) {
       newErrors.minimumStock = 'Valid minimum stock is required';
+    }
+    if (formData.costPerUnit && parseFloat(formData.costPerUnit) < 0) {
+      newErrors.costPerUnit = 'Cost per unit cannot be negative';
     }
 
     setErrors(newErrors);
@@ -111,6 +114,7 @@ export default function EditLabel() {
         body: JSON.stringify({
           name: formData.name.trim(),
           minimumStockLevel: parseFloat(formData.minimumStock),
+          costPerUnit: parseFloat(formData.costPerUnit) || 0,
           status: formData.status,
           description: formData.description.trim() || null,
         }),
@@ -188,7 +192,7 @@ export default function EditLabel() {
           <h2 className="section-title">Label Details</h2>
 
           <div className="form-section">
-            {/* Row 1: Name */}
+            {/* Row 1: Name & Current Stock (read-only) */}
             <div className="form-row">
               <div className="space-y-2">
                 <Label htmlFor="name">Label Name *</Label>
@@ -204,7 +208,6 @@ export default function EditLabel() {
                 )}
               </div>
 
-              {/* Current Stock — read only */}
               <div className="space-y-2">
                 <Label htmlFor="currentStock">Current Stock</Label>
                 <div className="relative">
@@ -225,7 +228,7 @@ export default function EditLabel() {
               </div>
             </div>
 
-            {/* Row 2: Minimum Stock & Status */}
+            {/* Row 2: Minimum Stock & Cost Per Unit */}
             <div className="form-row">
               <div className="space-y-2">
                 <Label htmlFor="minimumStock">Minimum Stock Level *</Label>
@@ -252,6 +255,34 @@ export default function EditLabel() {
                 </p>
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="costPerUnit">Cost per Unit (₹)</Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                    ₹
+                  </span>
+                  <Input
+                    id="costPerUnit"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={formData.costPerUnit}
+                    onChange={(e) => updateField('costPerUnit', e.target.value)}
+                    placeholder="0.00"
+                    className={`pl-7 ${errors.costPerUnit ? 'border-destructive' : ''}`}
+                  />
+                </div>
+                {errors.costPerUnit && (
+                  <p className="text-xs text-destructive">{errors.costPerUnit}</p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Cost per individual label piece
+                </p>
+              </div>
+            </div>
+
+            {/* Row 3: Status */}
+            <div className="form-row">
               <div className="space-y-2">
                 <Label>Status</Label>
                 <div className="flex items-center justify-between rounded-lg border border-border p-3">

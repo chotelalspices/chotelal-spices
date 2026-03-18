@@ -109,6 +109,7 @@ model User {
   salesRecords         SalesRecord[]
   researchFormulations ResearchFormulation[]
   labelMovements       LabelMovement[]
+  formulationAudits FormulationAudit[]
 }
 
 //////////////////////////////////////////////////////
@@ -142,6 +143,8 @@ model StockMovement {
   performedById String?
   performedBy   User?       @relation(fields: [performedById], references: [id], onDelete: SetNull)
   createdAt     DateTime    @default(now())
+  previousCostPerUnit Float?   // ← add this
+  newCostPerUnit      Float?   // ← add this
 }
 
 //////////////////////////////////////////////////////
@@ -163,6 +166,7 @@ model Formulation {
   plannedProductions PlannedProduction[]
   returnedProducts   ReturnedProduct[]
   finishedProducts   FinishedProduct[]
+  auditLogs FormulationAudit[]
 }
 
 model FormulationIngredient {
@@ -318,7 +322,8 @@ model Label {
   id           String   @id @default(uuid())
   name         String   @unique
   minimumStock Int      @default(0)
-  status       Status   @default(active)   // ✅ ADD THIS
+  costPerUnit  Float    @default(0)
+  status       Status   @default(active)
   description  String?
   createdAt    DateTime @default(now())
 
@@ -327,17 +332,19 @@ model Label {
 }
 
 model LabelMovement {
-  id             String           @id @default(uuid())
-  labelId        String
-  label          Label            @relation(fields: [labelId], references: [id])
-  action         LabelStockAction
-  quantity       Int
-  reason         LabelStockReason
-  remarks        String?
-  adjustmentDate DateTime         @default(now())
-  performedById  String?
-  performedBy    User?            @relation(fields: [performedById], references: [id], onDelete: SetNull)
-  createdAt      DateTime         @default(now())
+  id                  String           @id @default(uuid())
+  labelId             String
+  label               Label            @relation(fields: [labelId], references: [id])
+  action              LabelStockAction
+  quantity            Int
+  reason              LabelStockReason
+  remarks             String?
+  adjustmentDate      DateTime         @default(now())
+  performedById       String?
+  performedBy         User?            @relation(fields: [performedById], references: [id], onDelete: SetNull)
+  createdAt           DateTime         @default(now())
+  previousCostPerUnit Float?
+  newCostPerUnit      Float?
 }
 
 model ProductLabel {
@@ -442,4 +449,14 @@ model PasswordResetOTP {
   createdAt DateTime @default(now())
 
   @@unique([email])
+}
+
+model FormulationAudit {
+  id            String      @id @default(uuid())
+  formulationId String
+  formulation   Formulation @relation(fields: [formulationId], references: [id], onDelete: Cascade)
+  changedById   String?
+  changedBy     User?       @relation(fields: [changedById], references: [id], onDelete: SetNull)
+  changedAt     DateTime    @default(now())
+  changes       Json
 }

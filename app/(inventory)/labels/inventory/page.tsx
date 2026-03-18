@@ -11,7 +11,8 @@ import {
   Search,
   Filter,
   X,
-  HistoryIcon
+  HistoryIcon,
+  IndianRupee,
 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { StatCard } from '@/components/inventory/StatCard';
@@ -40,6 +41,7 @@ interface Label {
   status: string;
   availableStock: number;
   minimumStock: number;
+  costPerUnit: number;
   unit?: string;
 }
 
@@ -63,9 +65,7 @@ export default function LabelInventoryDashboard() {
       try {
         setLoading(true);
         const response = await fetch('/api/labels');
-        if (!response.ok) {
-          throw new Error('Failed to fetch labels');
-        }
+        if (!response.ok) throw new Error('Failed to fetch labels');
         const data = await response.json();
         setLabels(data);
         setError(null);
@@ -76,23 +76,28 @@ export default function LabelInventoryDashboard() {
         setLoading(false);
       }
     };
-
     fetchLabels();
   }, []);
 
   const stats = useMemo(() => {
     const totalLabels = labels.length;
     const totalStock = labels.reduce((sum, l) => sum + l.availableStock, 0);
-    const lowStockItems = labels.filter(l => getStockStatus(l) === 'low').length;
-    const outOfStockItems = labels.filter(l => getStockStatus(l) === 'out').length;
-    return { totalLabels, totalStock, lowStockItems, outOfStockItems };
+    const lowStockItems = labels.filter((l) => getStockStatus(l) === 'low').length;
+    const outOfStockItems = labels.filter((l) => getStockStatus(l) === 'out').length;
+    const totalInventoryValue = labels.reduce(
+      (sum, l) => sum + l.availableStock * (l.costPerUnit ?? 0),
+      0
+    );
+    return { totalLabels, totalStock, lowStockItems, outOfStockItems, totalInventoryValue };
   }, [labels]);
 
   const filteredLabels = useMemo(() => {
-    return labels.filter(label => {
-      if (searchQuery && !label.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+    return labels.filter((label) => {
+      if (
+        searchQuery &&
+        !label.name.toLowerCase().includes(searchQuery.toLowerCase())
+      )
         return false;
-      }
       if (statusFilter !== 'all' && label.status !== statusFilter) return false;
       if (stockFilter !== 'all') {
         const stockStatus = getStockStatus(label);
@@ -129,7 +134,9 @@ export default function LabelInventoryDashboard() {
         <div className="flex items-center justify-center min-h-[400px]">
           <div className="text-center">
             <AlertTriangle className="h-12 w-12 text-destructive mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-foreground mb-1">Error loading inventory</h3>
+            <h3 className="text-lg font-medium text-foreground mb-1">
+              Error loading inventory
+            </h3>
             <p className="text-muted-foreground mb-4">{error}</p>
             <Button onClick={() => window.location.reload()}>Retry</Button>
           </div>
@@ -148,7 +155,7 @@ export default function LabelInventoryDashboard() {
             Manage physical printed label stock used in packaging
           </p>
         </div>
-        <div className='flex gap-2'>
+        <div className="flex gap-2">
           <Button asChild className="hidden md:flex">
             <Link href="/labels/movement-history">
               <HistoryIcon className="h-4 w-4 mr-2" />
@@ -165,7 +172,7 @@ export default function LabelInventoryDashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="flex gap-4 overflow-x-auto pb-2 mb-6 scrollbar-hide md:grid md:grid-cols-4 md:overflow-visible md:pb-0">
+      <div className="flex gap-4 overflow-x-auto pb-2 mb-6 scrollbar-hide md:grid md:grid-cols-5 md:overflow-visible md:pb-0">
         <div className="min-w-[160px] md:min-w-0">
           <StatCard
             title="Total Labels"
@@ -179,12 +186,24 @@ export default function LabelInventoryDashboard() {
           <StatCard
             title="Total Stock"
             value={stats.totalStock.toLocaleString('en-IN', {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 0,
             })}
             subtitle="Total label units"
             icon={Boxes}
             variant="success"
+          />
+        </div>
+        <div className="min-w-[160px] md:min-w-0">
+          <StatCard
+            title="Inventory Value"
+            value={`₹${stats.totalInventoryValue.toLocaleString('en-IN', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}`}
+            subtitle="Stock × cost per unit"
+            icon={IndianRupee}
+            variant="default"
           />
         </div>
         <div className="min-w-[160px] md:min-w-0">
@@ -255,7 +274,11 @@ export default function LabelInventoryDashboard() {
         {/* Mobile Filter Button */}
         <Sheet open={mobileFilterOpen} onOpenChange={setMobileFilterOpen}>
           <SheetTrigger asChild>
-            <Button variant="outline" size="icon" className="md:hidden shrink-0">
+            <Button
+              variant="outline"
+              size="icon"
+              className="md:hidden shrink-0"
+            >
               <Filter className="h-4 w-4" />
             </Button>
           </SheetTrigger>
@@ -265,7 +288,9 @@ export default function LabelInventoryDashboard() {
             </SheetHeader>
             <div className="space-y-4">
               <div>
-                <label className="text-sm font-medium text-foreground mb-2 block">Status</label>
+                <label className="text-sm font-medium text-foreground mb-2 block">
+                  Status
+                </label>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
                   <SelectTrigger>
                     <SelectValue placeholder="Status" />
@@ -278,7 +303,9 @@ export default function LabelInventoryDashboard() {
                 </Select>
               </div>
               <div>
-                <label className="text-sm font-medium text-foreground mb-2 block">Stock Level</label>
+                <label className="text-sm font-medium text-foreground mb-2 block">
+                  Stock Level
+                </label>
                 <Select value={stockFilter} onValueChange={setStockFilter}>
                   <SelectTrigger>
                     <SelectValue placeholder="Stock Level" />
@@ -292,10 +319,17 @@ export default function LabelInventoryDashboard() {
                 </Select>
               </div>
               <div className="flex gap-3 pt-2">
-                <Button variant="outline" onClick={clearFilters} className="flex-1">
+                <Button
+                  variant="outline"
+                  onClick={clearFilters}
+                  className="flex-1"
+                >
                   Clear Filters
                 </Button>
-                <Button onClick={() => setMobileFilterOpen(false)} className="flex-1">
+                <Button
+                  onClick={() => setMobileFilterOpen(false)}
+                  className="flex-1"
+                >
                   Apply
                 </Button>
               </div>
@@ -327,7 +361,9 @@ export default function LabelInventoryDashboard() {
       {filteredLabels.length === 0 && (
         <div className="text-center py-12">
           <Package className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-foreground mb-1">No labels found</h3>
+          <h3 className="text-lg font-medium text-foreground mb-1">
+            No labels found
+          </h3>
           <p className="text-muted-foreground">
             {searchQuery || hasActiveFilters
               ? 'Try adjusting your search or filters'

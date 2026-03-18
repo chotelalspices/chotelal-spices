@@ -14,7 +14,10 @@ async function getAuthUser() {
   return user;
 }
 
-export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
     const { id } = await params;
     const label = await prisma.label.findUnique({
@@ -28,8 +31,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       m.action === 'add' ? total + m.quantity : total - m.quantity, 0);
 
     return NextResponse.json({
-      id: label.id, name: label.name, availableStock,
+      id: label.id,
+      name: label.name,
+      availableStock,
       minimumStock: label.minimumStock,
+      costPerUnit: label.costPerUnit ?? 0,
       status: label.status.toLowerCase() as 'active' | 'inactive',
       description: label.description || undefined,
       createdAt: label.createdAt.toISOString(),
@@ -39,13 +45,16 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 }
 
-export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
     const user = await getAuthUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const { name, minimumStockLevel, status, description } = await request.json();
+    const { name, minimumStockLevel, costPerUnit, status, description } = await request.json();
 
     if (!name || minimumStockLevel === undefined || !status) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -59,6 +68,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       data: {
         name: name.trim(),
         minimumStock: parseInt(minimumStockLevel),
+        costPerUnit: parseFloat(costPerUnit) || 0,
         status: status.toLowerCase() as 'active' | 'inactive',
         description: description?.trim() || null,
       },
@@ -69,8 +79,11 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       m.action === 'add' ? total + m.quantity : total - m.quantity, 0);
 
     return NextResponse.json({
-      id: updated.id, name: updated.name, availableStock,
+      id: updated.id,
+      name: updated.name,
+      availableStock,
       minimumStock: updated.minimumStock,
+      costPerUnit: updated.costPerUnit ?? 0,
       status: updated.status.toLowerCase(),
       description: updated.description || undefined,
     });
@@ -82,7 +95,10 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   }
 }
 
-export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
     const user = await getAuthUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

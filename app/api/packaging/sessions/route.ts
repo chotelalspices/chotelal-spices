@@ -34,15 +34,29 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { batchNumber, date, items, packagingLoss, remarks, courierBox, labels } = body;
 
-    if (!batchNumber || !date || !items || !Array.isArray(items)) {
+    if (!batchNumber || !date) {
       return NextResponse.json(
-        { error: "Missing required fields: batchNumber, date, and items are required" },
+        { error: "Missing required fields: batchNumber and date are required" },
         { status: 400 }
       );
     }
-    if (items.length === 0) {
+
+    const labelsArray: Array<{
+      type: string;
+      quantity: number;
+      semiPackaged?: boolean;
+      isConversion?: boolean;
+    }> = Array.isArray(labels)
+      ? labels.filter((l) => l.type?.trim() && l.quantity > 0)
+      : [];
+
+    // items can be empty for pure semi-packaged sessions that don't move product inventory
+    const itemsArray = Array.isArray(items) ? items : [];
+
+    // Require at least items OR labels
+    if (itemsArray.length === 0 && labelsArray.length === 0) {
       return NextResponse.json(
-        { error: "At least one packaged item is required" },
+        { error: "At least one packaged item or label entry is required" },
         { status: 400 }
       );
     }
@@ -62,9 +76,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const labelsArray: Array<{ type: string; quantity: number; semiPackaged?: boolean; isConversion?: boolean }> =
-      Array.isArray(labels) ? labels.filter((l) => l.type?.trim() && l.quantity > 0) : [];
-
     // ── Find batch ──────────────────────────────────────────────────────────
     let batch = await prisma.productionBatch.findUnique({ where: { batchNumber } });
     if (!batch) {
@@ -75,73 +86,56 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Validate products ───────────────────────────────────────────────────
-    const productIds = items.map((item: any) => item.containerId);
-    const uniqueProductIds = [...new Set(productIds)]; // ← add this
-
-    const products = await prisma.finishedProduct.findMany({
-      where: { id: { in: uniqueProductIds } },
-    });
-
-    if (products.length !== uniqueProductIds.length) { // ← use unique here
-      return NextResponse.json({ error: "One or more products not found" }, { status: 404 });
-    }
-
-    const batchWithFormulation = await prisma.productionBatch.findUnique({
-      where: { id: batch.id },
-      include: { formulation: true },
-    });
-    if (!batchWithFormulation) {
-      return NextResponse.json({ error: "Batch not found" }, { status: 404 });
+    let products: any[] = [];
+    if (itemsArray.length > 0) {
+      const productIds = itemsArray.map((item: any) => item.containerId);
+      const uniqueProductIds = [...new Set(productIds)];
+      products = await prisma.finishedProduct.findMany({
+        where: { id: { in: uniqueProductIds } },
+      });
+      if (products.length !== uniqueProductIds.length) {
+        return NextResponse.json({ error: "One or more products not found" }, { status: 404 });
+      }
     }
 
     // ── Pre-fetch label records OUTSIDE transaction ─────────────────────────
     let labelRecordsForTx: Array<{ id: string; name: string }> = [];
-    let hasSemiPackagedLabels = false;
-    let hasConversionLabels = false;
 
     if (labelsArray.length > 0) {
-      // Check if any labels are semi-packaged or conversions
-      hasSemiPackagedLabels = labelsArray.some(l => l.semiPackaged);
-      hasConversionLabels = labelsArray.some(l => l.isConversion);
-
       const labelNames = labelsArray.map((l) => l.type.toLowerCase().trim());
       const foundLabels = await prisma.label.findMany({
         where: { name: { in: labelNames } },
         include: { labelMovements: true },
       });
 
-      // Only validate stock for non-semi-packaged sessions and conversions
-      // Conversions should still validate label stock since we're consuming labels
-      if (!hasSemiPackagedLabels || hasConversionLabels) {
-        for (const entry of labelsArray) {
-          const labelRecord = foundLabels.find(
-            (fl) => fl.name === entry.type.toLowerCase().trim()
+      // Only validate + deduct stock for fully-packaged labels (not semi-packaged)
+      // Conversions ARE fully-packaged so they get validated
+      for (const entry of labelsArray) {
+        if (entry.semiPackaged) continue; // skip stock check — deduction happens at full packaging
+
+        const labelRecord = foundLabels.find(
+          (fl) => fl.name === entry.type.toLowerCase().trim()
+        );
+        if (!labelRecord) {
+          return NextResponse.json(
+            { error: `Label "${entry.type}" not found in inventory. Please add it first.` },
+            { status: 404 }
           );
-
-          if (!labelRecord) {
-            return NextResponse.json(
-              { error: `Label "${entry.type}" not found in inventory. Please add it first.` },
-              { status: 404 }
-            );
-          }
-
-          const currentStock = labelRecord.labelMovements.reduce(
-            (total, m) => (m.action === "add" ? total + m.quantity : total - m.quantity),
-            0
+        }
+        const currentStock = labelRecord.labelMovements.reduce(
+          (total, m) => (m.action === "add" ? total + m.quantity : total - m.quantity),
+          0
+        );
+        if (currentStock < entry.quantity) {
+          return NextResponse.json(
+            {
+              error: `Insufficient stock for label "${entry.type}". Available: ${currentStock} pcs, Required: ${entry.quantity} pcs.`,
+            },
+            { status: 400 }
           );
-
-          if (currentStock < entry.quantity) {
-            return NextResponse.json(
-              {
-                error: `Insufficient stock for label "${entry.type}". Available: ${currentStock} pcs, Required: ${entry.quantity} pcs.`,
-              },
-              { status: 400 }
-            );
-          }
         }
       }
 
-      // Re-fetch just IDs for use inside transaction
       labelRecordsForTx = await prisma.label.findMany({
         where: { name: { in: labelNames } },
         select: { id: true, name: true },
@@ -166,8 +160,8 @@ export async function POST(request: NextRequest) {
         let totalPackagedWeight = 0;
         const packagingDetails: string[] = [];
 
-        for (const item of items) {
-          const product = products.find((p) => p.id === item.containerId);
+        for (const item of itemsArray) {
+          const product = products.find((p: any) => p.id === item.containerId);
           if (product) {
             await tx.finishedProduct.update({
               where: { id: product.id },
@@ -183,18 +177,21 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // 3. Update session remarks
-        if (packagingDetails.length > 0) {
-          // Check if this is a semi-packaged session (all labels are semi-packaged)
-          const isSemiPackagedSession = labelsArray.length > 0 && 
-            labelsArray.every((l: any) => l.semiPackaged === true);
+        // 3. Determine session type and build remarks
+        const isSemiPackagedSession =
+          labelsArray.length > 0 && labelsArray.every((l) => l.semiPackaged === true);
 
+        const hasConversions = labelsArray.some((l) => l.isConversion);
+
+        const conversionNote = hasConversions ? " (conversion)" : "";
+
+        if (packagingDetails.length > 0) {
           await tx.packagingSession.update({
             where: { id: packagingSession.id },
             data: {
               remarks: isSemiPackagedSession
-                ? `${remarks || ""} Semi Packaging Session`
-                : `${remarks || ""} Packaged: ${packagingDetails.join(", ")}. Total: ${totalPackagedWeight}kg`.trim(),
+                ? `${remarks || ""} Semi Packaging Session`.trim()
+                : `${remarks || ""} Packaged: ${packagingDetails.join(", ")}. Total: ${totalPackagedWeight}kg${conversionNote}`.trim(),
             },
           });
         }
@@ -202,7 +199,7 @@ export async function POST(request: NextRequest) {
         // 4. Create courier box record if provided
         let courierBoxRecord = null;
         if (courierBox) {
-          const totalPackets = items.reduce(
+          const totalPackets = itemsArray.reduce(
             (sum: number, item: any) => sum + parseInt(item.numberOfPackets),
             0
           );
@@ -219,91 +216,74 @@ export async function POST(request: NextRequest) {
 
         // 5. Create session label records
         let labelRecords: any[] = [];
-        let totalSemiPackagedWeight = 0;
-        
+
         if (labelsArray.length > 0) {
           labelRecords = await Promise.all(
-            labelsArray.map((l) => {
-              // Calculate semi-packaged weight for this label
-              const semiPackagedWeight = l.semiPackaged ? 
-                items.reduce((sum: number, item: any) => {
-                  const product = products.find((p) => p.id === item.containerId);
-                  if (product) {
-                    return sum + parseFloat(item.totalWeight);
-                  }
-                  return sum;
-                }, 0) : 0;
-              
-              totalSemiPackagedWeight += semiPackagedWeight;
-              
-              return tx.sessionLabel.create({
+            labelsArray.map((l) =>
+              tx.sessionLabel.create({
                 data: {
                   sessionId: packagingSession.id,
                   type: l.type.trim(),
                   quantity: l.quantity,
                   semiPackaged: l.semiPackaged || false,
                 },
-              });
-            })
+              })
+            )
           );
         }
 
-        // 6. Update packaging session with semi-packaged weight
-        if (totalSemiPackagedWeight > 0) {
+        // 6. Update batch.semiPackaged for semi-packaged labels
+        // Semi-packaged weight = packets of that label × weightPerPacket
+        // weightPerPacket comes from the items array (totalWeight / numberOfPackets)
+        if (isSemiPackagedSession && totalPackagedWeight > 0) {
           await tx.packagingSession.update({
             where: { id: packagingSession.id },
-            data: {
-              semiPackaged: totalSemiPackagedWeight,
-            },
+            data: { semiPackaged: totalPackagedWeight },
           });
 
-          // 7. Update production batch with cumulative semi-packaged weight
           await tx.productionBatch.update({
-            where: { id: batch.id },
+            where: { id: batch!.id },
             data: {
-              semiPackaged: (batch.semiPackaged || 0) + totalSemiPackagedWeight,
+              semiPackaged: (batch!.semiPackaged || 0) + totalPackagedWeight,
             },
           });
         }
 
-        // 8. Handle label stock deductions and conversions
+        // 7. Handle label stock deductions
+        // Only deduct for fully-packaged labels (semiPackaged=false)
+        // Conversions are fully-packaged so they get deducted here
         if (labelsArray.length > 0 && labelRecordsForTx.length > 0) {
           for (const entry of labelsArray) {
+            if (entry.semiPackaged) continue; // no deduction yet for semi-packaged
+
             const labelRecord = labelRecordsForTx.find(
               (fl) => fl.name === entry.type.toLowerCase().trim()
             );
             if (!labelRecord) continue;
 
-            // Always deduct label stock for conversions and regular packaging
-            if (!entry.semiPackaged || entry.isConversion) {
-              await tx.labelMovement.create({
-                data: {
-                  labelId: labelRecord.id,
-                  action: "reduce",
-                  quantity: entry.quantity,
-                  reason: "correction",
-                  remarks: `Used in packaging — batch ${batch!.batchNumber}${entry.isConversion ? ' (conversion)' : ''}`,
-                  adjustmentDate: new Date(),
-                  performedById: authenticatedUserId,
-                },
-              });
-            }
+            await tx.labelMovement.create({
+              data: {
+                labelId: labelRecord.id,
+                action: "reduce",
+                quantity: entry.quantity,
+                reason: "correction",
+                remarks: `Used in packaging — batch ${batch!.batchNumber}${entry.isConversion ? " (conversion)" : ""}`,
+                adjustmentDate: new Date(),
+                performedById: authenticatedUserId,
+              },
+            });
 
-            // Handle semi-package to full package conversion
+            // If converting semi → full: reduce batch.semiPackaged by converted weight
             if (entry.isConversion) {
-              const conversionWeight = items.reduce((sum: number, item: any) => {
-                const product = products.find((p) => p.id === item.containerId);
-                if (product) {
-                  return sum + parseFloat(item.totalWeight);
-                }
-                return sum;
-              }, 0);
-
-              // Reduce semi-packaged inventory from production batch
+              // conversionWeight = the weight of packets being converted
+              // This is already captured in totalPackagedWeight for this session
               await tx.productionBatch.update({
-                where: { id: batch.id },
+                where: { id: batch!.id },
                 data: {
-                  semiPackaged: Math.max(0, (batch.semiPackaged || 0) - conversionWeight),
+                  semiPackaged: Math.max(
+                    0,
+                    (batch!.semiPackaged || 0) - totalPackagedWeight
+                  ),
                 },
               });
             }
@@ -354,7 +334,6 @@ export async function POST(request: NextRequest) {
       },
       { status: 201 }
     );
-
   } catch (error) {
     console.error("Error creating packaging session:", error);
     if (error instanceof Error && error.message.includes("not found")) {

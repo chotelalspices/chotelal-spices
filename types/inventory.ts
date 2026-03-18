@@ -3,6 +3,8 @@ export interface RawMaterial {
   name: string;
   unit: 'kg' | 'gm';
   status: 'active' | 'inactive';
+  costPerUnit?: number;
+  availableStock?: number;
 }
 
 export interface StockMovement {
@@ -15,6 +17,25 @@ export interface StockMovement {
   reference?: string;
   performedBy: string;
   createdAt: string;
+  // Cost tracking — populated when a purchase changes the unit cost
+  previousCostPerUnit?: number;
+  newCostPerUnit?: number;
+}
+
+export interface LabelMovement {
+  id: string;
+  labelId: string;
+  labelName: string;
+  action: 'add' | 'reduce';
+  quantity: number;
+  reason: string;
+  remarks?: string;
+  adjustmentDate: string;
+  createdAt: string;
+  performedBy?: string;
+  // Cost tracking — populated when a purchase changes the unit cost
+  previousCostPerUnit?: number;
+  newCostPerUnit?: number;
 }
 
 export interface StockMovementFilters {

@@ -22,6 +22,7 @@ export async function GET() {
         name: label.name,
         availableStock,
         minimumStock: label.minimumStock,
+        costPerUnit: label.costPerUnit ?? 0,
         status: label.status.toLowerCase() as 'active' | 'inactive',
         description: label.description || undefined,
         createdAt: label.createdAt.toISOString(),
@@ -45,7 +46,7 @@ export async function POST(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'User not found' }, { status: 401 });
     if (user.status !== 'active') return NextResponse.json({ error: 'Account not active' }, { status: 403 });
 
-    const { name, openingStock, minimumStock, status, description } = await request.json();
+    const { name, openingStock, minimumStock, costPerUnit, status, description } = await request.json();
 
     if (!name || minimumStock === undefined || !status) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
         data: {
           name: name.trim(),
           minimumStock: parseInt(minimumStock),
+          costPerUnit: parseFloat(costPerUnit) || 0,
           status: status.toLowerCase() as 'active' | 'inactive',
           description: description?.trim() || null,
         },
@@ -84,8 +86,11 @@ export async function POST(request: NextRequest) {
       m.action === 'add' ? total + m.quantity : total - m.quantity, 0);
 
     return NextResponse.json({
-      id: created!.id, name: created!.name, availableStock,
+      id: created!.id,
+      name: created!.name,
+      availableStock,
       minimumStock: created!.minimumStock,
+      costPerUnit: created!.costPerUnit ?? 0,
       status: created!.status.toLowerCase(),
       description: created!.description || undefined,
       createdAt: created!.createdAt.toISOString(),
