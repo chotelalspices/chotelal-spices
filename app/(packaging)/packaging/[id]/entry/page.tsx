@@ -74,7 +74,7 @@ interface PackagingBatch {
   alreadyPackaged: number;
   totalLoss: number;
   remainingQuantity: number;
-  status: "Not Started" | "Partial" | "Completed";
+  status: "Not Started" | "Partial" | "Semi Packaged" | "Completed"; // ← add "Semi Packaged"
   sessions: any[];
   semiPackaged: number;
   semiPackagedLabels: Array<{ type: string; quantity: number }>;
@@ -324,8 +324,8 @@ export default function PackagingEntry() {
         const boxes = entry.isCourierBox
           ? packets
           : packets > 0
-          ? Math.ceil(packets / entry.qtyPerBox)
-          : 0;
+            ? Math.ceil(packets / entry.qtyPerBox)
+            : 0;
         const weightKg = entry.isCourierBox ? 0 : packets * weightPerPacketKg;
         // Only check stock for fully-packaged (conversion or regular)
         const needsStockCheck = semiToggles[type] !== true;
@@ -446,11 +446,11 @@ export default function PackagingEntry() {
       labels: labelsPayload,
       courierBox: courierEntry
         ? {
-            label: courierEntry.type,
-            itemsPerBox: courierEntry.qtyPerBox,
-            boxesNeeded: courierEntry.packets,
-            totalPackets,
-          }
+          label: courierEntry.type,
+          itemsPerBox: courierEntry.qtyPerBox,
+          boxesNeeded: courierEntry.packets,
+          totalPackets,
+        }
         : undefined,
       packagingLoss: lossValue,
       remarks: remarks || undefined,
@@ -787,8 +787,8 @@ export default function PackagingEntry() {
                               {entry.isCourierBox
                                 ? `${entry.qtyPerBox} pcs/box · tracks box stock`
                                 : isSemiMode
-                                ? `${entry.qtyPerBox} pcs/box · label stock deferred`
-                                : `${entry.qtyPerBox} pcs/box`}
+                                  ? `${entry.qtyPerBox} pcs/box · label stock deferred`
+                                  : `${entry.qtyPerBox} pcs/box`}
                             </p>
 
                             {/* Previous semi-packaged count */}
@@ -875,12 +875,12 @@ export default function PackagingEntry() {
                             {isSemiMode
                               ? "NA"
                               : entry.isCourierBox
-                              ? entry.packets > 0
-                                ? entry.packets.toLocaleString("en-IN")
-                                : "—"
-                              : entry.boxes > 0
-                              ? entry.boxes.toLocaleString("en-IN")
-                              : "—"}
+                                ? entry.packets > 0
+                                  ? entry.packets.toLocaleString("en-IN")
+                                  : "—"
+                                : entry.boxes > 0
+                                  ? entry.boxes.toLocaleString("en-IN")
+                                  : "—"}
                           </div>
                         </div>
 
@@ -893,19 +893,19 @@ export default function PackagingEntry() {
                               entry.isCourierBox
                                 ? "bg-muted/50 text-muted-foreground"
                                 : isSemiMode && entry.weightKg > 0
-                                ? "bg-orange-50 border-orange-300 text-orange-700 dark:bg-orange-900/20 dark:text-white-300"
-                                : isError
-                                ? "bg-destructive/10 border-destructive/30 text-destructive"
-                                : entry.weightKg > 0
-                                ? "bg-primary/10 border-primary/30 text-primary"
-                                : "bg-muted/50 text-muted-foreground"
+                                  ? "bg-orange-50 border-orange-300 text-orange-700 dark:bg-orange-900/20 dark:text-white-300"
+                                  : isError
+                                    ? "bg-destructive/10 border-destructive/30 text-destructive"
+                                    : entry.weightKg > 0
+                                      ? "bg-primary/10 border-primary/30 text-primary"
+                                      : "bg-muted/50 text-muted-foreground"
                             )}
                           >
                             {entry.isCourierBox
                               ? "—"
                               : entry.weightKg > 0
-                              ? `${entry.weightKg.toFixed(3)} kg`
-                              : "—"}
+                                ? `${entry.weightKg.toFixed(3)} kg`
+                                : "—"}
                           </div>
                         </div>
                       </div>
@@ -929,24 +929,11 @@ export default function PackagingEntry() {
                               )}
                             >
                               {locked
-                                ? "Semi-packaging required first"
+                                ? "Must semi-package first — toggle ON here to convert when ready"
                                 : isSemiMode
-                                ? (
-                                  <span>
-                                    Semi-packaging mode{" "}
-                                    <span className="text-xs text-orange-600 dark:text-orange-400">
-                                      (label stock deferred until fully packaged)
-                                    </span>
-                                  </span>
-                                )
-                                : (
-                                  <span>
-                                    Converting to fully packaged{" "}
-                                    <span className="text-xs text-muted-foreground">
-                                      (toggle ON to add more semi-packaged instead)
-                                    </span>
-                                  </span>
-                                )}
+                                  ? <span>Convert to fully packaged<span className="text-xs text-orange-600">(toggle OFF to convert these to fully packaged)</span></span>
+                                  : <span className="font-medium text-primary">Semi-packaging mode <span className="text-xs text-muted-foreground">(toggle ON to semi-packaging)</span></span>}
+
                             </Label>
                           </div>
 
@@ -1002,8 +989,8 @@ export default function PackagingEntry() {
                     exceedsRemaining
                       ? "bg-destructive/10 border border-destructive/30"
                       : isExactMatch
-                      ? "bg-success/10 border border-success/30"
-                      : "bg-muted/50 border border-border"
+                        ? "bg-success/10 border border-success/30"
+                        : "bg-muted/50 border border-border"
                   )}
                 >
                   <div className="flex items-center gap-2">
@@ -1019,15 +1006,15 @@ export default function PackagingEntry() {
                         {exceedsRemaining
                           ? "Exceeds remaining quantity"
                           : isExactMatch
-                          ? "Exact match — ready to finish"
-                          : "Partial packaging"}
+                            ? "Exact match — ready to finish"
+                            : "Partial packaging"}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {exceedsRemaining
                           ? `Reduce packets — max ${batch.remainingQuantity.toFixed(3)} kg remaining`
                           : isExactMatch
-                          ? "Total weight matches remaining quantity"
-                          : `${(batch.remainingQuantity - totalNewPackagedWeightKg).toFixed(3)} kg still unpackaged`}
+                            ? "Total weight matches remaining quantity"
+                            : `${(batch.remainingQuantity - totalNewPackagedWeightKg).toFixed(3)} kg still unpackaged`}
                       </p>
                       {currentSessionSemiWeightKg > 0 && (
                         <p className="text-xs text-orange-600 dark:text-orange-400 mt-0.5">
@@ -1046,8 +1033,8 @@ export default function PackagingEntry() {
                         exceedsRemaining
                           ? "text-destructive"
                           : isExactMatch
-                          ? "text-success"
-                          : "text-foreground"
+                            ? "text-success"
+                            : "text-foreground"
                       )}
                     >
                       {totalNewPackagedWeightKg > 0
@@ -1096,10 +1083,10 @@ export default function PackagingEntry() {
             hasStockErrors && "border-destructive",
             !hasStockErrors && exceedsRemaining && "border-destructive",
             !hasStockErrors &&
-              !exceedsRemaining &&
-              isExactMatch &&
-              totalNewPackagedWeightKg > 0 &&
-              "border-success/50"
+            !exceedsRemaining &&
+            isExactMatch &&
+            totalNewPackagedWeightKg > 0 &&
+            "border-success/50"
           )}
         >
           <CardHeader>
@@ -1164,8 +1151,8 @@ export default function PackagingEntry() {
                       {l.isCourierBox
                         ? `${l.type}: ${l.packets.toLocaleString("en-IN")} boxes`
                         : isSemi
-                        ? `${l.type}: ${l.packets.toLocaleString("en-IN")} pcs (semi)`
-                        : `${l.type}: ${l.packets.toLocaleString("en-IN")} pcs (${l.boxes} boxes)`}
+                          ? `${l.type}: ${l.packets.toLocaleString("en-IN")} pcs (semi)`
+                          : `${l.type}: ${l.packets.toLocaleString("en-IN")} pcs (${l.boxes} boxes)`}
                       {l.stockStatus === "out" && !isSemi && <XCircle className="h-3 w-3 ml-1" />}
                       {l.stockStatus === "low" && !isSemi && <AlertTriangle className="h-3 w-3 ml-1" />}
                     </Badge>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -9,89 +9,47 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from '@/components/ui/command';
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from '@/components/ui/popover';
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger,
 } from '@/components/ui/sheet';
 
 import {
-  Plus,
-  Upload,
-  Filter,
-  TrendingUp,
-  IndianRupee,
-  Package,
-  Pencil,
-  Trash2,
-  Loader2,
-  User,
-  CheckCircle2,
-  ArrowUpRight,
-  ArrowDownRight,
-  ChevronDown,
-  ChevronRight,
-  Search,
-  X,
+  Plus, Upload, Filter, TrendingUp, IndianRupee, Package,
+  Pencil, Trash2, Loader2, User, CheckCircle2, ArrowUpRight,
+  ArrowDownRight, ChevronDown, ChevronRight, X, Check, ChevronsUpDown,
 } from 'lucide-react';
 
 import { StatCard } from '@/components/inventory/StatCard';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/libs/utils';
-
 import {
-  calculateSalesSummary,
-  formatCurrency,
-  formatSaleDate,
-  type SalesRecord,
+  calculateSalesSummary, formatCurrency, formatSaleDate, type SalesRecord,
 } from '@/data/salesData';
 
-/* ------------------------------------------------------------------ */
 const SHOW_PROFIT_TO_STAFF = true;
 
-/* ------------------------------------------------------------------ */
 interface ClientGroup {
   groupKey: string;
   clientName: string;
@@ -101,6 +59,10 @@ interface ClientGroup {
   records: SalesRecord[];
   groupTotal: number;
   groupProfit: number;
+  paymentStatus?: 'paid' | 'unpaid' | 'partial';
+  amountPaid?: number;
+  amountDue?: number;
+  paymentNote?: string;
 }
 
 function groupByClient(records: SalesRecord[]): ClientGroup[] {
@@ -119,6 +81,10 @@ function groupByClient(records: SalesRecord[]): ClientGroup[] {
         records: [],
         groupTotal: 0,
         groupProfit: 0,
+        paymentStatus: record.paymentStatus ?? 'paid',
+        amountPaid: record.amountPaid,
+        amountDue: record.amountDue,
+        paymentNote: record.paymentNote,
       });
     }
     const g = map.get(key)!;
@@ -129,29 +95,91 @@ function groupByClient(records: SalesRecord[]): ClientGroup[] {
   return Array.from(map.values());
 }
 
+/* ── Searchable combobox filter ──────────────────────────────────────────── */
+function SearchableFilter({
+  label, value, onChange, options, placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const displayLabel = value === 'all' ? placeholder : value;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          className={cn(
+            'justify-between font-normal',
+            value !== 'all' && 'border-primary text-primary'
+          )}
+        >
+          <span className="truncate max-w-[160px]">{displayLabel}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[220px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder={`Search ${label.toLowerCase()}...`} />
+          <CommandList>
+            <CommandEmpty>No {label.toLowerCase()} found.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem value="all" onSelect={() => { onChange('all'); setOpen(false); }}>
+                <Check className={cn('mr-2 h-4 w-4', value === 'all' ? 'opacity-100' : 'opacity-0')} />
+                All {label}s
+              </CommandItem>
+              {options.map((opt) => (
+                <CommandItem key={opt} value={opt} onSelect={() => { onChange(opt); setOpen(false); }}>
+                  <Check className={cn('mr-2 h-4 w-4', value === opt ? 'opacity-100' : 'opacity-0')} />
+                  {opt}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 /* ================================================================
    COLLAPSIBLE CLIENT ROW
 ================================================================ */
 function ClientGroupRow({
-  group,
-  colSpan,
-  isAdmin,
-  getPaymentBadge,
-  handleDeleteSale,
-  router,
+  group, colSpan, isAdmin, onPaymentClick, handleDeleteSale, router,
 }: {
   group: ClientGroup;
   colSpan: number;
   isAdmin: boolean;
-  getPaymentBadge: (record: SalesRecord) => React.ReactNode;
+  onPaymentClick: (group: ClientGroup) => void;
   handleDeleteSale: (id: string) => void;
   router: ReturnType<typeof useRouter>;
 }) {
   const [open, setOpen] = useState(false);
 
+  const paymentBadge = (() => {
+    const status = group.paymentStatus || 'paid';
+    const paid = group.amountPaid ?? group.groupTotal;
+    let cls = '';
+    let label = '';
+    if (status === 'paid')        { cls = 'bg-green-100 text-green-800 border-green-300';    label = 'PAID'; }
+    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300';          label = 'UNPAID'; }
+    else                          { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
+    return (
+      <Badge variant="outline" className={`${cls} text-xs cursor-pointer hover:opacity-80`}
+        onClick={(e) => { e.stopPropagation(); onPaymentClick(group); }}>
+        {label}
+      </Badge>
+    );
+  })();
+
   return (
     <>
-      {/* CLIENT HEADER ROW — clickable */}
       <TableRow
         className="bg-primary/5 border-t-2 border-primary/20 hover:bg-primary/10 cursor-pointer select-none"
         onClick={() => setOpen((v) => !v)}
@@ -159,11 +187,8 @@ function ClientGroupRow({
         <TableCell colSpan={colSpan} className="py-2.5 px-4">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-3">
-              {/* Expand indicator */}
               <div className="h-5 w-5 flex items-center justify-center text-primary">
-                {open
-                  ? <ChevronDown className="h-4 w-4 transition-transform" />
-                  : <ChevronRight className="h-4 w-4 transition-transform" />}
+                {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
               </div>
               <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
                 <User className="h-3.5 w-3.5 text-primary" />
@@ -172,22 +197,13 @@ function ClientGroupRow({
                 <p className="font-semibold text-sm leading-tight">{group.clientName}</p>
                 <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
                   <span>{formatSaleDate(group.saleDate)}</span>
-                  {group.voucherType && (
-                    <>
-                      <span className="text-muted-foreground/40">|</span>
-                      <span>{group.voucherType}</span>
-                    </>
-                  )}
-                  {group.voucherNo && (
-                    <>
-                      <span className="text-muted-foreground/40">|</span>
-                      <span className="font-mono">{group.voucherNo}</span>
-                    </>
-                  )}
+                  {group.voucherType && <><span className="opacity-40">|</span><span>{group.voucherType}</span></>}
+                  {group.voucherNo && <><span className="opacity-40">|</span><span className="font-mono">{group.voucherNo}</span></>}
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-3 flex-shrink-0">
+              {paymentBadge}
               <Badge variant="outline" className="border-green-300 text-green-700 bg-green-50 gap-1">
                 <CheckCircle2 className="h-3 w-3" />
                 {group.records.length} item{group.records.length !== 1 ? 's' : ''}
@@ -198,38 +214,24 @@ function ClientGroupRow({
         </TableCell>
       </TableRow>
 
-      {/* PRODUCT ROWS — only when open */}
       {open && (
         <>
           {group.records.map((record, idx) => {
             const productionCostTotal = (record.productionCostPerUnit ?? 0) * record.quantitySold;
             const isFree = record.sellingPricePerUnit === 0;
-
             return (
               <TableRow key={record.id} className="hover:bg-muted/20 bg-white animate-in fade-in slide-in-from-top-1 duration-150">
                 <TableCell className="text-muted-foreground text-xs pl-14">{idx + 1}</TableCell>
                 <TableCell className="font-medium text-sm">{record.productName}</TableCell>
                 <TableCell className="text-right text-sm">{record.quantitySold}</TableCell>
                 <TableCell className="text-right text-sm">
-                  {isFree ? (
-                    <Badge variant="secondary" className="bg-blue-100 text-blue-800">FREE</Badge>
-                  ) : (
-                    formatCurrency(record.sellingPricePerUnit)
-                  )}
+                  {isFree ? <Badge variant="secondary" className="bg-blue-100 text-blue-800">FREE</Badge> : formatCurrency(record.sellingPricePerUnit)}
                 </TableCell>
                 <TableCell className="text-right text-sm">
-                  {record.discount > 0 ? (
-                    <span className="text-green-600">{record.discount}</span>
-                  ) : (
-                    <span className="text-muted-foreground">0</span>
-                  )}
+                  {record.discount > 0 ? <span className="text-green-600">{record.discount}</span> : <span className="text-muted-foreground">0</span>}
                 </TableCell>
                 <TableCell className="text-right font-medium text-sm">
-                  {isFree ? (
-                    <Badge variant="secondary" className="bg-blue-100 text-blue-800">FREE</Badge>
-                  ) : (
-                    formatCurrency(record.totalAmount)
-                  )}
+                  {isFree ? <Badge variant="secondary" className="bg-blue-100 text-blue-800">FREE</Badge> : formatCurrency(record.totalAmount)}
                 </TableCell>
                 <TableCell className="text-right text-sm text-muted-foreground">
                   {formatCurrency(productionCostTotal)}
@@ -248,18 +250,11 @@ function ClientGroupRow({
                     )}
                   </TableCell>
                 )}
-                <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
-                  {getPaymentBadge(record)}
-                </TableCell>
                 {isAdmin && (
                   <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => router.push(`/sales/${record.id}/edit`)}
-                      >
+                      <Button variant="ghost" size="icon" className="h-7 w-7"
+                        onClick={() => router.push(`/sales/${record.id}/edit`)}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
                       <AlertDialog>
@@ -271,16 +266,12 @@ function ClientGroupRow({
                         <AlertDialogContent>
                           <AlertDialogHeader>
                             <AlertDialogTitle>Delete Sales Record</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Are you sure? This cannot be undone. Product quantity will be restored.
-                            </AlertDialogDescription>
+                            <AlertDialogDescription>Are you sure? This cannot be undone. Product quantity will be restored.</AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
                             <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => handleDeleteSale(record.id)}
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            >
+                            <AlertDialogAction onClick={() => handleDeleteSale(record.id)}
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                               Delete
                             </AlertDialogAction>
                           </AlertDialogFooter>
@@ -293,7 +284,6 @@ function ClientGroupRow({
             );
           })}
 
-          {/* SUBTOTAL ROW */}
           <TableRow className="bg-muted/30 border-b-2 border-muted/60">
             <TableCell colSpan={5} className="pl-14 py-1.5 text-xs text-muted-foreground">
               {group.records.length} item{group.records.length !== 1 ? 's' : ''} for {group.clientName}
@@ -302,9 +292,7 @@ function ClientGroupRow({
               {formatCurrency(group.groupTotal)}
             </TableCell>
             <TableCell className="text-right text-xs text-muted-foreground py-1.5">
-              {formatCurrency(
-                group.records.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0)
-              )}
+              {formatCurrency(group.records.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}
             </TableCell>
             {SHOW_PROFIT_TO_STAFF && (
               <TableCell className="text-right py-1.5">
@@ -313,7 +301,7 @@ function ClientGroupRow({
                 </span>
               </TableCell>
             )}
-            <TableCell colSpan={isAdmin ? 2 : 1} />
+            <TableCell colSpan={isAdmin ? 1 : 0} />
           </TableRow>
         </>
       )}
@@ -329,25 +317,19 @@ export default function SalesSummary() {
   const { isAdmin } = useAuth();
 
   const [salesRecords, setSalesRecords] = useState<SalesRecord[]>([]);
-  const [loading, setLoading]           = useState(true);
+  const [loading, setLoading] = useState(true);
 
-  // Search
-  const [clientSearch, setClientSearch] = useState('');
-  const [productSearch, setProductSearch] = useState('');
-
-  // Filters
   const [productFilter, setProductFilter] = useState('all');
-  const [clientFilter,  setClientFilter]  = useState('all');
+  const [clientFilter, setClientFilter]   = useState('all');
   const [startDate, setStartDate]         = useState('');
-  const [endDate,   setEndDate]           = useState('');
+  const [endDate, setEndDate]             = useState('');
   const [filterOpen, setFilterOpen]       = useState(false);
 
-  // Payment modal
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
-  const [selectedRecord, setSelectedRecord] = useState<SalesRecord | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<ClientGroup | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'unpaid' | 'partial'>('paid');
-  const [amountPaid, setAmountPaid] = useState('');
-  const [paymentNote, setPaymentNote] = useState('');
+  const [amountPaid, setAmountPaid]       = useState('');
+  const [paymentNote, setPaymentNote]     = useState('');
   const [isSavingPayment, setIsSavingPayment] = useState(false);
 
   const fetchRecords = async () => {
@@ -373,68 +355,24 @@ export default function SalesSummary() {
     [salesRecords]
   );
 
-  // Apply dropdown filters first
   const filteredRecords = useMemo(() =>
     salesRecords.filter((r) => {
       if (productFilter !== 'all' && r.productName !== productFilter) return false;
       if (clientFilter  !== 'all' && r.clientName?.trim() !== clientFilter) return false;
       if (startDate && new Date(r.saleDate) < new Date(startDate)) return false;
-      if (endDate   && new Date(r.saleDate) > new Date(endDate))   return false;
+      if (endDate   && new Date(r.saleDate) > new Date(endDate)) return false;
       return true;
     }),
   [salesRecords, productFilter, clientFilter, startDate, endDate]);
 
-  // Group by client
-  const allClientGroups = useMemo(() => groupByClient(filteredRecords), [filteredRecords]);
+  const clientGroups = useMemo(() => groupByClient(filteredRecords), [filteredRecords]);
+  const allRecords = useMemo(() => clientGroups.flatMap((g) => g.records), [clientGroups]);
+  const summary = useMemo(() => calculateSalesSummary(allRecords), [allRecords]);
 
-  // Apply search on top of groups
-  const clientGroups = useMemo(() => {
-    let groups = allClientGroups;
-
-    // Filter by client name search
-    if (clientSearch.trim()) {
-      groups = groups.filter((g) =>
-        g.clientName.toLowerCase().includes(clientSearch.toLowerCase().trim())
-      );
-    }
-
-    // Filter by product search — keep group if any record matches
-    if (productSearch.trim()) {
-      groups = groups
-        .map((g) => ({
-          ...g,
-          records: g.records.filter((r) =>
-            r.productName.toLowerCase().includes(productSearch.toLowerCase().trim())
-          ),
-        }))
-        .filter((g) => g.records.length > 0)
-        .map((g) => ({
-          ...g,
-          groupTotal: g.records.reduce((s, r) => s + (r.totalAmount ?? 0), 0),
-          groupProfit: g.records.reduce((s, r) => s + (r.profit ?? 0), 0),
-        }));
-    }
-
-    return groups;
-  }, [allClientGroups, clientSearch, productSearch]);
-
-  const searchFilteredRecords = useMemo(
-    () => clientGroups.flatMap((g) => g.records),
-    [clientGroups]
-  );
-
-  const summary = useMemo(() => calculateSalesSummary(searchFilteredRecords), [searchFilteredRecords]);
   const hasActiveFilters = productFilter !== 'all' || clientFilter !== 'all' || startDate || endDate;
-  const hasSearch = clientSearch.trim() || productSearch.trim();
-
   const clearFilters = () => {
     setProductFilter('all'); setClientFilter('all');
     setStartDate(''); setEndDate(''); setFilterOpen(false);
-  };
-
-  const clearSearch = () => {
-    setClientSearch('');
-    setProductSearch('');
   };
 
   const handleDeleteSale = async (saleId: string) => {
@@ -448,103 +386,83 @@ export default function SalesSummary() {
     }
   };
 
-  // Payment modal
-  const openPaymentModal = (record: SalesRecord) => {
-    setSelectedRecord(record);
-    const existingStatus = (record as any).paymentStatus || 'paid';
-    const existingPaid = (record as any).amountPaid || record.totalAmount;
-    setPaymentStatus(existingStatus);
-    setAmountPaid(existingPaid.toString());
-    setPaymentNote((record as any).paymentNote || '');
+  const openPaymentModal = (group: ClientGroup) => {
+    setSelectedGroup(group);
+    setPaymentStatus(group.paymentStatus ?? 'paid');
+    setAmountPaid((group.amountPaid ?? group.groupTotal).toString());
+    setPaymentNote(group.paymentNote ?? '');
     setPaymentModalOpen(true);
   };
 
   const closePaymentModal = () => {
     setPaymentModalOpen(false);
-    setSelectedRecord(null);
+    setSelectedGroup(null);
     setPaymentStatus('paid');
     setAmountPaid('');
     setPaymentNote('');
   };
 
   const savePaymentStatus = async () => {
-    if (!selectedRecord) return;
+    if (!selectedGroup) return;
     const parsedAmount = parseFloat(amountPaid);
     if (isNaN(parsedAmount) || parsedAmount < 0) { toast.error('Please enter a valid amount'); return; }
-    if (parsedAmount > selectedRecord.totalAmount) { toast.error('Amount paid cannot exceed total amount'); return; }
-
+    if (parsedAmount > selectedGroup.groupTotal) { toast.error('Amount paid cannot exceed total amount'); return; }
     try {
       setIsSavingPayment(true);
-      const res = await fetch(`/api/sales/records/${selectedRecord.id}/payment`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          paymentStatus,
-          amountPaid: parsedAmount,
-          amountDue: selectedRecord.totalAmount - parsedAmount,
-          paymentNote: paymentNote.trim() || null,
-        }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error || 'Failed to update');
-      toast.success('Payment status updated successfully');
+      await Promise.all(
+        selectedGroup.records.map((record) =>
+          fetch(`/api/sales/records/${record.id}/payment`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              paymentStatus,
+              amountPaid: parsedAmount,
+              amountDue: selectedGroup.groupTotal - parsedAmount,
+              paymentNote: paymentNote.trim() || null,
+            }),
+          })
+        )
+      );
+      toast.success('Payment status updated');
       closePaymentModal();
       fetchRecords();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update payment status');
+    } catch {
+      toast.error('Failed to update payment status');
     } finally {
       setIsSavingPayment(false);
     }
   };
 
   useEffect(() => {
-    if (!selectedRecord) return;
-    if (paymentStatus === 'paid') setAmountPaid(selectedRecord.totalAmount.toString());
+    if (!selectedGroup) return;
+    if (paymentStatus === 'paid') setAmountPaid(selectedGroup.groupTotal.toString());
     else if (paymentStatus === 'unpaid') setAmountPaid('0');
-  }, [paymentStatus, selectedRecord]);
+  }, [paymentStatus, selectedGroup]);
 
-  const getPaymentBadge = (record: SalesRecord) => {
-    const isFree = record.sellingPricePerUnit === 0;
-    if (isFree) return <Badge variant="secondary" className="bg-blue-100 text-blue-800 text-xs cursor-default">FREE</Badge>;
+  const totalColSpan = 7 + (SHOW_PROFIT_TO_STAFF ? 1 : 0) + (isAdmin ? 1 : 0);
 
-    const status = (record as any).paymentStatus || 'paid';
-    const paid = (record as any).amountPaid || record.totalAmount;
-
-    let badgeClass = '';
-    let label = '';
-    if (status === 'paid') { badgeClass = 'bg-green-100 text-green-800 border-green-300'; label = 'PAID'; }
-    else if (status === 'unpaid') { badgeClass = 'bg-red-100 text-red-800 border-red-300'; label = 'UNPAID'; }
-    else { badgeClass = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
-
-    return (
-      <Badge variant="outline" className={`${badgeClass} text-xs cursor-pointer hover:opacity-80`} onClick={() => openPaymentModal(record)}>
-        {label}
-      </Badge>
-    );
-  };
-
-  const totalColSpan = 7 + (SHOW_PROFIT_TO_STAFF ? 1 : 0) + (isAdmin ? 1 : 0) + 1; // +1 for payment
-
+  // Mobile filter content — uses same searchable dropdowns
   const FilterContent = () => (
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Client</Label>
-        <Select value={clientFilter} onValueChange={setClientFilter}>
-          <SelectTrigger><SelectValue placeholder="All clients" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Clients</SelectItem>
-            {uniqueClients.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <SearchableFilter
+          label="Client"
+          value={clientFilter}
+          onChange={setClientFilter}
+          options={uniqueClients}
+          placeholder="All Clients"
+        />
       </div>
       <div className="space-y-2">
         <Label>Product</Label>
-        <Select value={productFilter} onValueChange={setProductFilter}>
-          <SelectTrigger><SelectValue placeholder="All products" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Products</SelectItem>
-            {uniqueProducts.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <SearchableFilter
+          label="Product"
+          value={productFilter}
+          onChange={setProductFilter}
+          options={uniqueProducts}
+          placeholder="All Products"
+        />
       </div>
       <div className="space-y-2">
         <Label>Start Date</Label>
@@ -554,13 +472,12 @@ export default function SalesSummary() {
         <Label>End Date</Label>
         <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
       </div>
-      {hasActiveFilters && <Button variant="outline" onClick={clearFilters} className="w-full">Clear Filters</Button>}
+      {hasActiveFilters && (
+        <Button variant="outline" onClick={clearFilters} className="w-full">Clear All Filters</Button>
+      )}
     </div>
   );
 
-  /* ================================================================
-     RENDER
-  ================================================================ */
   return (
     <AppLayout>
       <div className="space-y-6">
@@ -581,7 +498,7 @@ export default function SalesSummary() {
           </div>
         </div>
 
-        {/* Stat cards */}
+        {/* Stats */}
         {loading ? (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {[...Array(4)].map((_, i) => (
@@ -604,97 +521,43 @@ export default function SalesSummary() {
           </div>
         )}
 
-        {/* ── Search bar ── */}
-        <Card>
-          <CardContent className="py-4">
-            <div className="flex flex-col sm:flex-row gap-3">
-              {/* Client search */}
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search client name..."
-                  value={clientSearch}
-                  onChange={(e) => setClientSearch(e.target.value)}
-                  className="pl-9 pr-9"
-                />
-                {clientSearch && (
-                  <button
-                    onClick={() => setClientSearch('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-
-              {/* Product search */}
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search product name..."
-                  value={productSearch}
-                  onChange={(e) => setProductSearch(e.target.value)}
-                  className="pl-9 pr-9"
-                />
-                {productSearch && (
-                  <button
-                    onClick={() => setProductSearch('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-
-              {hasSearch && (
-                <Button variant="ghost" size="sm" onClick={clearSearch} className="shrink-0">
-                  Clear search
-                </Button>
-              )}
-            </div>
-
-            {/* Active search indicator */}
-            {hasSearch && (
-              <p className="text-xs text-muted-foreground mt-2">
-                Showing {clientGroups.length} client{clientGroups.length !== 1 ? 's' : ''} · {searchFilteredRecords.length} record{searchFilteredRecords.length !== 1 ? 's' : ''}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Desktop filter bar */}
+        {/* Desktop filter bar — searchable dropdowns, no text inputs */}
         <Card className="hidden md:block">
           <CardContent className="py-4">
-            <div className="flex items-end gap-4 flex-wrap">
+            <div className="flex items-end gap-3 flex-wrap">
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Client</Label>
-                <Select value={clientFilter} onValueChange={setClientFilter}>
-                  <SelectTrigger className="w-52"><SelectValue placeholder="All clients" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Clients</SelectItem>
-                    {uniqueClients.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <SearchableFilter
+                  label="Client"
+                  value={clientFilter}
+                  onChange={setClientFilter}
+                  options={uniqueClients}
+                  placeholder="All Clients"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Product</Label>
-                <Select value={productFilter} onValueChange={setProductFilter}>
-                  <SelectTrigger className="w-44"><SelectValue placeholder="All products" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Products</SelectItem>
-                    {uniqueProducts.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <SearchableFilter
+                  label="Product"
+                  value={productFilter}
+                  onChange={setProductFilter}
+                  options={uniqueProducts}
+                  placeholder="All Products"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Start</Label>
-                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-36" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">End</Label>
-                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-36" />
               </div>
-              {hasActiveFilters && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear</Button>}
+              {hasActiveFilters && (
+                <Button variant="ghost" size="sm" onClick={clearFilters} className="self-end">
+                  <X className="h-4 w-4 mr-1" />Clear
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -708,27 +571,22 @@ export default function SalesSummary() {
                 {hasActiveFilters && <Badge variant="secondary">Active</Badge>}
               </Button>
             </SheetTrigger>
-            <SheetContent side="bottom">
+            <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto">
               <SheetHeader><SheetTitle>Filter Sales</SheetTitle></SheetHeader>
-              <FilterContent />
+              <div className="mt-4"><FilterContent /></div>
             </SheetContent>
           </Sheet>
         </div>
 
-        {/* DESKTOP TABLE */}
+        {/* Desktop table */}
         <Card className="hidden md:block">
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Sales Records</CardTitle>
-                <CardDescription>
-                  {clientGroups.length} client{clientGroups.length !== 1 ? 's' : ''} · {searchFilteredRecords.length} line item{searchFilteredRecords.length !== 1 ? 's' : ''}
-                  {' '}<span className="text-muted-foreground/60 text-xs">· Click a client row to expand</span>
-                </CardDescription>
-              </div>
-            </div>
+            <CardTitle>Sales Records</CardTitle>
+            <CardDescription>
+              {clientGroups.length} client{clientGroups.length !== 1 ? 's' : ''} · {allRecords.length} line item{allRecords.length !== 1 ? 's' : ''}
+              <span className="text-muted-foreground/60 text-xs"> · Click a client row to expand · Payment tracked per invoice</span>
+            </CardDescription>
           </CardHeader>
-
           <CardContent className="p-0">
             {loading ? (
               <div className="flex items-center justify-center p-10">
@@ -736,7 +594,7 @@ export default function SalesSummary() {
               </div>
             ) : clientGroups.length === 0 ? (
               <div className="p-10 text-center text-muted-foreground">
-                {salesRecords.length === 0 ? 'No sales records found' : 'No records match the current filters or search'}
+                {salesRecords.length === 0 ? 'No sales records found' : 'No records match the current filters'}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -751,11 +609,9 @@ export default function SalesSummary() {
                       <TableHead className="text-right">Final Amt</TableHead>
                       <TableHead className="text-right">Prod. Cost</TableHead>
                       {SHOW_PROFIT_TO_STAFF && <TableHead className="text-right">Profit / Loss</TableHead>}
-                      <TableHead className="text-center">Payment</TableHead>
                       {isAdmin && <TableHead className="text-right">Actions</TableHead>}
                     </TableRow>
                   </TableHeader>
-
                   <TableBody>
                     {clientGroups.map((group) => (
                       <ClientGroupRow
@@ -763,20 +619,18 @@ export default function SalesSummary() {
                         group={group}
                         colSpan={totalColSpan}
                         isAdmin={isAdmin}
-                        getPaymentBadge={getPaymentBadge}
+                        onPaymentClick={openPaymentModal}
                         handleDeleteSale={handleDeleteSale}
                         router={router}
                       />
                     ))}
-
-                    {/* GRAND TOTAL */}
                     <TableRow className="bg-muted/60 font-semibold border-t-2">
                       <TableCell colSpan={5} className="py-3 pl-4 text-sm">
-                        Grand Total — {clientGroups.length} client{clientGroups.length !== 1 ? 's' : ''} · {searchFilteredRecords.length} record{searchFilteredRecords.length !== 1 ? 's' : ''}
+                        Grand Total — {clientGroups.length} client{clientGroups.length !== 1 ? 's' : ''} · {allRecords.length} record{allRecords.length !== 1 ? 's' : ''}
                       </TableCell>
                       <TableCell className="text-right text-sm py-3">{formatCurrency(summary.totalRevenue)}</TableCell>
                       <TableCell className="text-right text-sm py-3 text-muted-foreground">
-                        {formatCurrency(searchFilteredRecords.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}
+                        {formatCurrency(allRecords.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}
                       </TableCell>
                       {SHOW_PROFIT_TO_STAFF && (
                         <TableCell className="text-right py-3">
@@ -785,7 +639,7 @@ export default function SalesSummary() {
                           </span>
                         </TableCell>
                       )}
-                      <TableCell colSpan={isAdmin ? 2 : 1} />
+                      <TableCell colSpan={isAdmin ? 1 : 0} />
                     </TableRow>
                   </TableBody>
                 </Table>
@@ -794,7 +648,7 @@ export default function SalesSummary() {
           </CardContent>
         </Card>
 
-        {/* MOBILE VIEW */}
+        {/* Mobile view */}
         <div className="md:hidden space-y-4">
           {loading ? (
             <div className="flex items-center justify-center py-8">
@@ -803,7 +657,7 @@ export default function SalesSummary() {
           ) : clientGroups.length === 0 ? (
             <Card>
               <CardContent className="pt-6 text-center text-muted-foreground">
-                {salesRecords.length === 0 ? 'No sales records found' : 'No records match the current filters or search'}
+                {salesRecords.length === 0 ? 'No sales records found' : 'No records match the current filters'}
               </CardContent>
             </Card>
           ) : (
@@ -812,7 +666,7 @@ export default function SalesSummary() {
                 key={group.groupKey}
                 group={group}
                 isAdmin={isAdmin}
-                getPaymentBadge={getPaymentBadge}
+                onPaymentClick={openPaymentModal}
                 handleDeleteSale={handleDeleteSale}
                 router={router}
               />
@@ -820,17 +674,20 @@ export default function SalesSummary() {
           )}
         </div>
 
-        {/* PAYMENT MODAL */}
+        {/* Payment modal — GROUP level */}
         <Dialog open={paymentModalOpen} onOpenChange={setPaymentModalOpen}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>Payment Status</DialogTitle>
-              <DialogDescription>Update payment details for {selectedRecord?.productName}</DialogDescription>
+              <DialogDescription>
+                Update payment for {selectedGroup?.clientName}
+                {selectedGroup?.voucherNo ? ` — ${selectedGroup.voucherNo}` : ''}
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="bg-muted/50 rounded-lg p-3">
-                <p className="text-sm text-muted-foreground mb-1">Total Amount</p>
-                <p className="text-2xl font-bold">{selectedRecord && formatCurrency(selectedRecord.totalAmount)}</p>
+                <p className="text-sm text-muted-foreground mb-1">Invoice Total ({selectedGroup?.records.length} items)</p>
+                <p className="text-2xl font-bold">{selectedGroup && formatCurrency(selectedGroup.groupTotal)}</p>
               </div>
               <div className="space-y-2">
                 <Label>Payment Status</Label>
@@ -852,9 +709,9 @@ export default function SalesSummary() {
                   onChange={(e) => setAmountPaid(e.target.value)}
                   disabled={paymentStatus === 'paid' || paymentStatus === 'unpaid'}
                 />
-                {selectedRecord && parseFloat(amountPaid) > 0 && parseFloat(amountPaid) < selectedRecord.totalAmount && (
+                {selectedGroup && parseFloat(amountPaid) > 0 && parseFloat(amountPaid) < selectedGroup.groupTotal && (
                   <p className="text-sm text-muted-foreground">
-                    Balance due: {formatCurrency(selectedRecord.totalAmount - parseFloat(amountPaid))}
+                    Balance due: {formatCurrency(selectedGroup.groupTotal - parseFloat(amountPaid))}
                   </p>
                 )}
               </div>
@@ -878,22 +735,37 @@ export default function SalesSummary() {
 }
 
 /* ================================================================
-   MOBILE CLIENT CARD — collapsible
+   MOBILE CLIENT CARD
 ================================================================ */
 function MobileClientCard({
-  group, isAdmin, getPaymentBadge, handleDeleteSale, router,
+  group, isAdmin, onPaymentClick, handleDeleteSale, router,
 }: {
   group: ClientGroup;
   isAdmin: boolean;
-  getPaymentBadge: (r: SalesRecord) => React.ReactNode;
+  onPaymentClick: (g: ClientGroup) => void;
   handleDeleteSale: (id: string) => void;
   router: ReturnType<typeof useRouter>;
 }) {
   const [open, setOpen] = useState(false);
 
+  const paymentBadge = (() => {
+    const status = group.paymentStatus || 'paid';
+    const paid = group.amountPaid ?? group.groupTotal;
+    let cls = '';
+    let label = '';
+    if (status === 'paid')        { cls = 'bg-green-100 text-green-800 border-green-300';    label = 'PAID'; }
+    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300';          label = 'UNPAID'; }
+    else                          { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
+    return (
+      <Badge variant="outline" className={`${cls} text-xs cursor-pointer hover:opacity-80`}
+        onClick={(e) => { e.stopPropagation(); onPaymentClick(group); }}>
+        {label}
+      </Badge>
+    );
+  })();
+
   return (
     <Card className="overflow-hidden">
-      {/* Client header — clickable */}
       <button
         className="w-full bg-primary/5 border-b border-primary/15 px-4 py-3 flex items-center justify-between gap-2 hover:bg-primary/10 transition-colors text-left"
         onClick={() => setOpen((v) => !v)}
@@ -914,15 +786,12 @@ function MobileClientCard({
             </div>
           </div>
         </div>
-        <div className="text-right flex-shrink-0">
-          <Badge variant="outline" className="border-green-300 text-green-700 bg-green-50 gap-1 mb-1">
-            <CheckCircle2 className="h-3 w-3" />{group.records.length} item{group.records.length !== 1 ? 's' : ''}
-          </Badge>
+        <div className="text-right flex-shrink-0 space-y-1">
+          {paymentBadge}
           <p className="font-semibold text-sm">{formatCurrency(group.groupTotal)}</p>
         </div>
       </button>
 
-      {/* Product rows — only when open */}
       {open && (
         <CardContent className="p-0 divide-y animate-in fade-in slide-in-from-top-1 duration-150">
           {group.records.map((record, idx) => {
@@ -935,37 +804,34 @@ function MobileClientCard({
                     <span className="text-xs text-muted-foreground w-4">{idx + 1}</span>
                     <p className="font-medium text-sm">{record.productName}</p>
                   </div>
-                  <div className="flex items-center gap-1">
-                    {getPaymentBadge(record)}
-                    {isAdmin && (
-                      <>
-                        <Button variant="ghost" size="icon" className="h-7 w-7"
-                          onClick={() => router.push(`/sales/${record.id}/edit`)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive">
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Delete Sales Record</AlertDialogTitle>
-                              <AlertDialogDescription>Are you sure? Quantity will be restored to inventory.</AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => handleDeleteSale(record.id)}
-                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                Delete
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </>
-                    )}
-                  </div>
+                  {isAdmin && (
+                    <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon" className="h-7 w-7"
+                        onClick={() => router.push(`/sales/${record.id}/edit`)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete Sales Record</AlertDialogTitle>
+                            <AlertDialogDescription>Are you sure? Quantity will be restored.</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => handleDeleteSale(record.id)}
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-4 gap-2 text-xs">
                   <div><p className="text-muted-foreground">Packets</p><p className="font-medium">{record.quantitySold}</p></div>
@@ -985,7 +851,7 @@ function MobileClientCard({
             );
           })}
           <div className="px-4 py-2 bg-muted/30 flex justify-between text-xs font-medium">
-            <span className="text-muted-foreground">{group.records.length} item{group.records.length !== 1 ? 's' : ''} for {group.clientName}</span>
+            <span className="text-muted-foreground">{group.records.length} item{group.records.length !== 1 ? 's' : ''}</span>
             <span>{formatCurrency(group.groupTotal)}</span>
           </div>
         </CardContent>

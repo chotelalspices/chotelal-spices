@@ -3,27 +3,29 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Save, Package, Loader2, Plus, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft, Save, Package, Loader2, Plus, Trash2, Tag, Check, ChevronsUpDown,
+} from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem,
+} from '@/components/ui/command';
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from '@/components/ui/popover';
+import { cn } from '@/libs/utils';
 import { useToast } from '@/hooks/use-toast';
+
+// ─── Types ─────────────────────────────────────────────────────────────────
 
 interface Formulation {
   id: string;
@@ -33,11 +35,19 @@ interface Formulation {
   status: 'active' | 'inactive';
 }
 
+interface InventoryLabel {
+  id: string;
+  name: string;
+  availableStock: number;
+  status: string;
+}
+
 interface LabelEntry {
   id: string;
   type: string;
   quantity: number;
   semiPackageable: boolean;
+  comboOpen: boolean;
 }
 
 interface ProductData {
@@ -55,10 +65,12 @@ interface ProductData {
 
 interface EditProductForm {
   name: string;
-  quantity: number;
+  quantity: string; // string so backspace works freely
   unit: 'kg' | 'gm';
   labels: LabelEntry[];
 }
+
+// ─── Component ──────────────────────────────────────────────────────────────
 
 export default function EditProductPage() {
   const params = useParams();
@@ -68,47 +80,54 @@ export default function EditProductPage() {
   const productId = params.productId as string;
 
   const [formulation, setFormulation] = useState<Formulation | null>(null);
+  const [inventoryLabels, setInventoryLabels] = useState<InventoryLabel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
   const [formData, setFormData] = useState<EditProductForm>({
     name: '',
-    quantity: 0,
+    quantity: '',
     unit: 'kg',
     labels: [],
   });
+
+  // ─── Fetch formulation + product + inventory labels ───────────────────────
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         setIsLoading(true);
 
-        // Fetch formulation
-        const formulationResponse = await fetch(`/api/formulations/${formulationId}`);
-        if (!formulationResponse.ok) {
-          throw new Error('Failed to fetch formulation');
-        }
-        const formulationData = await formulationResponse.json();
+        const [formulationRes, productRes, labelsRes] = await Promise.all([
+          fetch(`/api/formulations/${formulationId}`),
+          fetch(`/api/formulations/${formulationId}/products/${productId}`),
+          fetch('/api/labels'),
+        ]);
+
+        if (!formulationRes.ok) throw new Error('Failed to fetch formulation');
+        if (!productRes.ok) throw new Error('Failed to fetch product');
+
+        const formulationData: Formulation = await formulationRes.json();
+        const productData: ProductData = await productRes.json();
+
         setFormulation(formulationData);
 
-        // Fetch product
-        const productResponse = await fetch(`/api/formulations/${formulationId}/products/${productId}`);
-        if (!productResponse.ok) {
-          throw new Error('Failed to fetch product');
+        if (labelsRes.ok) {
+          const labelsData: InventoryLabel[] = await labelsRes.json();
+          setInventoryLabels(labelsData.filter((l) => l.status === 'active'));
         }
-        const productData: ProductData = await productResponse.json();
 
-        // Populate form with existing data
         setFormData({
           name: productData.name,
-          quantity: productData.quantity,
+          quantity: productData.quantity > 0 ? productData.quantity.toString() : '',
           unit: productData.unit,
-          labels: productData.labels?.map((label, index) => ({
+          labels: (productData.labels ?? []).map((label, index) => ({
             id: `label-${index}`,
             type: label.type,
             quantity: label.quantity,
             semiPackageable: label.semiPackageable || false,
-          })) || [],
+            comboOpen: false,
+          })),
         });
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -123,32 +142,18 @@ export default function EditProductPage() {
       }
     };
 
-    if (formulationId && productId) {
-      fetchData();
-    }
+    if (formulationId && productId) fetchData();
   }, [formulationId, productId, router, toast]);
 
-  const handleInputChange = (
-    field: keyof EditProductForm,
-    value: string | number
-  ) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
-  };
+  // ─── Label handlers ───────────────────────────────────────────────────────
 
-  // ── Label management functions ──
   const addLabel = () => {
-    const newLabel: LabelEntry = {
-      id: `label-${Date.now()}`,
-      type: '',
-      quantity: 0,
-      semiPackageable: false,
-    };
     setFormData((prev) => ({
       ...prev,
-      labels: [...prev.labels, newLabel],
+      labels: [
+        ...prev.labels,
+        { id: `label-${Date.now()}`, type: '', quantity: 0, semiPackageable: false, comboOpen: false },
+      ],
     }));
   };
 
@@ -159,7 +164,11 @@ export default function EditProductPage() {
     }));
   };
 
-  const updateLabel = (id: string, field: 'type' | 'quantity' | 'semiPackageable', value: string | number | boolean) => {
+  const updateLabel = (
+    id: string,
+    field: 'type' | 'quantity' | 'semiPackageable' | 'comboOpen',
+    value: string | number | boolean
+  ) => {
     setFormData((prev) => ({
       ...prev,
       labels: prev.labels.map((label) =>
@@ -170,10 +179,14 @@ export default function EditProductPage() {
     }));
   };
 
+  // ─── Submit ───────────────────────────────────────────────────────────────
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!formData.name || formData.quantity <= 0) {
+    const parsedQty = parseFloat(formData.quantity);
+
+    if (!formData.name || !formData.quantity || isNaN(parsedQty) || parsedQty <= 0) {
       toast({
         title: 'Validation Error',
         description: 'Please fill in all required fields with valid values.',
@@ -182,14 +195,13 @@ export default function EditProductPage() {
       return;
     }
 
-    // Validate labels
     const invalidLabels = formData.labels.filter(
       (label) => !label.type.trim() || label.quantity <= 0
     );
     if (invalidLabels.length > 0) {
       toast({
         title: 'Validation Error',
-        description: 'All labels must have a type and quantity greater than 0.',
+        description: 'All labels must have a type selected and quantity greater than 0.',
         variant: 'destructive',
       });
       return;
@@ -200,10 +212,17 @@ export default function EditProductPage() {
 
       const response = await fetch(`/api/formulations/${formulationId}/products/${productId}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.name,
+          quantity: parsedQty,
+          unit: formData.unit,
+          labels: formData.labels.map((l) => ({
+            type: l.type,
+            quantity: l.quantity,
+            semiPackageable: l.semiPackageable,
+          })),
+        }),
       });
 
       if (!response.ok) {
@@ -211,11 +230,7 @@ export default function EditProductPage() {
         throw new Error(errorData.error || 'Failed to update product');
       }
 
-      toast({
-        title: 'Success',
-        description: 'Product updated successfully.',
-      });
-
+      toast({ title: 'Success', description: 'Product updated successfully.' });
       router.push(`/formulations/${formulationId}/products`);
     } catch (error) {
       console.error('Error updating product:', error);
@@ -228,6 +243,8 @@ export default function EditProductPage() {
       setIsSaving(false);
     }
   };
+
+  // ─── Loading / not found ──────────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -258,9 +275,12 @@ export default function EditProductPage() {
     );
   }
 
+  // ─── Render ───────────────────────────────────────────────────────────────
+
   return (
     <AppLayout>
       <div className="space-y-6 max-w-2xl mx-auto">
+
         {/* Header */}
         <div className="page-header">
           <div className="flex items-center gap-4">
@@ -271,9 +291,7 @@ export default function EditProductPage() {
             </Button>
             <div>
               <h1 className="page-title">Edit Product</h1>
-              <p className="text-muted-foreground mt-1">
-                From: {formulation.name}
-              </p>
+              <p className="text-muted-foreground mt-1">From: {formulation.name}</p>
             </div>
           </div>
         </div>
@@ -305,22 +323,22 @@ export default function EditProductPage() {
                 Product Details
               </CardTitle>
             </CardHeader>
-
             <CardContent className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                {/* Name */}
                 <div className="space-y-2">
                   <Label htmlFor="name">Product Name *</Label>
                   <Input
                     id="name"
                     value={formData.name}
-                    onChange={(e) =>
-                      handleInputChange('name', e.target.value)
-                    }
+                    onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
                     placeholder="Enter product name"
                     required
                   />
                 </div>
 
+                {/* Quantity — string so backspace works */}
                 <div className="space-y-2">
                   <Label htmlFor="quantity">Quantity *</Label>
                   <Input
@@ -329,23 +347,19 @@ export default function EditProductPage() {
                     step="0.01"
                     min="0"
                     value={formData.quantity}
-                    onChange={(e) =>
-                      handleInputChange(
-                        'quantity',
-                        parseFloat(e.target.value) || 0
-                      )
-                    }
+                    onChange={(e) => setFormData((prev) => ({ ...prev, quantity: e.target.value }))}
                     placeholder="0.00"
                     required
                   />
                 </div>
 
+                {/* Unit */}
                 <div className="space-y-2 md:col-span-2">
                   <Label htmlFor="unit">Unit *</Label>
                   <Select
                     value={formData.unit}
                     onValueChange={(value: 'kg' | 'gm') =>
-                      handleInputChange('unit', value)
+                      setFormData((prev) => ({ ...prev, unit: value }))
                     }
                   >
                     <SelectTrigger>
@@ -365,86 +379,153 @@ export default function EditProductPage() {
           <Card className="mt-6">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">Labels (Optional)</CardTitle>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={addLabel}
-                  className="gap-2"
-                >
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Tag className="h-5 w-5" />
+                  Labels
+                  <span className="text-sm font-normal text-muted-foreground">(Optional)</span>
+                </CardTitle>
+                <Button type="button" variant="outline" size="sm" onClick={addLabel} className="gap-2">
                   <Plus className="h-4 w-4" />
                   Add Label
                 </Button>
               </div>
               <p className="text-sm text-muted-foreground">
-                Track different packaging types and quantities
+                Select labels from inventory and define how many fit per courier box.
               </p>
             </CardHeader>
 
-          <CardContent>
-            {formData.labels.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p>No labels added yet</p>
-                <p className="text-sm">Click "Add Label" to start tracking packaging</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {formData.labels.map((label, index) => (
-                  <div
-                    key={label.id}
-                    className="flex items-end gap-3 p-4 border rounded-lg bg-muted/30"
-                  >
-                    <div className="flex-1 space-y-2">
-                      <Label htmlFor={`label-type-${label.id}`}>
-                        Label Type {index + 1}
-                      </Label>
-                      <Input
-                        id={`label-type-${label.id}`}
-                        value={label.type}
-                        onChange={(e) =>
-                          updateLabel(label.id, 'type', e.target.value)
-                        }
-                        placeholder="e.g., Box, Packet, Container"
-                      />
-                    </div>
+            <CardContent>
+              {formData.labels.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Tag className="h-12 w-12 mx-auto mb-3 opacity-40" />
+                  <p>No labels added yet</p>
+                  <p className="text-sm">Click "Add Label" to define packaging label types</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {formData.labels.map((label, index) => (
+                    <div
+                      key={label.id}
+                      className="flex items-end gap-3 p-4 border rounded-lg bg-muted/30"
+                    >
+                      {/* Label type — searchable dropdown from inventory */}
+                      <div className="flex-1 space-y-2">
+                        <Label htmlFor={`label-type-${label.id}`}>
+                          Label Type {index + 1}
+                        </Label>
+                        <Popover
+                          open={label.comboOpen}
+                          onOpenChange={(open) => updateLabel(label.id, 'comboOpen', open)}
+                        >
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              className={cn(
+                                'w-full justify-between font-normal',
+                                !label.type && 'text-muted-foreground'
+                              )}
+                            >
+                              {label.type || 'Select label from inventory'}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-full p-0" align="start">
+                            <Command>
+                              <CommandInput placeholder="Search labels..." />
+                              <CommandEmpty>
+                                {inventoryLabels.length === 0
+                                  ? 'No active labels in inventory.'
+                                  : 'No label found.'}
+                              </CommandEmpty>
+                              <CommandGroup>
+                                {inventoryLabels.map((invLabel) => {
+                                  // Prevent selecting same label twice
+                                  const alreadyUsed = formData.labels.some(
+                                    (l) => l.type === invLabel.name && l.id !== label.id
+                                  );
+                                  return (
+                                    <CommandItem
+                                      key={invLabel.id}
+                                      value={invLabel.name}
+                                      disabled={alreadyUsed}
+                                      onSelect={() => {
+                                        updateLabel(label.id, 'type', invLabel.name);
+                                        updateLabel(label.id, 'comboOpen', false);
+                                      }}
+                                      className={cn(alreadyUsed && 'opacity-40 cursor-not-allowed')}
+                                    >
+                                      <div className="flex justify-between w-full">
+                                        <span>{invLabel.name}</span>
+                                        <span className="text-xs text-muted-foreground ml-2">
+                                          {invLabel.availableStock.toLocaleString('en-IN')} in stock
+                                        </span>
+                                      </div>
+                                      {label.type === invLabel.name && (
+                                        <Check className="ml-2 h-4 w-4 shrink-0" />
+                                      )}
+                                    </CommandItem>
+                                  );
+                                })}
+                              </CommandGroup>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
 
-                    <div className="w-32 space-y-2">
-                      <Label htmlFor={`label-quantity-${label.id}`}>
-                        Quantity
-                      </Label>
-                      <Input
-                        id={`label-quantity-${label.id}`}
-                        type="number"
-                        min="1"
-                        value={label.quantity}
-                        onChange={(e) =>
-                          updateLabel(label.id, 'quantity', e.target.value)
-                        }
-                        placeholder="0"
-                      />
-                    </div>
+                      {/* Qty per courier box */}
+                      <div className="w-48 space-y-2">
+                        <Label htmlFor={`label-quantity-${label.id}`}>
+                          Qty per Courier Box
+                        </Label>
+                        <div className="relative">
+                          <Input
+                            id={`label-quantity-${label.id}`}
+                            type="number"
+                            min="1"
+                            value={label.quantity || ''}
+                            onChange={(e) => updateLabel(label.id, 'quantity', e.target.value)}
+                            placeholder="e.g., 10"
+                            className="pr-14"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                            pcs/box
+                          </span>
+                        </div>
+                      </div>
 
-                    <div className="w-32 space-y-2">
-                      <Label htmlFor={`label-semi-packageable-${label.id}`}>
-                        Semi-packageable
-                      </Label>
-                      <Checkbox
-                        id={`label-semi-packageable-${label.id}`}
-                        checked={label.semiPackageable}
-                        onCheckedChange={(checked) =>
-                          updateLabel(label.id, 'semiPackageable', checked)
-                        }
-                        className="mt-4 ml-[50%]"
-                      />
+                      {/* Semi-packageable checkbox */}
+                      <div className="w-36 space-y-2">
+                        <Label htmlFor={`label-semi-${label.id}`}>
+                          Semi-packageable
+                        </Label>
+                        <div className="flex items-center justify-center h-10">
+                          <Checkbox
+                            id={`label-semi-${label.id}`}
+                            checked={label.semiPackageable}
+                            onCheckedChange={(checked) =>
+                              updateLabel(label.id, 'semiPackageable', !!checked)
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      {/* Remove */}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeLabel(label.id)}
+                        className="text-destructive hover:text-destructive mb-0.5"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Actions */}
           <div className="flex justify-between gap-3 mt-6">
@@ -454,18 +535,11 @@ export default function EditProductPage() {
                 Cancel
               </Link>
             </Button>
-
             <Button type="submit" disabled={isSaving} className="gap-2">
               {isSaving ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Saving...
-                </>
+                <><Loader2 className="h-4 w-4 animate-spin" />Saving...</>
               ) : (
-                <>
-                  <Save className="h-4 w-4" />
-                  Save Changes
-                </>
+                <><Save className="h-4 w-4" />Save Changes</>
               )}
             </Button>
           </div>

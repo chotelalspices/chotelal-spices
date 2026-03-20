@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  ArrowLeft, Save, Package, Loader2, Plus, Trash2, Tag,
+  ArrowLeft, Save, Package, Loader2, Plus, Trash2, Tag, Check, ChevronsUpDown,
 } from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -16,6 +16,13 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem,
+} from '@/components/ui/command';
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from '@/components/ui/popover';
+import { cn } from '@/libs/utils';
 import { useToast } from '@/hooks/use-toast';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -28,16 +35,24 @@ interface Formulation {
   status: 'active' | 'inactive';
 }
 
+interface InventoryLabel {
+  id: string;
+  name: string;
+  availableStock: number;
+  status: string;
+}
+
 interface LabelEntry {
   id: string;
-  type: string;
-  quantity: number;
+  type: string;      // label name from inventory
+  quantity: number;  // qty per courier box
   semiPackageable: boolean;
+  comboOpen: boolean;
 }
 
 interface NewProduct {
   name: string;
-  quantity: number;
+  quantity: string;  // ← string so user can freely edit (no stuck "0")
   unit: 'kg' | 'gm';
   labels: LabelEntry[];
 }
@@ -51,26 +66,36 @@ export default function CreateProductPage() {
   const formulationId = params.id as string;
 
   const [formulation, setFormulation] = useState<Formulation | null>(null);
+  const [inventoryLabels, setInventoryLabels] = useState<InventoryLabel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
   const [formData, setFormData] = useState<NewProduct>({
     name: '',
-    quantity: 0,
+    quantity: '',   // ← empty string so placeholder shows and user can type freely
     unit: 'kg',
     labels: [],
   });
 
-  // ─── Fetch formulation ────────────────────────────────────────────────────
+  // ─── Fetch formulation + inventory labels ─────────────────────────────────
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         setIsLoading(true);
-        const res = await fetch(`/api/formulations/${formulationId}`);
-        if (!res.ok) throw new Error('Failed to fetch formulation');
-        const data = await res.json();
-        setFormulation(data);
+        const [formulationRes, labelsRes] = await Promise.all([
+          fetch(`/api/formulations/${formulationId}`),
+          fetch('/api/labels'),
+        ]);
+        if (!formulationRes.ok) throw new Error('Failed to fetch formulation');
+        const formulationData = await formulationRes.json();
+        setFormulation(formulationData);
+
+        if (labelsRes.ok) {
+          const labelsData: InventoryLabel[] = await labelsRes.json();
+          // Only show active labels
+          setInventoryLabels(labelsData.filter((l) => l.status === 'active'));
+        }
       } catch (error) {
         console.error('Error fetching data:', error);
         toast({
@@ -93,7 +118,7 @@ export default function CreateProductPage() {
       ...prev,
       labels: [
         ...prev.labels,
-        { id: `label-${Date.now()}`, type: '', quantity: 0, semiPackageable: false },
+        { id: `label-${Date.now()}`, type: '', quantity: 0, semiPackageable: false, comboOpen: false },
       ],
     }));
   };
@@ -107,7 +132,7 @@ export default function CreateProductPage() {
 
   const updateLabel = (
     id: string,
-    field: 'type' | 'quantity' | 'semiPackageable',
+    field: 'type' | 'quantity' | 'semiPackageable' | 'comboOpen',
     value: string | number | boolean
   ) => {
     setFormData((prev) => ({
@@ -120,7 +145,7 @@ export default function CreateProductPage() {
     }));
   };
 
-  const handleInputChange = (field: keyof NewProduct, value: string | number) => {
+  const handleInputChange = (field: keyof Omit<NewProduct, 'labels'>, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
@@ -129,7 +154,9 @@ export default function CreateProductPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!formData.name || formData.quantity <= 0) {
+    const parsedQty = parseFloat(formData.quantity);
+
+    if (!formData.name || !formData.quantity || isNaN(parsedQty) || parsedQty <= 0) {
       toast({
         title: 'Validation Error',
         description: 'Please fill in all required fields with valid values.',
@@ -144,7 +171,7 @@ export default function CreateProductPage() {
     if (invalidLabels.length > 0) {
       toast({
         title: 'Validation Error',
-        description: 'All labels must have a type and qty per courier box greater than 0.',
+        description: 'All labels must have a type selected and qty per courier box greater than 0.',
         variant: 'destructive',
       });
       return;
@@ -158,7 +185,7 @@ export default function CreateProductPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: formData.name,
-          quantity: formData.quantity,
+          quantity: parsedQty,
           unit: formData.unit,
           labels: formData.labels.map((l) => ({
             type: l.type,
@@ -267,6 +294,8 @@ export default function CreateProductPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                {/* Product Name */}
                 <div className="space-y-2">
                   <Label htmlFor="name">Product Name *</Label>
                   <Input
@@ -278,6 +307,7 @@ export default function CreateProductPage() {
                   />
                 </div>
 
+                {/* Quantity — string-based so backspace works naturally */}
                 <div className="space-y-2">
                   <Label htmlFor="quantity">Quantity *</Label>
                   <Input
@@ -286,14 +316,13 @@ export default function CreateProductPage() {
                     step="0.01"
                     min="0"
                     value={formData.quantity}
-                    onChange={(e) =>
-                      handleInputChange('quantity', parseFloat(e.target.value) || 0)
-                    }
+                    onChange={(e) => handleInputChange('quantity', e.target.value)}
                     placeholder="0.00"
                     required
                   />
                 </div>
 
+                {/* Unit */}
                 <div className="space-y-2 md:col-span-2">
                   <Label htmlFor="unit">Unit *</Label>
                   <Select
@@ -334,7 +363,7 @@ export default function CreateProductPage() {
                 </Button>
               </div>
               <p className="text-sm text-muted-foreground">
-                Define label types and how many fit per courier box.
+                Select labels from inventory and define how many fit per courier box.
               </p>
             </CardHeader>
 
@@ -352,17 +381,69 @@ export default function CreateProductPage() {
                       key={label.id}
                       className="flex items-end gap-3 p-4 border rounded-lg bg-muted/30"
                     >
-                      {/* Label type */}
+                      {/* Label type — searchable dropdown from inventory */}
                       <div className="flex-1 space-y-2">
                         <Label htmlFor={`label-type-${label.id}`}>
                           Label Type {index + 1}
                         </Label>
-                        <Input
-                          id={`label-type-${label.id}`}
-                          value={label.type}
-                          onChange={(e) => updateLabel(label.id, 'type', e.target.value)}
-                          placeholder="e.g., Jar Label, Box Label"
-                        />
+                        <Popover
+                          open={label.comboOpen}
+                          onOpenChange={(open) => updateLabel(label.id, 'comboOpen', open)}
+                        >
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              className={cn(
+                                'w-full justify-between font-normal',
+                                !label.type && 'text-muted-foreground'
+                              )}
+                            >
+                              {label.type || 'Select label from inventory'}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-full p-0" align="start">
+                            <Command>
+                              <CommandInput placeholder="Search labels..." />
+                              <CommandEmpty>
+                                {inventoryLabels.length === 0
+                                  ? 'No active labels in inventory.'
+                                  : 'No label found.'}
+                              </CommandEmpty>
+                              <CommandGroup>
+                                {inventoryLabels.map((invLabel) => {
+                                  // Prevent selecting the same label twice
+                                  const alreadyUsed = formData.labels.some(
+                                    (l) => l.type === invLabel.name && l.id !== label.id
+                                  );
+                                  return (
+                                    <CommandItem
+                                      key={invLabel.id}
+                                      value={invLabel.name}
+                                      disabled={alreadyUsed}
+                                      onSelect={() => {
+                                        updateLabel(label.id, 'type', invLabel.name);
+                                        updateLabel(label.id, 'comboOpen', false);
+                                      }}
+                                      className={cn(alreadyUsed && 'opacity-40 cursor-not-allowed')}
+                                    >
+                                      <div className="flex justify-between w-full">
+                                        <span>{invLabel.name}</span>
+                                        <span className="text-xs text-muted-foreground ml-2">
+                                          {invLabel.availableStock.toLocaleString('en-IN')} in stock
+                                        </span>
+                                      </div>
+                                      {label.type === invLabel.name && (
+                                        <Check className="ml-2 h-4 w-4 shrink-0" />
+                                      )}
+                                    </CommandItem>
+                                  );
+                                })}
+                              </CommandGroup>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
                       </div>
 
                       {/* Qty per courier box */}

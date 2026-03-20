@@ -198,8 +198,8 @@ export default function LabelInventoryDashboard() {
           <StatCard
             title="Inventory Value"
             value={`₹${stats.totalInventoryValue.toLocaleString('en-IN', {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 0,
             })}`}
             subtitle="Stock × cost per unit"
             icon={IndianRupee}

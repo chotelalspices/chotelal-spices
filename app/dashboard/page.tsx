@@ -10,6 +10,7 @@ import {
   TrendingUp,
   Boxes,
   Loader2,
+  IndianRupee,
 } from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -60,6 +61,7 @@ interface DashboardData {
     date: string;
   }>;
   materialsCount: number;
+labelInventoryValue: number;
 }
 
 export default function DashboardPage() {
@@ -73,13 +75,13 @@ export default function DashboardPage() {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await fetch(`/api/dashboard?dateRange=${dateRange}`);
-      
+
       if (!response.ok) {
         throw new Error('Failed to fetch dashboard data');
       }
-      
+
       const data = await response.json();
       setDashboardData(data);
     } catch (err) {
@@ -208,7 +210,7 @@ export default function DashboardPage() {
         </div>
 
         {/* ADMIN METRICS */}
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard
             title="Packaging Loss"
             value={`${dashboardData.packagingLoss.toFixed(2)} kg`}
@@ -232,6 +234,14 @@ export default function DashboardPage() {
             icon={Boxes}
             variant="default"
             href="/"
+          />
+          <MetricCard
+            title="Label Inventory Value"
+            value={formatCurrency(dashboardData.labelInventoryValue ?? 0)}
+            subtitle="Stock × cost per unit"
+            icon={IndianRupee}
+            variant="default"
+            href="/labels/inventory"
           />
         </div>
 

@@ -32,8 +32,23 @@ export interface PackagingBatch {
   alreadyPackaged: number; // kg
   totalLoss: number; // kg
   remainingQuantity: number; // kg
-  status: "Not Started" | "Partial" | "Completed";
+  status: "Not Started" | "Partial" | "Semi Packaged" | "Completed";
   sessions: PackagingSession[];
+}
+
+export function getStatusColor(status: "Not Started" | "Partial" | "Semi Packaged" | "Completed"): string {
+  switch (status) {
+    case "Completed":
+      return "bg-green-100 text-green-800 border border-green-400 dark:bg-green-900/30 dark:text-green-300";
+    case "Partial":
+      return "bg-blue-100 text-blue-800 border border-blue-400 dark:bg-blue-900/30 dark:text-blue-300";
+    case "Semi Packaged":
+      return "bg-orange-500 text-white border border-orange-600 dark:bg-orange-600 dark:text-white";
+    case "Not Started":
+      return "bg-gray-100 text-gray-700 border border-gray-400 dark:bg-gray-800 dark:text-gray-300";
+    default:
+      return "bg-gray-100 text-gray-700 border border-gray-400";
+  }
 }
 
 export const containerSizes: ContainerSize[] = [
@@ -175,15 +190,3 @@ export const generateSessionId = (): string => {
   return `PKG-${timestamp}`;
 };
 
-export const getStatusColor = (status: PackagingBatch["status"]): string => {
-  switch (status) {
-    case "Not Started":
-      return "bg-muted text-muted-foreground";
-    case "Partial":
-      return "bg-muted text-primary";
-    case "Completed":
-      return "bg-muted text-success";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
-};

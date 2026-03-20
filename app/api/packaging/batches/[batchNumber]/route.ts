@@ -82,11 +82,16 @@ export async function GET(
     const remainingQuantity =
       finalOutputKg - totalPackagedWeight - totalLoss - batchSemiPackagedKg;
 
-    let status: "Not Started" | "Partial" | "Completed";
-    if (totalPackagedWeight === 0 && batchSemiPackagedKg === 0) {
-      status = "Not Started";
-    } else if (remainingQuantity <= 0.01) {
+    // Replace the status block with:
+    let status: "Not Started" | "Partial" | "Semi Packaged" | "Completed";
+
+    if (remainingQuantity <= 0.01) {
       status = "Completed";
+    } else if (totalPackagedWeight === 0 && batchSemiPackagedKg === 0) {
+      status = "Not Started";
+    } else if (batchSemiPackagedKg > 0) {
+      // Any semi-packaged weight = Semi Packaged status, regardless of fully packaged
+      status = "Semi Packaged";
     } else {
       status = "Partial";
     }
@@ -275,8 +280,8 @@ export async function PATCH(
       semiPackaged?: boolean;
       isConversion?: boolean;
     }> = Array.isArray(labels)
-      ? labels.filter((l: any) => l.type?.trim() && l.quantity > 0)
-      : [];
+        ? labels.filter((l: any) => l.type?.trim() && l.quantity > 0)
+        : [];
 
     let labelRecordsForTx: Array<{ id: string; name: string }> = [];
 

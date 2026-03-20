@@ -7,54 +7,25 @@ import { authOptions } from "../auth/[...nextauth]/route";
 
 export async function GET(request: NextRequest) {
   try {
-    // ================================
-    // AUTHENTICATION CHECK
-    // ================================
     const session = await getServerSession(authOptions);
-
     if (!session || !session.user) {
-      return NextResponse.json(
-        { error: "Unauthorized. Please log in to perform this action." },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized. Please log in to perform this action." }, { status: 401 });
     }
-
     const authenticatedUserId = (session.user as any).id as string;
-
     if (!authenticatedUserId) {
-      return NextResponse.json(
-        { error: "User ID not found in session." },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "User ID not found in session." }, { status: 401 });
     }
-
-    const user = await prisma.user.findUnique({
-      where: { id: authenticatedUserId },
-    });
-
+    const user = await prisma.user.findUnique({ where: { id: authenticatedUserId } });
     if (!user) {
-      return NextResponse.json(
-        { error: "User not found in database." },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "User not found in database." }, { status: 401 });
     }
-
     if (user.status !== "active") {
-      return NextResponse.json(
-        {
-          error:
-            "Your account is not active. Please contact an administrator.",
-        },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: "Your account is not active. Please contact an administrator." }, { status: 403 });
     }
 
-    // ================================
-    // DATE RANGE LOGIC (UPDATED)
-    // ================================
+    // ── Date range ────────────────────────────────────────────────────────────
     const { searchParams } = new URL(request.url);
     const dateRange = searchParams.get("dateRange") || "month";
-
     const now = new Date();
     let startDate: Date;
     let endDate: Date = new Date();
@@ -64,7 +35,6 @@ export async function GET(request: NextRequest) {
         startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
         break;
-
       case "week": {
         const weekStart = new Date(now);
         weekStart.setDate(now.getDate() - now.getDay());
@@ -72,187 +42,111 @@ export async function GET(request: NextRequest) {
         startDate = weekStart;
         break;
       }
-
       case "month":
         startDate = new Date(now.getFullYear(), now.getMonth(), 1);
         break;
-
       case "quarter": {
         const currentQuarter = Math.floor(now.getMonth() / 3);
-        const quarterStartMonth = currentQuarter * 3;
-        startDate = new Date(now.getFullYear(), quarterStartMonth, 1);
+        startDate = new Date(now.getFullYear(), currentQuarter * 3, 1);
         break;
       }
-
       default:
         startDate = new Date(now.getFullYear(), now.getMonth(), 1);
         break;
     }
 
-    // ================================
-    // TODAY RANGE (FOR TODAY METRICS)
-    // ================================
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
 
-    // ================================
-    // RAW MATERIALS & STOCK
-    // ================================
+    // ── Raw materials & stock ─────────────────────────────────────────────────
     const rawMaterials = await prisma.rawMaterial.findMany({
-      include: {
-        stockMovements: {
-          orderBy: { createdAt: "asc" },
-        },
-      },
+      include: { stockMovements: { orderBy: { createdAt: "asc" } } },
     });
 
     const materialsWithStock = rawMaterials.map((material) => {
-      const availableStock = material.stockMovements.reduce((total, movement) => {
-        return movement.action === "add"
-          ? total + movement.quantity
-          : total - movement.quantity;
-      }, 0);
-
+      const availableStock = material.stockMovements.reduce(
+        (total, movement) =>
+          movement.action === "add" ? total + movement.quantity : total - movement.quantity,
+        0
+      );
       return { ...material, availableStock };
     });
 
     const lowStockItems = materialsWithStock.filter(
       (m) => m.availableStock > 0 && m.availableStock <= m.minimumStock
     );
+    const outOfStockItems = materialsWithStock.filter((m) => m.availableStock <= 0);
 
-    const outOfStockItems = materialsWithStock.filter(
-      (m) => m.availableStock <= 0
-    );
-
-    // ================================
-    // TODAY PRODUCTION
-    // ================================
+    // ── Today production ──────────────────────────────────────────────────────
     const todayProductionBatches = await prisma.productionBatch.findMany({
       where: {
-        productionDate: {
-          gte: todayStart,
-          lt: todayEnd,
-        },
-        status: {
-          in: ["confirmed", "ready_for_packaging"],
-        },
+        productionDate: { gte: todayStart, lt: todayEnd },
+        status: { in: ["confirmed", "ready_for_packaging"] },
       },
       include: { formulation: true },
     });
 
     const todayProduction = {
       quantity: todayProductionBatches.reduce(
-        (sum, batch) =>
-          sum + (batch.finalOutput || batch.plannedQuantity),
-        0
+        (sum, batch) => sum + (batch.finalOutput || batch.plannedQuantity), 0
       ),
       batches: todayProductionBatches.length,
     };
 
-    // ================================
-    // TODAY PACKAGING
-    // ================================
+    // ── Today packaging ───────────────────────────────────────────────────────
     const todayPackagingSessions = await prisma.packagingSession.findMany({
-      where: {
-        date: {
-          gte: todayStart,
-          lt: todayEnd,
-        },
-      },
-      include: {
-        items: true,
-        batch: { include: { formulation: true } },
-      },
+      where: { date: { gte: todayStart, lt: todayEnd } },
+      include: { items: true, batch: { include: { formulation: true } } },
     });
 
     const todayPackaging = {
       quantity: todayPackagingSessions.reduce(
         (sum, session) =>
-          sum +
-          session.items.reduce(
-            (itemSum, item) => itemSum + item.totalWeight,
-            0
-          ),
+          sum + session.items.reduce((itemSum, item) => itemSum + item.totalWeight, 0),
         0
       ),
       sessions: todayPackagingSessions.length,
     };
 
-    // ================================
-    // TODAY SALES
-    // ================================
+    // ── Today sales ───────────────────────────────────────────────────────────
     const todaySalesRecords = await prisma.salesRecord.findMany({
-      where: {
-        saleDate: {
-          gte: todayStart,
-          lt: todayEnd,
-        },
-      },
+      where: { saleDate: { gte: todayStart, lt: todayEnd } },
       include: { product: true },
     });
 
     const todaySales = {
-      quantity: todaySalesRecords.reduce(
-        (sum, sale) => sum + sale.quantitySold,
-        0
-      ),
+      quantity: todaySalesRecords.reduce((sum, sale) => sum + sale.quantitySold, 0),
       revenue: todaySalesRecords.reduce(
-        (sum, sale) => sum + sale.quantitySold * sale.sellingPrice,
-        0
+        (sum, sale) => sum + sale.quantitySold * sale.sellingPrice, 0
       ),
       count: todaySalesRecords.length,
     };
 
-    // ================================
-    // PACKAGING LOSS (DATE RANGE)
-    // ================================
+    // ── Packaging loss (date range) ───────────────────────────────────────────
     const packagingSessionsInRange = await prisma.packagingSession.findMany({
-      where: {
-        date: {
-          gte: startDate,
-          lt: endDate,
-        },
-      },
+      where: { date: { gte: startDate, lt: endDate } },
     });
 
     const packagingLoss = packagingSessionsInRange.reduce(
-      (sum, session) => sum + session.packagingLoss,
-      0
+      (sum, session) => sum + session.packagingLoss, 0
     );
 
-    // ================================
-    // PROFIT SNAPSHOT (DATE RANGE)
-    // ================================
+    // ── Profit snapshot (date range) ──────────────────────────────────────────
     const salesRecordsInRange = await prisma.salesRecord.findMany({
-      where: {
-        saleDate: {
-          gte: startDate,
-          lt: endDate,
-        },
-      },
+      where: { saleDate: { gte: startDate, lt: endDate } },
     });
 
     const revenue = salesRecordsInRange.reduce(
-      (sum, sale) => sum + sale.quantitySold * sale.sellingPrice,
-      0
+      (sum, sale) => sum + sale.quantitySold * sale.sellingPrice, 0
     );
-
     const cost = salesRecordsInRange.reduce(
-      (sum, sale) => sum + (sale.productionCost || 0),
-      0
+      (sum, sale) => sum + (sale.productionCost || 0), 0
     );
-
     const profit = revenue - cost;
 
-    // ================================
-    // RECENT PRODUCTION
-    // ================================
+    // ── Recent production ─────────────────────────────────────────────────────
     const recentProductionBatches = await prisma.productionBatch.findMany({
-      where: {
-        status: {
-          in: ["confirmed", "ready_for_packaging"],
-        },
-      },
+      where: { status: { in: ["confirmed", "ready_for_packaging"] } },
       include: { formulation: true },
       orderBy: { productionDate: "desc" },
       take: 5,
@@ -265,36 +159,22 @@ export async function GET(request: NextRequest) {
       date: batch.productionDate.toISOString().split("T")[0],
     }));
 
-    // ================================
-    // RECENT PACKAGING
-    // ================================
+    // ── Recent packaging ──────────────────────────────────────────────────────
     const recentPackagingSessions = await prisma.packagingSession.findMany({
-      include: {
-        items: true,
-        batch: { include: { formulation: true } },
-      },
+      include: { items: true, batch: { include: { formulation: true } } },
       orderBy: { date: "desc" },
       take: 5,
     });
 
-    const recentPackaging = recentPackagingSessions.map((session) => {
-      const totalWeight = session.items.reduce(
-        (sum, item) => sum + item.totalWeight,
-        0
-      );
+    const recentPackaging = recentPackagingSessions.map((session) => ({
+      batchNumber: session.batch.batchNumber,
+      productName: session.batch.formulation.name,
+      quantity: session.items.reduce((sum, item) => sum + item.totalWeight, 0),
+      loss: session.packagingLoss,
+      date: session.date.toISOString().split("T")[0],
+    }));
 
-      return {
-        batchNumber: session.batch.batchNumber,
-        productName: session.batch.formulation.name,
-        quantity: totalWeight,
-        loss: session.packagingLoss,
-        date: session.date.toISOString().split("T")[0],
-      };
-    });
-
-    // ================================
-    // RECENT SALES
-    // ================================
+    // ── Recent sales ──────────────────────────────────────────────────────────
     const recentSalesRecords = await prisma.salesRecord.findMany({
       include: { product: true },
       orderBy: { saleDate: "desc" },
@@ -308,9 +188,7 @@ export async function GET(request: NextRequest) {
       date: sale.saleDate.toISOString().split("T")[0],
     }));
 
-    // ================================
-    // LOW STOCK FORMATTED
-    // ================================
+    // ── Low stock formatted ───────────────────────────────────────────────────
     const lowStockItemsFormatted = materialsWithStock
       .filter((m) => m.availableStock <= m.minimumStock)
       .map((m) => ({
@@ -319,10 +197,7 @@ export async function GET(request: NextRequest) {
         availableStock: m.availableStock,
         minimumStock: m.minimumStock,
         unit: m.unit.toLowerCase() as "kg" | "gm",
-        status:
-          m.availableStock <= 0
-            ? ("critical" as const)
-            : ("low" as const),
+        status: m.availableStock <= 0 ? ("critical" as const) : ("low" as const),
       }))
       .sort((a, b) => a.availableStock - b.availableStock);
 
@@ -330,9 +205,20 @@ export async function GET(request: NextRequest) {
       (m) => m.status === "active"
     ).length;
 
-    // ================================
-    // RESPONSE
-    // ================================
+    // ── Label inventory value ─────────────────────────────────────────────────
+    const labelsWithMovements = await prisma.label.findMany({
+      include: { labelMovements: true },
+    });
+
+    const labelInventoryValue = labelsWithMovements.reduce((sum, label) => {
+      const stock = label.labelMovements.reduce(
+        (s, m) => (m.action === "add" ? s + m.quantity : s - m.quantity),
+        0
+      );
+      return sum + stock * ((label as any).costPerUnit ?? 0);
+    }, 0);
+
+    // ── Response ──────────────────────────────────────────────────────────────
     return NextResponse.json(
       {
         lowStockCount: lowStockItems.length,
@@ -341,24 +227,18 @@ export async function GET(request: NextRequest) {
         todayPackaging,
         todaySales,
         packagingLoss,
-        profitSnapshot: {
-          profit,
-          revenue,
-          cost,
-        },
+        profitSnapshot: { profit, revenue, cost },
         lowStockItems: lowStockItemsFormatted,
         recentProduction,
         recentPackaging,
         recentSales,
         materialsCount: activeMaterialsCount,
+        labelInventoryValue,
       },
       { status: 200 }
     );
   } catch (error) {
     console.error("Error fetching dashboard data:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch dashboard data" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch dashboard data" }, { status: 500 });
   }
 }

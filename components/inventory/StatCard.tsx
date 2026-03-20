@@ -28,7 +28,12 @@ export function StatCard({
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-muted-foreground mb-1">{title}</p>
-          <p className="text-2xl md:text-3xl font-bold text-foreground break-words">{value}</p>
+          <p className={cn(
+            "font-bold text-foreground whitespace-nowrap",
+            String(value).length > 8 ? "text-lg md:text-xl" : "text-2xl md:text-3xl"
+          )}>
+            {value}
+          </p>
           {subtitle && (
             <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
           )}

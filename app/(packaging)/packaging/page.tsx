@@ -29,12 +29,32 @@ interface PackagingBatch {
   alreadyPackaged: number;
   totalLoss: number;
   remainingQuantity: number;
-  status: "Not Started" | "Partial" | "Completed";
+  semiPackaged: number;
+  status: "Not Started" | "Partial" | "Semi Packaged" | "Completed";
   sessions: any[];
 }
 
-const ALL_STATUSES = ["Not Started", "Partial", "Completed"] as const;
+const ALL_STATUSES = ["Not Started", "Semi Packaged", "Partial", "Completed"] as const;
 type StatusType = typeof ALL_STATUSES[number];
+
+// ─── Status color helper (extended) ──────────────────────────────────────────
+
+const getExtendedStatusColor = (status: string): string => {
+  switch (status) {
+    case "Completed":
+      return "bg-green-100 text-white-800 border border-green-400 dark:bg-green-900/30 dark:text-white-300";
+    case "Partial":
+      return "bg-blue-100 text-blue-800 border border-blue-400 dark:bg-blue-900/30 dark:text-blue-300";
+    case "Semi Packaged":
+      return "bg-orange-500 text-white border border-orange-600 dark:bg-orange-600 dark:text-white";
+    case "Not Started":
+      return "bg-gray-100 text-gray-700 border border-gray-400 dark:bg-gray-800 dark:text-gray-300";
+    default:
+      return "bg-gray-100 text-gray-700 border border-gray-400";
+  }
+};
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 const PackagingList = () => {
   const router = useRouter();
@@ -42,12 +62,12 @@ const PackagingList = () => {
   const { toast } = useToast();
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery]       = useState("");
   const [selectedStatuses, setSelectedStatuses] = useState<StatusType[]>([]);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [batches, setBatches] = useState<PackagingBatch[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [dropdownOpen, setDropdownOpen]     = useState(false);
+  const [batches, setBatches]               = useState<PackagingBatch[]>([]);
+  const [isLoading, setIsLoading]           = useState(true);
+  const [error, setError]                   = useState<string | null>(null);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -82,7 +102,6 @@ const PackagingList = () => {
     fetchBatches();
   }, [toast]);
 
-  // Toggle a status in/out of the selected list
   const toggleStatus = (status: StatusType) => {
     setSelectedStatuses((prev) =>
       prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
@@ -103,11 +122,8 @@ const PackagingList = () => {
     return matchesSearch && matchesStatus;
   });
 
-  const handlePackaging = (batchNumber: string) =>
-    router.push(`/packaging/${batchNumber}/entry`);
-
-  const handleViewSummary = (batchNumber: string) =>
-    router.push(`/packaging/${batchNumber}/summary`);
+  const handlePackaging    = (batchNumber: string) => router.push(`/packaging/${batchNumber}/entry`);
+  const handleViewSummary  = (batchNumber: string) => router.push(`/packaging/${batchNumber}/summary`);
 
   const getActionButton = (batch: PackagingBatch) => {
     if (batch.status === "Completed") {
@@ -132,6 +148,8 @@ const PackagingList = () => {
       </Button>
     );
   };
+
+  // ─── Loading / Error ──────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -162,6 +180,8 @@ const PackagingList = () => {
       </AppLayout>
     );
   }
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <AppLayout>
@@ -211,8 +231,8 @@ const PackagingList = () => {
                 {selectedStatuses.length === 0
                   ? "All Status"
                   : selectedStatuses.length === 1
-                  ? selectedStatuses[0]
-                  : `${selectedStatuses.length} selected`}
+                    ? selectedStatuses[0]
+                    : `${selectedStatuses.length} selected`}
               </span>
               <ChevronDown className={cn(
                 "h-4 w-4 shrink-0 opacity-50 transition-transform",
@@ -220,7 +240,6 @@ const PackagingList = () => {
               )} />
             </button>
 
-            {/* Dropdown panel */}
             {dropdownOpen && (
               <div className="absolute z-50 mt-1 w-full rounded-md border border-border bg-popover shadow-md">
                 <div className="p-1">
@@ -237,7 +256,6 @@ const PackagingList = () => {
                           isSelected && "bg-accent/50"
                         )}
                       >
-                        {/* Checkbox visual */}
                         <div className={cn(
                           "flex h-4 w-4 items-center justify-center rounded border",
                           isSelected
@@ -246,13 +264,19 @@ const PackagingList = () => {
                         )}>
                           {isSelected && <Check className="h-3 w-3" />}
                         </div>
+                        {/* Color dot */}
+                        <span className={cn(
+                          "inline-block h-2 w-2 rounded-full shrink-0",
+                          status === "Completed"     && "bg-green-500",
+                          status === "Partial"       && "bg-blue-500",
+                          status === "Semi Packaged" && "bg-orange-500",
+                          status === "Not Started"   && "bg-gray-400",
+                        )} />
                         <span>{status}</span>
                       </button>
                     );
                   })}
                 </div>
-
-                {/* Clear button */}
                 {selectedStatuses.length > 0 && (
                   <div className="border-t border-border p-1">
                     <button
@@ -275,8 +299,8 @@ const PackagingList = () => {
               {selectedStatuses.map((s) => (
                 <Badge
                   key={s}
-                  variant="secondary"
-                  className="cursor-pointer gap-1 pr-1"
+                  variant="outline"
+                  className={cn("cursor-pointer gap-1 pr-1", getExtendedStatusColor(s))}
                   onClick={() => toggleStatus(s)}
                 >
                   {s}
@@ -287,66 +311,8 @@ const PackagingList = () => {
           )}
         </div>
 
-        {/* Content */}
-        {isMobile ? (
-          <div className="space-y-3">
-            {filteredBatches.map((batch) => (
-              <Card key={batch.batchNumber}>
-                <CardContent className="p-4">
-                  <div className="flex justify-between mb-3">
-                    <div>
-                      <h3 className="font-semibold">{batch.productName}</h3>
-                      <p className="text-sm text-muted-foreground">{batch.batchNumber}</p>
-                    </div>
-                    <Badge className={getStatusColor(batch.status)}>{batch.status}</Badge>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2 mb-4 text-sm">
-                    <div className="bg-muted/50 rounded-lg p-2 text-center">
-                      <p className="text-xs text-muted-foreground">Produced</p>
-                      <p className="font-semibold">{batch.producedQuantity} kg</p>
-                    </div>
-                    <div className="bg-muted/50 rounded-lg p-2 text-center">
-                      <p className="text-xs text-muted-foreground">Packaged</p>
-                      <p className="font-semibold">{batch.alreadyPackaged} kg</p>
-                    </div>
-                    <div className="bg-primary/10 rounded-lg p-2 text-center">
-                      <p className="text-xs text-primary">Remaining</p>
-                      <p className="font-semibold text-primary">{batch.remainingQuantity} kg</p>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2">
-                    {getActionButton(batch)}
-                    {batch.status === "Partial" && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleViewSummary(batch.batchNumber)}
-                      >
-                        History
-                      </Button>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-            {filteredBatches.length === 0 && batches.length > 0 && (
-              <div className="text-center py-8 text-muted-foreground">
-                No batches match your filters
-              </div>
-            )}
-            {batches.length === 0 && !isLoading && (
-              <div className="text-center py-12">
-                <Package className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
-                <h3 className="text-lg font-medium">No packaging batches</h3>
-                <p className="text-muted-foreground">
-                  Create a production batch to get started with packaging
-                </p>
-              </div>
-            )}
-          </div>
-        ) : (
+        {/* ── Desktop table ── */}
+        {!isMobile && (
           <Card>
             <Table>
               <TableHeader>
@@ -371,18 +337,24 @@ const PackagingList = () => {
                       {batch.remainingQuantity.toFixed(2)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={getStatusColor(batch.status)}>{batch.status}</Badge>
+                      <Badge
+                        variant="outline"
+                        className={getExtendedStatusColor(batch.status)}
+                      >
+                        {batch.status}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
                         {getActionButton(batch)}
+
                       </div>
                     </TableCell>
                   </TableRow>
                 ))}
                 {filteredBatches.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                       {batches.length === 0
                         ? "No packaging batches available"
                         : "No batches match your filters"}
@@ -393,6 +365,85 @@ const PackagingList = () => {
             </Table>
           </Card>
         )}
+
+        {/* ── Mobile cards ── */}
+        {isMobile && (
+          <div className="space-y-3">
+            {filteredBatches.map((batch) => (
+              <Card key={batch.batchNumber}>
+                <CardContent className="p-4">
+                  <div className="flex justify-between mb-3">
+                    <div>
+                      <h3 className="font-semibold">{batch.productName}</h3>
+                      <p className="text-sm text-muted-foreground">{batch.batchNumber}</p>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className={getExtendedStatusColor(batch.status)}
+                    >
+                      {batch.status}
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mb-3 text-sm">
+                    <div className="bg-muted/50 rounded-lg p-2 text-center">
+                      <p className="text-xs text-muted-foreground">Produced</p>
+                      <p className="font-semibold">{batch.producedQuantity} kg</p>
+                    </div>
+                    <div className="bg-muted/50 rounded-lg p-2 text-center">
+                      <p className="text-xs text-muted-foreground">Packaged</p>
+                      <p className="font-semibold">{batch.alreadyPackaged} kg</p>
+                    </div>
+                    {batch.semiPackaged > 0 && (
+                      <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-2 text-center">
+                        <p className="text-xs text-orange-600 dark:text-orange-400">Semi-Packaged</p>
+                        <p className="font-semibold text-orange-700 dark:text-orange-300">
+                          {batch.semiPackaged.toFixed(3)} kg
+                        </p>
+                      </div>
+                    )}
+                    <div className={cn(
+                      "bg-primary/10 rounded-lg p-2 text-center",
+                      batch.semiPackaged > 0 ? "" : "col-span-1"
+                    )}>
+                      <p className="text-xs text-primary">Remaining</p>
+                      <p className="font-semibold text-primary">{batch.remainingQuantity} kg</p>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    {getActionButton(batch)}
+                    {(batch.status === "Partial" || batch.status === "Semi Packaged") && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleViewSummary(batch.batchNumber)}
+                      >
+                        History
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+
+            {filteredBatches.length === 0 && batches.length > 0 && (
+              <div className="text-center py-8 text-muted-foreground">
+                No batches match your filters
+              </div>
+            )}
+            {batches.length === 0 && !isLoading && (
+              <div className="text-center py-12">
+                <Package className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                <h3 className="text-lg font-medium">No packaging batches</h3>
+                <p className="text-muted-foreground">
+                  Create a production batch to get started with packaging
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
     </AppLayout>
   );
