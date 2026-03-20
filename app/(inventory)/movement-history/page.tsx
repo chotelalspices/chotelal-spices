@@ -4,12 +4,13 @@ import { useState, useEffect } from 'react';
 import {
   History,
   Check,
-  Filter,
   X,
   ChevronsUpDown,
   Loader2,
+  Download,
 } from 'lucide-react';
-
+import { useAuth } from '@/hooks/use-auth';
+import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { MovementCard } from '@/components/inventory/MovementCard';
 import { MovementTable } from '@/components/inventory/MovementTable';
@@ -28,14 +29,6 @@ import {
 } from '@/components/ui/select';
 
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet';
-
-import {
   Command,
   CommandEmpty,
   CommandGroup,
@@ -49,89 +42,91 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 
+const reasonLabels: Record<string, string> = {
+  purchase: 'Purchase',
+  wastage: 'Wastage',
+  damage: 'Damage',
+  correction: 'Correction',
+  production: 'Production',
+};
+
 export default function MovementHistory() {
+  // ── All hooks must come before any early return ──────────────────────────
+  const { isAdmin, isLoading } = useAuth();
+  const router = useRouter();
+
   const [materialFilter, setMaterialFilter] = useState<string>('all');
   const [reasonFilter, setReasonFilter] = useState<string>('all');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
-  const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // =============================
-  // Fetch Raw Materials
-  // =============================
+  // Redirect non-admins only AFTER auth has finished loading
+  useEffect(() => {
+    if (!isLoading && !isAdmin) {
+      router.replace('/inventory');
+    }
+  }, [isAdmin, isLoading, router]);
+
+  // Fetch raw materials
   useEffect(() => {
     const fetchRawMaterials = async () => {
       try {
-        const response = await fetch('/api/raw-materials');
-        if (!response.ok) {
-          throw new Error('Failed to fetch raw materials');
-        }
-        const data = await response.json();
-        setRawMaterials(data);
+        const response = await fetch('/api/inventory');
+        if (!response.ok) throw new Error('Failed to fetch raw materials');
+        setRawMaterials(await response.json());
       } catch (err) {
         setError(err instanceof Error ? err.message : 'An error occurred');
       }
     };
-
     fetchRawMaterials();
   }, []);
 
-  // =============================
-  // Fetch Stock Movements
-  // =============================
+  // Fetch stock movements
   useEffect(() => {
     const fetchStockMovements = async () => {
       try {
-        setLoading(true);
-
+        setDataLoading(true);
         const params = new URLSearchParams();
+        if (materialFilter !== 'all') params.append('materialId', materialFilter);
+        if (reasonFilter !== 'all')   params.append('reason', reasonFilter);
+        if (dateFrom)                 params.append('dateFrom', dateFrom);
+        if (dateTo)                   params.append('dateTo', dateTo);
 
-        if (materialFilter !== 'all') {
-          params.append('materialId', materialFilter);
-        }
-
-        if (reasonFilter !== 'all') {
-          params.append('reason', reasonFilter);
-        }
-
-        if (dateFrom) {
-          params.append('dateFrom', dateFrom);
-        }
-
-        if (dateTo) {
-          params.append('dateTo', dateTo);
-        }
-
-        const response = await fetch(
-          `/api/stock-movements?${params.toString()}`
-        );
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch stock movements');
-        }
-
-        const data = await response.json();
-        setStockMovements(data);
+        const response = await fetch(`/api/stock-movements?${params.toString()}`);
+        if (!response.ok) throw new Error('Failed to fetch stock movements');
+        setStockMovements(await response.json());
       } catch (err) {
         setError(err instanceof Error ? err.message : 'An error occurred');
       } finally {
-        setLoading(false);
+        setDataLoading(false);
       }
     };
-
     fetchStockMovements();
   }, [materialFilter, reasonFilter, dateFrom, dateTo]);
 
-  const hasActiveFilters =
-    materialFilter !== 'all' ||
-    reasonFilter !== 'all' ||
-    dateFrom ||
-    dateTo;
+  // ── Early returns AFTER all hooks ────────────────────────────────────────
+
+  // Show spinner while auth is still resolving
+  if (isLoading) {
+    return (
+      <AppLayout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </AppLayout>
+    );
+  }
+
+  // Block non-admins (redirect also fires via useEffect above)
+  if (!isAdmin) return null;
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const hasActiveFilters = materialFilter !== 'all' || reasonFilter !== 'all' || dateFrom || dateTo;
 
   const clearFilters = () => {
     setMaterialFilter('all');
@@ -140,11 +135,92 @@ export default function MovementHistory() {
     setDateTo('');
   };
 
-  const filteredMovements = stockMovements;
+  const handleDownloadPDF = () => {
+    const selectedMaterialName = materialFilter === 'all'
+      ? 'All Materials'
+      : rawMaterials.find(m => m.id === materialFilter)?.name || 'All Materials';
 
+    const rows = stockMovements.map((m, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${new Date(m.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+        <td>${m.rawMaterialName}</td>
+        <td>${m.action === 'add' ? 'Add' : 'Reduce'}</td>
+        <td class="${m.action === 'add' ? 'add' : 'reduce'}">${m.action === 'add' ? '+' : '-'}${Number(m.quantity).toFixed(2)}</td>
+        <td>${reasonLabels[m.reason] || m.reason}</td>
+        <td>${m.reference || '—'}</td>
+        <td>${m.performedBy || '—'}</td>
+      </tr>
+    `).join('');
+
+    const filterSummary = [
+      selectedMaterialName !== 'All Materials' ? `Material: ${selectedMaterialName}` : null,
+      reasonFilter !== 'all' ? `Reason: ${reasonLabels[reasonFilter] || reasonFilter}` : null,
+      dateFrom ? `From: ${dateFrom}` : null,
+      dateTo ? `To: ${dateTo}` : null,
+    ].filter(Boolean).join(' · ') || 'No filters applied';
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Stock Movement History</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { font-family: Arial, sans-serif; font-size: 12px; color: #111; padding: 24px; }
+          h1 { font-size: 20px; margin-bottom: 4px; }
+          .meta { font-size: 11px; color: #666; margin-bottom: 16px; }
+          table { width: 100%; border-collapse: collapse; }
+          th { background: #f3f4f6; text-align: left; padding: 8px 10px; font-size: 11px; border-bottom: 2px solid #e5e7eb; }
+          td { padding: 7px 10px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+          tr:nth-child(even) td { background: #f9fafb; }
+          .add { color: #16a34a; font-weight: 600; }
+          .reduce { color: #dc2626; font-weight: 600; }
+          @media print { body { padding: 0; } }
+        </style>
+      </head>
+      <body>
+        <h1>Stock Movement History</h1>
+        <p class="meta">
+          Generated: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          &nbsp;·&nbsp; ${stockMovements.length} records
+          &nbsp;·&nbsp; ${filterSummary}
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Date</th>
+              <th>Raw Material</th>
+              <th>Action</th>
+              <th>Quantity</th>
+              <th>Reason</th>
+              <th>Reference</th>
+              <th>Performed By</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </body>
+      </html>
+    `;
+
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => {
+      win.print();
+      win.close();
+    }, 300);
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <AppLayout>
-      {/* Page Header */}
+      {/* Header */}
       <div className="page-header">
         <div>
           <h1 className="page-title">Stock Movement History</h1>
@@ -152,50 +228,42 @@ export default function MovementHistory() {
             Complete audit trail of all stock changes
           </p>
         </div>
+        <Button
+          variant="outline"
+          onClick={handleDownloadPDF}
+          disabled={dataLoading || stockMovements.length === 0}
+          className="gap-2"
+        >
+          <Download className="h-4 w-4" />
+          Download PDF
+        </Button>
       </div>
 
-      {/* =============================
-          DESKTOP FILTERS
-      ============================= */}
+      {/* Desktop Filters */}
       <div className="hidden md:block industrial-card p-4 mb-6">
         <div className="flex flex-wrap items-end gap-4">
 
-          {/* Raw Material */}
+          {/* Raw Material — searchable */}
           <div className="space-y-2 min-w-[220px]">
-            <Label className="text-xs text-muted-foreground">
-              Raw Material
-            </Label>
-
+            <Label className="text-xs text-muted-foreground">Raw Material</Label>
             <Popover>
               <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="w-full justify-between"
-                >
+                <Button variant="outline" className="w-full justify-between">
                   {materialFilter === 'all'
                     ? 'All Materials'
-                    : rawMaterials.find(m => m.id === materialFilter)?.name ||
-                      'All Materials'}
+                    : rawMaterials.find(m => m.id === materialFilter)?.name || 'All Materials'}
                   <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
                 </Button>
               </PopoverTrigger>
-
               <PopoverContent className="w-[260px] p-0">
                 <Command>
                   <CommandInput placeholder="Search material..." />
                   <CommandEmpty>No material found.</CommandEmpty>
-
                   <CommandGroup>
-                    <CommandItem
-                      value="all"
-                      onSelect={() => setMaterialFilter('all')}
-                    >
+                    <CommandItem value="all" onSelect={() => setMaterialFilter('all')}>
                       All Materials
-                      {materialFilter === 'all' && (
-                        <Check className="ml-auto h-4 w-4" />
-                      )}
+                      {materialFilter === 'all' && <Check className="ml-auto h-4 w-4" />}
                     </CommandItem>
-
                     {rawMaterials.map(material => (
                       <CommandItem
                         key={material.id}
@@ -203,9 +271,7 @@ export default function MovementHistory() {
                         onSelect={() => setMaterialFilter(material.id)}
                       >
                         {material.name}
-                        {materialFilter === material.id && (
-                          <Check className="ml-auto h-4 w-4" />
-                        )}
+                        {materialFilter === material.id && <Check className="ml-auto h-4 w-4" />}
                       </CommandItem>
                     ))}
                   </CommandGroup>
@@ -214,20 +280,20 @@ export default function MovementHistory() {
             </Popover>
           </div>
 
-          {/* Reason Filter */}
+          {/* Reason */}
           <div className="space-y-2 min-w-[180px]">
-            <Label className="text-xs text-muted-foreground">
-              Movement Reason
-            </Label>
-
+            <Label className="text-xs text-muted-foreground">Movement Reason</Label>
             <Select value={reasonFilter} onValueChange={setReasonFilter}>
               <SelectTrigger>
                 <SelectValue placeholder="All Reasons" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Reasons</SelectItem>
-                <SelectItem value="production">Production</SelectItem>
                 <SelectItem value="purchase">Purchase</SelectItem>
+                <SelectItem value="production">Production</SelectItem>
+                <SelectItem value="wastage">Wastage</SelectItem>
+                <SelectItem value="damage">Damage</SelectItem>
+                <SelectItem value="correction">Correction</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -264,32 +330,23 @@ export default function MovementHistory() {
         </div>
       </div>
 
-      {/* =============================
-          RESULTS COUNT
-      ============================= */}
+      {/* Results count */}
       <div className="mb-4">
         <p className="text-sm text-muted-foreground">
-          Showing {filteredMovements.length} records
-          {hasActiveFilters && ' (filtered)'}
+          Showing {stockMovements.length} records{hasActiveFilters && ' (filtered)'}
         </p>
       </div>
 
-      {/* =============================
-          LOADING
-      ============================= */}
-      {loading && (
+      {/* Data loading */}
+      {dataLoading && (
         <div className="text-center py-12">
           <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">
-            Loading stock movements...
-          </p>
+          <p className="text-muted-foreground">Loading stock movements...</p>
         </div>
       )}
 
-      {/* =============================
-          ERROR
-      ============================= */}
-      {error && !loading && (
+      {/* Error */}
+      {error && !dataLoading && (
         <div className="text-center py-12">
           <History className="h-12 w-12 text-destructive mx-auto mb-4" />
           <p className="text-muted-foreground mb-4">{error}</p>
@@ -299,24 +356,21 @@ export default function MovementHistory() {
         </div>
       )}
 
-      {/* =============================
-          TABLE / CARDS
-      ============================= */}
-      {!loading && !error && filteredMovements.length > 0 && (
+      {/* Table */}
+      {!dataLoading && !error && stockMovements.length > 0 && (
         <>
           <div className="hidden md:block">
-            <MovementTable movements={filteredMovements} />
+            <MovementTable movements={stockMovements} />
           </div>
-
           <div className="md:hidden space-y-3">
-            {filteredMovements.map(movement => (
+            {stockMovements.map(movement => (
               <MovementCard key={movement.id} movement={movement} />
             ))}
           </div>
         </>
       )}
 
-      {!loading && !error && filteredMovements.length === 0 && (
+      {!dataLoading && !error && stockMovements.length === 0 && (
         <div className="text-center py-12">
           <History className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
           <p className="text-muted-foreground">No records found</p>

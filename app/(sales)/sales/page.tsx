@@ -38,6 +38,7 @@ import {
   Plus, Upload, Filter, TrendingUp, IndianRupee, Package,
   Pencil, Trash2, Loader2, User, CheckCircle2, ArrowUpRight,
   ArrowDownRight, ChevronDown, ChevronRight, X, Check, ChevronsUpDown,
+  Download,
 } from 'lucide-react';
 
 import { StatCard } from '@/components/inventory/StatCard';
@@ -71,6 +72,7 @@ function groupByClient(records: SalesRecord[]): ClientGroup[] {
     const key =
       record.voucherNo?.trim() ||
       `${(record.clientName || 'Unknown').trim()}__${record.saleDate}`;
+
     if (!map.has(key)) {
       map.set(key, {
         groupKey: key,
@@ -81,17 +83,26 @@ function groupByClient(records: SalesRecord[]): ClientGroup[] {
         records: [],
         groupTotal: 0,
         groupProfit: 0,
-        paymentStatus: record.paymentStatus ?? 'paid',
-        amountPaid: record.amountPaid,
-        amountDue: record.amountDue,
+        paymentStatus: 'paid',
+        amountPaid: 0,
+        amountDue: 0,
         paymentNote: record.paymentNote,
       });
     }
+
     const g = map.get(key)!;
     g.records.push(record);
     g.groupTotal  += record.totalAmount ?? 0;
     g.groupProfit += record.profit      ?? 0;
+    g.amountPaid  = (g.amountPaid ?? 0) + (record.amountPaid ?? record.totalAmount ?? 0);
+    g.amountDue   = (g.amountDue  ?? 0) + (record.amountDue  ?? 0);
+
+    // Aggregate payment status — worst status wins
+    const s = record.paymentStatus ?? 'paid';
+    if (s === 'unpaid') g.paymentStatus = 'unpaid';
+    else if (s === 'partial' && g.paymentStatus !== 'unpaid') g.paymentStatus = 'partial';
   });
+
   return Array.from(map.values());
 }
 
@@ -167,9 +178,9 @@ function ClientGroupRow({
     const paid = group.amountPaid ?? group.groupTotal;
     let cls = '';
     let label = '';
-    if (status === 'paid')        { cls = 'bg-green-100 text-green-800 border-green-300';    label = 'PAID'; }
-    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300';          label = 'UNPAID'; }
-    else                          { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
+    if (status === 'paid') { cls = 'bg-green-100 text-green-800 border-green-300'; label = 'PAID'; }
+    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300'; label = 'UNPAID'; }
+    else { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
     return (
       <Badge variant="outline" className={`${cls} text-xs cursor-pointer hover:opacity-80`}
         onClick={(e) => { e.stopPropagation(); onPaymentClick(group); }}>
@@ -320,16 +331,16 @@ export default function SalesSummary() {
   const [loading, setLoading] = useState(true);
 
   const [productFilter, setProductFilter] = useState('all');
-  const [clientFilter, setClientFilter]   = useState('all');
-  const [startDate, setStartDate]         = useState('');
-  const [endDate, setEndDate]             = useState('');
-  const [filterOpen, setFilterOpen]       = useState(false);
+  const [clientFilter, setClientFilter] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
 
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<ClientGroup | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'unpaid' | 'partial'>('paid');
-  const [amountPaid, setAmountPaid]       = useState('');
-  const [paymentNote, setPaymentNote]     = useState('');
+  const [amountPaid, setAmountPaid] = useState('');
+  const [paymentNote, setPaymentNote] = useState('');
   const [isSavingPayment, setIsSavingPayment] = useState(false);
 
   const fetchRecords = async () => {
@@ -358,12 +369,12 @@ export default function SalesSummary() {
   const filteredRecords = useMemo(() =>
     salesRecords.filter((r) => {
       if (productFilter !== 'all' && r.productName !== productFilter) return false;
-      if (clientFilter  !== 'all' && r.clientName?.trim() !== clientFilter) return false;
+      if (clientFilter !== 'all' && r.clientName?.trim() !== clientFilter) return false;
       if (startDate && new Date(r.saleDate) < new Date(startDate)) return false;
-      if (endDate   && new Date(r.saleDate) > new Date(endDate)) return false;
+      if (endDate && new Date(r.saleDate) > new Date(endDate)) return false;
       return true;
     }),
-  [salesRecords, productFilter, clientFilter, startDate, endDate]);
+    [salesRecords, productFilter, clientFilter, startDate, endDate]);
 
   const clientGroups = useMemo(() => groupByClient(filteredRecords), [filteredRecords]);
   const allRecords = useMemo(() => clientGroups.flatMap((g) => g.records), [clientGroups]);
@@ -402,26 +413,35 @@ export default function SalesSummary() {
     setPaymentNote('');
   };
 
+  // ── Payment save — split proportionally across records ───────────────────
   const savePaymentStatus = async () => {
     if (!selectedGroup) return;
     const parsedAmount = parseFloat(amountPaid);
     if (isNaN(parsedAmount) || parsedAmount < 0) { toast.error('Please enter a valid amount'); return; }
     if (parsedAmount > selectedGroup.groupTotal) { toast.error('Amount paid cannot exceed total amount'); return; }
+
     try {
       setIsSavingPayment(true);
       await Promise.all(
-        selectedGroup.records.map((record) =>
-          fetch(`/api/sales/records/${record.id}/payment`, {
+        selectedGroup.records.map((record) => {
+          // Each record gets a proportional share of the total payment
+          const proportion = selectedGroup.groupTotal > 0
+            ? record.totalAmount / selectedGroup.groupTotal
+            : 1 / selectedGroup.records.length;
+          const recordAmountPaid = parseFloat((parsedAmount * proportion).toFixed(2));
+          const recordAmountDue = parseFloat(Math.max(0, record.totalAmount - recordAmountPaid).toFixed(2));
+
+          return fetch(`/api/sales/records/${record.id}/payment`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               paymentStatus,
-              amountPaid: parsedAmount,
-              amountDue: selectedGroup.groupTotal - parsedAmount,
+              amountPaid: recordAmountPaid,
+              amountDue: recordAmountDue,
               paymentNote: paymentNote.trim() || null,
             }),
-          })
-        )
+          });
+        })
       );
       toast.success('Payment status updated');
       closePaymentModal();
@@ -439,30 +459,136 @@ export default function SalesSummary() {
     else if (paymentStatus === 'unpaid') setAmountPaid('0');
   }, [paymentStatus, selectedGroup]);
 
+  // ── PDF download ──────────────────────────────────────────────────────────
+  const handleDownloadPDF = () => {
+    const rows = clientGroups.map((group) => {
+      const productRows = group.records.map((r, idx) => `
+        <tr>
+          <td class="indent">${idx + 1}</td>
+          <td>${r.productName}</td>
+          <td class="right">${r.quantitySold}</td>
+          <td class="right">${formatCurrency(r.sellingPricePerUnit)}</td>
+          <td class="right">${r.discount > 0 ? r.discount + '%' : '—'}</td>
+          <td class="right">${formatCurrency(r.totalAmount)}</td>
+          <td class="right">${formatCurrency((r.productionCostPerUnit ?? 0) * r.quantitySold)}</td>
+          <td class="right ${r.profit >= 0 ? 'profit' : 'loss'}">${formatCurrency(r.profit)}</td>
+        </tr>
+      `).join('');
+
+      const payStatus = group.paymentStatus || 'paid';
+      const payClass = payStatus === 'paid' ? 'paid' : payStatus === 'unpaid' ? 'unpaid' : 'partial';
+      const payLabel = payStatus === 'paid' ? 'PAID' : payStatus === 'unpaid' ? 'UNPAID' : `PARTIAL (${formatCurrency(group.amountPaid ?? 0)})`;
+
+      return `
+        <tr class="group-header">
+          <td colspan="8">
+            <div class="group-row">
+              <div>
+                <strong>${group.clientName}</strong>
+                <span class="meta">${formatSaleDate(group.saleDate)}${group.voucherType ? ' · ' + group.voucherType : ''}${group.voucherNo ? ' · ' + group.voucherNo : ''}</span>
+              </div>
+              <div class="group-right">
+                <span class="badge ${payClass}">${payLabel}</span>
+                <strong>${formatCurrency(group.groupTotal)}</strong>
+              </div>
+            </div>
+          </td>
+        </tr>
+        ${productRows}
+        <tr class="subtotal">
+          <td colspan="5" class="indent-label">${group.records.length} item${group.records.length !== 1 ? 's' : ''}</td>
+          <td class="right"><strong>${formatCurrency(group.groupTotal)}</strong></td>
+          <td class="right muted">${formatCurrency(group.records.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}</td>
+          <td class="right ${group.groupProfit >= 0 ? 'profit' : 'loss'}">${formatCurrency(group.groupProfit)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const html = `
+      <!DOCTYPE html><html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Sales Records</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { font-family: Arial, sans-serif; font-size: 11px; color: #111; padding: 20px; }
+          h1 { font-size: 18px; margin-bottom: 4px; }
+          .meta-line { font-size: 11px; color: #666; margin-bottom: 16px; }
+          table { width: 100%; border-collapse: collapse; }
+          th { background: #f3f4f6; text-align: left; padding: 7px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #e5e7eb; }
+          th.right, td.right { text-align: right; }
+          td { padding: 6px 8px; border-bottom: 1px solid #f0f0f0; }
+          .group-header td { background: #f8f6f2; border-top: 2px solid #d4c5a9; padding: 8px; }
+          .group-row { display: flex; justify-content: space-between; align-items: center; }
+          .group-right { display: flex; align-items: center; gap: 12px; }
+          .meta { font-size: 10px; color: #888; margin-left: 8px; }
+          .indent { padding-left: 24px; color: #999; }
+          .indent-label { padding-left: 24px; color: #888; font-size: 10px; }
+          .subtotal td { background: #f9fafb; }
+          .badge { font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 600; }
+          .paid { background: #dcfce7; color: #166534; }
+          .unpaid { background: #fee2e2; color: #991b1b; }
+          .partial { background: #ffedd5; color: #9a3412; }
+          .profit { color: #16a34a; }
+          .loss { color: #dc2626; }
+          .muted { color: #888; }
+          .grand { background: #f3f4f6; font-weight: 700; border-top: 2px solid #ccc; }
+          @media print { body { padding: 0; } }
+        </style>
+      </head>
+      <body>
+        <h1>Sales Records</h1>
+        <p class="meta-line">
+          Generated: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+          &nbsp;·&nbsp; ${clientGroups.length} clients · ${allRecords.length} records
+          ${hasActiveFilters ? '&nbsp;·&nbsp; (filtered)' : ''}
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Product</th>
+              <th class="right">Packets</th>
+              <th class="right">Price/Pkt</th>
+              <th class="right">Discount</th>
+              <th class="right">Final Amt</th>
+              <th class="right">Prod. Cost</th>
+              <th class="right">Profit/Loss</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+            <tr class="grand">
+              <td colspan="5">Grand Total — ${clientGroups.length} client${clientGroups.length !== 1 ? 's' : ''} · ${allRecords.length} records</td>
+              <td class="right">${formatCurrency(summary.totalRevenue)}</td>
+              <td class="right muted">${formatCurrency(allRecords.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}</td>
+              <td class="right ${summary.totalProfit >= 0 ? 'profit' : 'loss'}">${formatCurrency(summary.totalProfit)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `;
+
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); win.close(); }, 300);
+  };
+
   const totalColSpan = 7 + (SHOW_PROFIT_TO_STAFF ? 1 : 0) + (isAdmin ? 1 : 0);
 
-  // Mobile filter content — uses same searchable dropdowns
   const FilterContent = () => (
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Client</Label>
-        <SearchableFilter
-          label="Client"
-          value={clientFilter}
-          onChange={setClientFilter}
-          options={uniqueClients}
-          placeholder="All Clients"
-        />
+        <SearchableFilter label="Client" value={clientFilter} onChange={setClientFilter} options={uniqueClients} placeholder="All Clients" />
       </div>
       <div className="space-y-2">
         <Label>Product</Label>
-        <SearchableFilter
-          label="Product"
-          value={productFilter}
-          onChange={setProductFilter}
-          options={uniqueProducts}
-          placeholder="All Products"
-        />
+        <SearchableFilter label="Product" value={productFilter} onChange={setProductFilter} options={uniqueProducts} placeholder="All Products" />
       </div>
       <div className="space-y-2">
         <Label>Start Date</Label>
@@ -489,6 +615,9 @@ export default function SalesSummary() {
             <p className="text-sm text-muted-foreground">View and analyze sales records</p>
           </div>
           <div className="flex gap-2">
+            <Button variant="outline" onClick={handleDownloadPDF} disabled={loading || allRecords.length === 0} className="gap-2">
+              <Download className="h-4 w-4" />Download PDF
+            </Button>
             <Button variant="outline" onClick={() => router.push('/sales/upload')}>
               <Upload className="h-4 w-4 mr-2" />Upload
             </Button>
@@ -512,38 +641,26 @@ export default function SalesSummary() {
           </div>
         ) : (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard title="Total Sales"   value={summary.salesCount.toString()}       icon={Package} />
-            <StatCard title="Revenue"       value={formatCurrency(summary.totalRevenue)} icon={IndianRupee} />
-            <StatCard title="Qty Sold"      value={`${summary.totalQuantity} packets`}   icon={TrendingUp} />
+            <StatCard title="Total Sales" value={summary.salesCount.toString()} icon={Package} />
+            <StatCard title="Revenue" value={formatCurrency(summary.totalRevenue)} icon={IndianRupee} />
+            <StatCard title="Qty Sold" value={`${summary.totalQuantity} packets`} icon={TrendingUp} />
             {SHOW_PROFIT_TO_STAFF && (
               <StatCard title="Profit" value={formatCurrency(summary.totalProfit)} icon={TrendingUp} />
             )}
           </div>
         )}
 
-        {/* Desktop filter bar — searchable dropdowns, no text inputs */}
+        {/* Desktop filter bar */}
         <Card className="hidden md:block">
           <CardContent className="py-4">
             <div className="flex items-end gap-3 flex-wrap">
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Client</Label>
-                <SearchableFilter
-                  label="Client"
-                  value={clientFilter}
-                  onChange={setClientFilter}
-                  options={uniqueClients}
-                  placeholder="All Clients"
-                />
+                <SearchableFilter label="Client" value={clientFilter} onChange={setClientFilter} options={uniqueClients} placeholder="All Clients" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Product</Label>
-                <SearchableFilter
-                  label="Product"
-                  value={productFilter}
-                  onChange={setProductFilter}
-                  options={uniqueProducts}
-                  placeholder="All Products"
-                />
+                <SearchableFilter label="Product" value={productFilter} onChange={setProductFilter} options={uniqueProducts} placeholder="All Products" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Start</Label>
@@ -674,7 +791,7 @@ export default function SalesSummary() {
           )}
         </div>
 
-        {/* Payment modal — GROUP level */}
+        {/* Payment modal */}
         <Dialog open={paymentModalOpen} onOpenChange={setPaymentModalOpen}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
@@ -753,9 +870,9 @@ function MobileClientCard({
     const paid = group.amountPaid ?? group.groupTotal;
     let cls = '';
     let label = '';
-    if (status === 'paid')        { cls = 'bg-green-100 text-green-800 border-green-300';    label = 'PAID'; }
-    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300';          label = 'UNPAID'; }
-    else                          { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
+    if (status === 'paid') { cls = 'bg-green-100 text-green-800 border-green-300'; label = 'PAID'; }
+    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300'; label = 'UNPAID'; }
+    else { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
     return (
       <Badge variant="outline" className={`${cls} text-xs cursor-pointer hover:opacity-80`}
         onClick={(e) => { e.stopPropagation(); onPaymentClick(group); }}>

@@ -76,11 +76,11 @@ export function MaterialTable({ materials }: MaterialTableProps) {
                       stockStatus === 'normal' && 'text-foreground'
                     )}
                   >
-                    {parseFloat(formatQuantity(material.availableStock, material.unit)).toFixed(2)}
+                    {Number(material.availableStock).toLocaleString('en-IN')}
                   </span>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
-                  {formatQuantity(material.minimumStock, material.unit)}
+                  {Number(material.minimumStock).toLocaleString('en-IN')} {material.unit}
                 </TableCell>
                 <TableCell>
                   <span className={badge.className}>{badge.label}</span>

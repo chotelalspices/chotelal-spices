@@ -405,15 +405,8 @@ export default function CreateProductPage() {
                           </PopoverTrigger>
                           <PopoverContent className="w-full p-0" align="start">
                             <Command>
-                              <CommandInput placeholder="Search labels..." />
-                              <CommandEmpty>
-                                {inventoryLabels.length === 0
-                                  ? 'No active labels in inventory.'
-                                  : 'No label found.'}
-                              </CommandEmpty>
-                              <CommandGroup>
+                              <CommandGroup className="max-h-[220px] overflow-y-auto">
                                 {inventoryLabels.map((invLabel) => {
-                                  // Prevent selecting the same label twice
                                   const alreadyUsed = formData.labels.some(
                                     (l) => l.type === invLabel.name && l.id !== label.id
                                   );
@@ -441,6 +434,14 @@ export default function CreateProductPage() {
                                   );
                                 })}
                               </CommandGroup>
+                              <CommandEmpty>
+                                {inventoryLabels.length === 0
+                                  ? 'No active labels in inventory.'
+                                  : 'No label found.'}
+                              </CommandEmpty>
+                              <div className="border-t p-2">
+                                <CommandInput placeholder="Search labels..." />
+                              </div>
                             </Command>
                           </PopoverContent>
                         </Popover>

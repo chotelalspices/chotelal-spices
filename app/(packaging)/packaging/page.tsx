@@ -42,15 +42,19 @@ type StatusType = typeof ALL_STATUSES[number];
 const getExtendedStatusColor = (status: string): string => {
   switch (status) {
     case "Completed":
-      return "bg-green-100 text-white-800 border border-green-400 dark:bg-green-900/30 dark:text-white-300";
+      return "bg-green-50 text-white-700 border border-green-200 dark:bg-green-900/20 dark:text-white-300 dark:border-green-800";
+
     case "Partial":
-      return "bg-blue-100 text-blue-800 border border-blue-400 dark:bg-blue-900/30 dark:text-blue-300";
+      return "bg-blue-50 text-white-700 border border-blue-200 dark:bg-blue-900/20 dark:text-white-300 dark:border-blue-800";
+
     case "Semi Packaged":
-      return "bg-orange-500 text-white border border-orange-600 dark:bg-orange-600 dark:text-white";
+      return "bg-amber-50 text-white-700 border border-amber-200 dark:bg-amber-900/20 dark:text-white-300 dark:border-amber-800";
+
     case "Not Started":
-      return "bg-gray-100 text-gray-700 border border-gray-400 dark:bg-gray-800 dark:text-gray-300";
+      return "bg-gray-50 text-white-600 border border-gray-200 dark:bg-gray-800/40 dark:text-white-300 dark:border-gray-700";
+
     default:
-      return "bg-gray-100 text-gray-700 border border-gray-400";
+      return "bg-gray-50 text-gray-600 border border-gray-200";
   }
 };
 
@@ -267,9 +271,9 @@ const PackagingList = () => {
                         {/* Color dot */}
                         <span className={cn(
                           "inline-block h-2 w-2 rounded-full shrink-0",
-                          status === "Completed"     && "bg-green-500",
+                          status === "Completed"     && "bg-green-300",
                           status === "Partial"       && "bg-blue-500",
-                          status === "Semi Packaged" && "bg-orange-500",
+                          status === "Semi Packaged" && "bg-amber-300",
                           status === "Not Started"   && "bg-gray-400",
                         )} />
                         <span>{status}</span>
