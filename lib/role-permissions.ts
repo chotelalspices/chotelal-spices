@@ -5,8 +5,9 @@ export type UserRole = 'admin' | 'production' | 'packaging' | 'sales' | 'researc
  * This allows us to control Labels Inventory separately
  */
 export type Module =
+  | 'dashboard'     // ← add this
   | 'inventory'
-  | 'labels'        // ✅ NEW MODULE (Admin Only)
+  | 'labels'
   | 'formulations'
   | 'production'
   | 'packaging'
@@ -33,8 +34,9 @@ export type ProductPermission =
  */
 export const ROLE_PERMISSIONS: Record<UserRole, Module[]> = {
   admin: [
+    'dashboard',    // ← only admin gets this
     'inventory',
-    'labels',        // ✅ ONLY ADMIN HAS THIS
+    'labels',
     'formulations',
     'production',
     'packaging',

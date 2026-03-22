@@ -969,8 +969,8 @@ export default function PackagingEntry() {
                               {locked
                                 ? "Must semi-package first — toggle ON here to convert when ready"
                                 : isSemiMode
-                                  ? <span>Semi-packaging mode <span className="text-xs text-orange-600">(toggle OFF to convert to fully packaged)</span></span>
-                                  : <span className="font-medium text-primary">Converting to fully packaged <span className="text-xs text-muted-foreground">(toggle ON to go back to semi mode)</span></span>}
+                                  ? <span>Converting to fully packaged <span className="text-xs text-orange-600">(toggle OFF to convert to fully packaged)</span></span>
+                                  : <span className="font-medium text-primary">Semi-packaging mode <span className="text-xs text-muted-foreground">(toggle ON to go back to semi mode)</span></span>}
                             </Label>
 
                             {/* ── Convert Now button — only shown when in semi mode with packets entered ── */}
