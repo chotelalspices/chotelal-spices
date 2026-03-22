@@ -142,6 +142,7 @@ export interface RecentPackagingSession {
 
 export interface RecentSale {
   productName: string;
+  clientName: string | null;
   quantity: number;
   totalAmount: number;
   date: string;
@@ -185,6 +186,7 @@ export const getRecentSales = (limit: number = 5): RecentSale[] => {
     .sort((a, b) => new Date(b.saleDate).getTime() - new Date(a.saleDate).getTime())
     .slice(0, limit)
     .map(s => ({
+      clientName: s.clientName ?? null,
       productName: s.productName,
       quantity: s.quantitySold,
       totalAmount: s.totalAmount,

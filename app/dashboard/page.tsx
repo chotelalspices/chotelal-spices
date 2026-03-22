@@ -56,12 +56,13 @@ interface DashboardData {
   }>;
   recentSales: Array<{
     productName: string;
+    clientName: string | null;
     quantity: number;
     totalAmount: number;
     date: string;
   }>;
   materialsCount: number;
-  totalStock: number;   
+  rawInventoryValue: number;
   labelInventoryValue: number;
 }
 
@@ -229,9 +230,9 @@ export default function DashboardPage() {
             href="/sales"
           />
           <MetricCard
-            title="Total Stock"
-            value={`${dashboardData.totalStock?.toLocaleString('en-IN') ?? 0} kg`}
-            subtitle="Across all materials"
+            title="Raw Inventory Value"
+            value={formatCurrency(dashboardData.rawInventoryValue ?? 0)}
+            subtitle="Cost × stock across all materials"
             icon={Boxes}
             variant="success"
             href="/inventory"

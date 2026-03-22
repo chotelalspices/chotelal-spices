@@ -1,26 +1,45 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 
 interface AuthGuardProps {
   children: React.ReactNode;
 }
 
+const ROLE_HOME: Record<string, string> = {
+  admin:      '/dashboard',
+  production: '/production',
+  packaging:  '/packaging',
+  sales:      '/sales',
+  research:   '/research',
+  labels:     '/labels/inventory',
+};
+
 export function AuthGuard({ children }: AuthGuardProps) {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
-    if (status === 'loading') return; // Still loading session
+    if (status === 'loading') return;
 
     // If not authenticated, redirect to login
     if (!session) {
       router.push('/');
       return;
     }
-  }, [session, status, router]);
+
+    const roles: string[] = (session.user as any)?.roles || [];
+    const isAdmin = roles.includes('admin');
+
+    // Non-admin users landing on / or /dashboard get redirected to their role's home
+    if (!isAdmin && (pathname === '/' || pathname === '/dashboard')) {
+      const homeRoute = roles.map((r) => ROLE_HOME[r]).find(Boolean) || '/dashboard';
+      router.replace(homeRoute);
+    }
+  }, [session, status, router, pathname]);
 
   // Show loading spinner while checking authentication
   if (status === 'loading') {

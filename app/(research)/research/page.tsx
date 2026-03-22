@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   FlaskConical, Plus, Search, Filter, Clock,
-  CheckCircle, XCircle, Edit, Package2,
+  CheckCircle, XCircle, Edit, Package2, Trash2, Loader2,
 } from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -18,6 +18,10 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/data/sampleData';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -32,29 +36,31 @@ export default function ResearchList() {
   const [statusFilter, setStatusFilter] = useState<string>('pending');
   const [researchFormulations, setResearchFormulations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const { toast } = useToast();
   const [checkingDuplicates, setCheckingDuplicates] = useState<string | null>(null);
   const [duplicateFormulations, setDuplicateFormulations] = useState<Record<string, any>>({});
 
   const isAdmin = user?.roles?.includes('admin') || false;
+  const isResearcher = user?.roles?.includes('research') || false;
+  const currentUserName = user?.fullName || '';
 
-  useEffect(() => {
-    const fetchResearchFormulations = async () => {
-      try {
-        const response = await fetch('/api/research');
-        if (response.ok) {
-          setResearchFormulations(await response.json());
-        } else {
-          throw new Error('Failed to fetch research formulations');
-        }
-      } catch (error) {
-        toast({ title: 'Error', description: 'Failed to load research formulations', variant: 'destructive' });
-      } finally {
-        setLoading(false);
+  const fetchResearchFormulations = async () => {
+    try {
+      const response = await fetch('/api/research');
+      if (response.ok) {
+        setResearchFormulations(await response.json());
+      } else {
+        throw new Error('Failed to fetch research formulations');
       }
-    };
-    fetchResearchFormulations();
-  }, []);
+    } catch (error) {
+      toast({ title: 'Error', description: 'Failed to load research formulations', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchResearchFormulations(); }, []);
 
   const filteredFormulations = researchFormulations.filter((research) => {
     const matchesSearch =
@@ -94,6 +100,39 @@ export default function ResearchList() {
     }
   };
 
+  // ── Visibility rules ─────────────────────────────────────────────────────
+  // Edit: shown to researcher only (not admin), on their own pending/rejected items
+  const canEdit = (research: any) =>
+    !isAdmin &&
+    isResearcher &&
+    research.researcher === currentUserName &&
+    research.status !== 'approved';
+
+  // Delete: admin can delete any; researcher can delete their own pending/rejected
+  const canDelete = (research: any) => {
+    if (isAdmin) return true;
+    if (isResearcher && research.researcher === currentUserName && research.status !== 'approved') return true;
+    return false;
+  };
+
+  // ── Delete handler ────────────────────────────────────────────────────────
+  const handleDelete = async (id: string, name: string) => {
+    try {
+      setDeletingId(id);
+      const res = await fetch(`/api/research/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to delete');
+      }
+      toast({ title: 'Deleted', description: `"${name}" has been deleted.` });
+      setResearchFormulations((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      toast({ title: 'Error', description: err instanceof Error ? err.message : 'Failed to delete', variant: 'destructive' });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const checkForExistingFormulation = async (formulationName: string, researchId: string) => {
     setCheckingDuplicates(researchId);
     try {
@@ -117,19 +156,17 @@ export default function ResearchList() {
         body: JSON.stringify({ action: 'approve' }),
       });
       if (response.ok) {
-        const isDuplicate = duplicateFormulations[id];
         toast({
           title: 'Formulation Approved',
-          description: isDuplicate
-            ? `"${tempName}" has been approved and replaced the existing formulation.`
-            : `"${tempName}" has been approved and added to main formulation list.`,
+          description: duplicateFormulations[id]
+            ? `"${tempName}" approved and replaced the existing formulation.`
+            : `"${tempName}" approved and added to formulation list.`,
         });
-        const updatedResponse = await fetch('/api/research');
-        if (updatedResponse.ok) setResearchFormulations(await updatedResponse.json());
+        await fetchResearchFormulations();
       } else {
-        throw new Error('Failed to approve formulation');
+        throw new Error('Failed to approve');
       }
-    } catch (error) {
+    } catch {
       toast({ title: 'Error', description: 'Failed to approve formulation', variant: 'destructive' });
     }
   };
@@ -144,20 +181,95 @@ export default function ResearchList() {
         body: JSON.stringify({ action: 'reject', rejectionReason: reason.trim() }),
       });
       if (response.ok) {
-        toast({ title: 'Formulation Rejected', description: `"${tempName}" has been rejected with feedback.`, variant: 'destructive' });
-        const updatedResponse = await fetch('/api/research');
-        if (updatedResponse.ok) setResearchFormulations(await updatedResponse.json());
+        toast({ title: 'Formulation Rejected', description: `"${tempName}" rejected with feedback.`, variant: 'destructive' });
+        await fetchResearchFormulations();
       } else {
-        throw new Error('Failed to reject formulation');
+        throw new Error('Failed to reject');
       }
-    } catch (error) {
+    } catch {
       toast({ title: 'Error', description: 'Failed to reject formulation', variant: 'destructive' });
     }
   };
 
+  // ── Shared action buttons ─────────────────────────────────────────────────
+  const ActionButtons = ({ research }: { research: any }) => (
+    <div className="flex gap-2 flex-wrap items-center">
+      {/* View — always shown */}
+      <Button variant="outline" size="sm" onClick={() => router.push(`/research/${research.id}`)}>
+        View
+      </Button>
+
+      {/* Edit — researcher only, not admin, only on own pending/rejected */}
+      {canEdit(research) && (
+        <Button size="sm" variant="outline" onClick={() => router.push(`/research/${research.id}/edit`)}>
+          <Edit className="h-3.5 w-3.5 mr-1" />Edit
+        </Button>
+      )}
+
+      {/* Admin approve/reject — pending only */}
+      {isAdmin && research.status === 'pending' && (
+        <>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (!duplicateFormulations[research.id] && checkingDuplicates !== research.id) {
+                checkForExistingFormulation(research.tempName, research.id);
+              }
+              handleQuickApprove(research.id, research.tempName);
+            }}
+            className="bg-green-600 hover:bg-green-700"
+            disabled={checkingDuplicates === research.id}
+          >
+            <CheckCircle className="h-3.5 w-3.5 mr-1" />
+            {checkingDuplicates === research.id ? 'Checking...' : duplicateFormulations[research.id] ? 'Replace & Approve' : 'Approve'}
+          </Button>
+          <Button variant="destructive" size="sm" onClick={() => handleQuickReject(research.id, research.tempName)}>
+            <XCircle className="h-3.5 w-3.5 mr-1" />Reject
+          </Button>
+        </>
+      )}
+
+      {/* Delete — admin always; researcher on own non-approved */}
+      {canDelete(research) && (
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              disabled={deletingId === research.id}
+            >
+              {deletingId === research.id
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Trash2 className="h-3.5 w-3.5" />}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Research?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Delete <strong>"{research.tempName}"</strong>? This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => handleDelete(research.id, research.tempName)}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+    </div>
+  );
+
   return (
     <AppLayout>
       <div className="space-y-6">
+
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
@@ -170,68 +282,40 @@ export default function ResearchList() {
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
-            {/* ── Extended Inventory button ── */}
-            <Button
-              variant="outline"
-              onClick={() => router.push('/research/extended-inventory')}
-              className="gap-2"
-            >
-              <Package2 className="h-4 w-4" />
-              Extended Inventory
+            <Button variant="outline" onClick={() => router.push('/research/extended-inventory')} className="gap-2">
+              <Package2 className="h-4 w-4" />Extended Inventory
             </Button>
             <Button onClick={() => router.push('/research/new')} className="gap-2">
-              <Plus className="h-4 w-4" />
-              New Research
+              <Plus className="h-4 w-4" />New Research
             </Button>
           </div>
         </div>
 
         {/* Stats */}
         <div className="grid grid-cols-3 gap-3 md:gap-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-amber-600" />
-                <p className="text-sm text-muted-foreground">Pending</p>
-              </div>
-              <p className="text-2xl font-bold mt-1">{pendingCount}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-4 w-4 text-green-600" />
-                <p className="text-sm text-muted-foreground">Approved</p>
-              </div>
-              <p className="text-2xl font-bold mt-1">{approvedCount}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <XCircle className="h-4 w-4 text-red-600" />
-                <p className="text-sm text-muted-foreground">Rejected</p>
-              </div>
-              <p className="text-2xl font-bold mt-1">{rejectedCount}</p>
-            </CardContent>
-          </Card>
+          <Card><CardContent className="p-4">
+            <div className="flex items-center gap-2"><Clock className="h-4 w-4 text-amber-600" /><p className="text-sm text-muted-foreground">Pending</p></div>
+            <p className="text-2xl font-bold mt-1">{pendingCount}</p>
+          </CardContent></Card>
+          <Card><CardContent className="p-4">
+            <div className="flex items-center gap-2"><CheckCircle className="h-4 w-4 text-green-600" /><p className="text-sm text-muted-foreground">Approved</p></div>
+            <p className="text-2xl font-bold mt-1">{approvedCount}</p>
+          </CardContent></Card>
+          <Card><CardContent className="p-4">
+            <div className="flex items-center gap-2"><XCircle className="h-4 w-4 text-red-600" /><p className="text-sm text-muted-foreground">Rejected</p></div>
+            <p className="text-2xl font-bold mt-1">{rejectedCount}</p>
+          </CardContent></Card>
         </div>
 
         {/* Filters */}
         <div className="flex flex-col md:flex-row gap-3">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search by name or researcher..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9"
-            />
+            <Input placeholder="Search by name or researcher..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9" />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-full md:w-40">
-              <Filter className="h-4 w-4 mr-2" />
-              <SelectValue placeholder="Status" />
+              <Filter className="h-4 w-4 mr-2" /><SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Status</SelectItem>
@@ -263,47 +347,10 @@ export default function ResearchList() {
                     </Badge>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-sm mb-3">
-                    <div>
-                      <p className="text-muted-foreground">Date</p>
-                      <p className="font-medium">{formatDate(research.researchDate)}</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Base Qty</p>
-                      <p className="font-medium">{research.baseQuantity} {research.baseUnit}</p>
-                    </div>
+                    <div><p className="text-muted-foreground">Date</p><p className="font-medium">{formatDate(research.researchDate)}</p></div>
+                    <div><p className="text-muted-foreground">Base Qty</p><p className="font-medium">{research.baseQuantity} {research.baseUnit}</p></div>
                   </div>
-                  <div className="flex gap-2 flex-wrap">
-                    <Button variant="outline" size="sm" onClick={() => router.push(`/research/${research.id}`)}>View</Button>
-                    {isAdmin && research.status === 'pending' && (
-                      <>
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            if (!duplicateFormulations[research.id] && checkingDuplicates !== research.id) {
-                              checkForExistingFormulation(research.tempName, research.id);
-                            }
-                            handleQuickApprove(research.id, research.tempName);
-                          }}
-                          className="bg-green-600 hover:bg-green-700"
-                          disabled={checkingDuplicates === research.id}
-                        >
-                          <CheckCircle className="h-4 w-4 mr-1" />
-                          {checkingDuplicates === research.id ? 'Checking...' : duplicateFormulations[research.id] ? 'Replace & Approve' : 'Approve'}
-                        </Button>
-                        {duplicateFormulations[research.id] && (
-                          <p className="text-xs text-amber-600 mt-1">Will replace existing formulation</p>
-                        )}
-                        <Button variant="destructive" size="sm" onClick={() => handleQuickReject(research.id, research.tempName)}>
-                          <XCircle className="h-4 w-4 mr-1" />Reject
-                        </Button>
-                      </>
-                    )}
-                    {research.status === 'rejected' && (
-                      <Button size="sm" onClick={() => router.push(`/research/${research.id}/edit`)}>
-                        <Edit className="h-4 w-4 mr-1" />Edit & Resubmit
-                      </Button>
-                    )}
-                  </div>
+                  <ActionButtons research={research} />
                 </CardContent>
               </Card>
             ))}
@@ -334,42 +381,9 @@ export default function ResearchList() {
                         {getStatusIcon(research.status)}{getStatusLabel(research.status)}
                       </Badge>
                     </TableCell>
-                    <TableCell>
-                      {research.reviewedBy?.fullName || <span className="text-muted-foreground">—</span>}
-                    </TableCell>
+                    <TableCell>{research.reviewedBy?.fullName || <span className="text-muted-foreground">—</span>}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2 flex-wrap">
-                        <Button variant="outline" size="sm" onClick={() => router.push(`/research/${research.id}`)}>View</Button>
-                        {isAdmin && research.status === 'pending' && (
-                          <>
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                if (!duplicateFormulations[research.id] && checkingDuplicates !== research.id) {
-                                  checkForExistingFormulation(research.tempName, research.id);
-                                }
-                                handleQuickApprove(research.id, research.tempName);
-                              }}
-                              className="bg-green-600 hover:bg-green-700"
-                              disabled={checkingDuplicates === research.id}
-                            >
-                              <CheckCircle className="h-4 w-4 mr-1" />
-                              {checkingDuplicates === research.id ? 'Checking...' : duplicateFormulations[research.id] ? 'Replace & Approve' : 'Approve'}
-                            </Button>
-                            {duplicateFormulations[research.id] && (
-                              <div className="text-xs text-amber-600 mt-1 whitespace-nowrap">Will replace existing</div>
-                            )}
-                            <Button variant="destructive" size="sm" onClick={() => handleQuickReject(research.id, research.tempName)}>
-                              <XCircle className="h-4 w-4 mr-1" />Reject
-                            </Button>
-                          </>
-                        )}
-                        {research.status === 'rejected' && (
-                          <Button size="sm" onClick={() => router.push(`/research/${research.id}/edit`)}>
-                            <Edit className="h-4 w-4 mr-1" />Edit
-                          </Button>
-                        )}
-                      </div>
+                      <ActionButtons research={research} />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -391,11 +405,7 @@ export default function ResearchList() {
         )}
 
         {isMobile && (
-          <Button
-            onClick={() => router.push('/research/new')}
-            className="fixed bottom-20 right-4 h-14 w-14 rounded-full shadow-lg"
-            size="icon"
-          >
+          <Button onClick={() => router.push('/research/new')} className="fixed bottom-20 right-4 h-14 w-14 rounded-full shadow-lg" size="icon">
             <Plus className="h-6 w-6" />
           </Button>
         )}

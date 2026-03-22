@@ -47,7 +47,6 @@ export const ROLE_PERMISSIONS: Record<UserRole, Module[]> = {
 
   production: [
     'inventory',
-    'formulations',
     'production'
   ],
 

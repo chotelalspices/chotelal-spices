@@ -1,15 +1,15 @@
 'use client';
 
-import { 
-  Factory, 
-  Package, 
-  ShoppingCart, 
-  ChevronRight 
+import {
+  Factory,
+  Package,
+  ShoppingCart,
+  ChevronRight
 } from 'lucide-react';
 import { cn } from '@/libs/utils';
-import { 
-  RecentProductionBatch, 
-  RecentPackagingSession, 
+import {
+  RecentProductionBatch,
+  RecentPackagingSession,
   RecentSale,
   SHOW_PROFIT_TO_STAFF
 } from '@/data/dashboardData';
@@ -26,11 +26,11 @@ interface RecentActivityProps {
   className?: string;
 }
 
-export function RecentActivity({ 
-  productionBatches, 
-  packagingSessions, 
+export function RecentActivity({
+  productionBatches,
+  packagingSessions,
   sales,
-  className 
+  className
 }: RecentActivityProps) {
   const router = useRouter();
   const showProfit = SHOW_PROFIT_TO_STAFF;
@@ -87,9 +87,9 @@ export function RecentActivity({
               ))
             )}
           </div>
-          <Button 
-            variant="ghost" 
-            size="sm" 
+          <Button
+            variant="ghost"
+            size="sm"
             className="w-full mt-3"
             onClick={() => router.push('/production')}
           >
@@ -126,9 +126,9 @@ export function RecentActivity({
               ))
             )}
           </div>
-          <Button 
-            variant="ghost" 
-            size="sm" 
+          <Button
+            variant="ghost"
+            size="sm"
             className="w-full mt-3"
             onClick={() => router.push('/packaging')}
           >
@@ -149,8 +149,10 @@ export function RecentActivity({
                   onClick={() => router.push('/sales')}
                 >
                   <div className="min-w-0">
-                    <p className="font-medium text-foreground truncate">{sale.productName}</p>
-                    <p className="text-xs text-muted-foreground">{sale.quantity} units</p>
+                    <p className="font-medium text-foreground truncate">
+                      {sale.clientName || 'Unknown Client'} · {sale.quantity} units
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">{sale.productName}</p>
                   </div>
                   <div className="text-right shrink-0 ml-2">
                     {showProfit && (
@@ -162,9 +164,9 @@ export function RecentActivity({
               ))
             )}
           </div>
-          <Button 
-            variant="ghost" 
-            size="sm" 
+          <Button
+            variant="ghost"
+            size="sm"
             className="w-full mt-3"
             onClick={() => router.push('/sales')}
           >

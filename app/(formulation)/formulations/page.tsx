@@ -37,7 +37,7 @@ export default function FormulationListPage() {
         setIsLoading(true);
         setError(null);
         const response = await fetch('/api/formulations');
-        
+
         if (!response.ok) {
           throw new Error('Failed to fetch formulations');
         }
@@ -119,7 +119,7 @@ export default function FormulationListPage() {
             <SelectContent>
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="inactive">Inactive</SelectItem>
+              {isAdmin && <SelectItem value="inactive">Inactive</SelectItem>}
             </SelectContent>
           </Select>
         </div>

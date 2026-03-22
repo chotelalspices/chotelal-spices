@@ -13,7 +13,6 @@ export async function GET(
 
     const { id } = await params;
 
-    // Get user role to decide whether to show companyName
     const user = await prisma.user.findUnique({
       where: { email: session.user?.email || '' },
       include: { userRoles: { select: { role: true } } },
@@ -43,10 +42,9 @@ export async function GET(
         productName: item.extendedInventory.productName,
         code: item.extendedInventory.code || null,
         price: item.extendedInventory.price,
-        // Hide companyName from non-admins
         companyName: isAdmin ? item.extendedInventory.companyName : null,
-        quantity: item.quantity,
-        percentage: item.percentage,
+        quantity: (item as any).quantity ?? 0,
+        percentage: (item as any).percentage ?? 0,
         notes: item.notes || null,
       })),
     });
@@ -98,16 +96,15 @@ export async function PUT(
         ...(notes !== undefined && { notes }),
         ...(ingredients && {
           ingredients: {
-            deleteMany: { where: { researchId: id } },
+            deleteMany: { researchId: id },
             create: ingredients.map((ing: any) => ({
               rawMaterialId: ing.rawMaterialId,
               percentage: parseFloat(ing.percentage),
             })),
           },
         }),
-        // Replace extended items
         extendedItems: {
-          deleteMany: { where: { researchId: id } },
+          deleteMany: { researchId: id },
           ...(validExtendedItems.length > 0 && {
             create: validExtendedItems.map((item: any) => ({
               extendedInventoryId: item.extendedInventoryId,
@@ -124,5 +121,57 @@ export async function PUT(
   } catch (error) {
     console.error('Error updating research formulation:', error);
     return NextResponse.json({ error: 'Failed to update research formulation' }, { status: 500 });
+  }
+}
+
+// ── DELETE — admin can delete any; researcher can delete their own pending/rejected ──
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const { id } = await params;
+
+    const user = await prisma.user.findUnique({
+      where: { email: session.user?.email || '' },
+      include: { userRoles: { select: { role: true } } },
+    });
+
+    if (!user) return NextResponse.json({ error: 'User not found' }, { status: 401 });
+    if (user.status !== 'active') return NextResponse.json({ error: 'Account inactive' }, { status: 403 });
+
+    const roles = user.userRoles.map((r) => r.role);
+    const isAdmin = roles.includes('admin');
+    const isResearcher = roles.includes('research');
+
+    if (!isAdmin && !isResearcher) {
+      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
+    }
+
+    const research = await prisma.researchFormulation.findUnique({ where: { id } });
+    if (!research) return NextResponse.json({ error: 'Research not found' }, { status: 404 });
+
+    // Researcher can only delete their own non-approved items
+    if (!isAdmin) {
+      if (research.researcher !== user.fullName) {
+        return NextResponse.json({ error: 'You can only delete your own research' }, { status: 403 });
+      }
+      if (research.status === 'approved') {
+        return NextResponse.json({ error: 'Approved research cannot be deleted' }, { status: 403 });
+      }
+    }
+
+    await prisma.$transaction([
+  prisma.researchIngredient.deleteMany({ where: { researchId: id } }),
+  (prisma as any).researchExtendedItem.deleteMany({ where: { researchId: id } }),
+  prisma.researchFormulation.delete({ where: { id } }),
+]);
+    return NextResponse.json({ message: 'Deleted successfully' }, { status: 200 });
+  } catch (error) {
+    console.error('Error deleting research formulation:', error);
+    return NextResponse.json({ error: 'Failed to delete research formulation' }, { status: 500 });
   }
 }

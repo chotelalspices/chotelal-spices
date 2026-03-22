@@ -2,15 +2,15 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
-import { 
-  Package, 
-  Boxes, 
-  AlertTriangle, 
-  XCircle, 
-  Plus, 
-  Search, 
-  Filter, 
-  X, 
+import {
+  Package,
+  Boxes,
+  AlertTriangle,
+  XCircle,
+  Plus,
+  Search,
+  Filter,
+  X,
   HistoryIcon
 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -67,17 +67,18 @@ export default function InventoryDashboard() {
     fetchMaterials();
   }, []);
 
-  // Calculate stats
+
   const stats = useMemo(() => {
     const totalMaterials = rawMaterials.length;
-    const totalStock = rawMaterials.reduce((sum, m) => {
+    const totalInventoryValue = rawMaterials.reduce((sum, m) => {
       const stockInKg = m.unit === 'gm' ? m.availableStock / 1000 : m.availableStock;
-      return sum + stockInKg;
+      const costPerKg = m.unit === 'gm' ? m.costPerUnit * 1000 : m.costPerUnit;
+      return sum + stockInKg * costPerKg;
     }, 0);
     const lowStockItems = rawMaterials.filter(m => getStockStatus(m) === 'low').length;
     const outOfStockItems = rawMaterials.filter(m => getStockStatus(m) === 'out').length;
 
-    return { totalMaterials, totalStock, lowStockItems, outOfStockItems };
+    return { totalMaterials, totalInventoryValue, lowStockItems, outOfStockItems };
   }, [rawMaterials]);
 
   // Filter materials
@@ -172,13 +173,15 @@ export default function InventoryDashboard() {
           />
         </div>
         <div className="min-w-[160px] md:min-w-0">
-          <StatCard
-            title="Total Stock"
-            value={`${stats.totalStock.toLocaleString('en-IN')} kg`}
-            subtitle="Across all materials"
-            icon={Boxes}
-            variant="success"
-          />
+          <div className="min-w-[160px] md:min-w-0">
+            <StatCard
+              title="Inventory Value"
+              value={`₹${stats.totalInventoryValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+              subtitle="Cost × stock across all materials"
+              icon={Boxes}
+              variant="success"
+            />
+          </div>
         </div>
         <div className="min-w-[160px] md:min-w-0">
           <StatCard
