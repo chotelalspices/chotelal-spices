@@ -21,7 +21,31 @@ export async function GET(request: NextRequest) {
     const auth = await getAuthUser();
     if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
+    const { searchParams } = new URL(request.url);
+    const city     = searchParams.get('city')     || null;
+    const salesman = searchParams.get('salesman') || null;
+
+    // If city or salesman filter active, find matching clientNames from ClientMeta
+    let filteredClientNames: string[] | null = null;
+    if (city || salesman) {
+      const metaWhere: any = {};
+      if (city)     metaWhere.city     = city;
+      if (salesman) metaWhere.salesman = salesman;
+
+      const matchingMetas = await (prisma as any).clientMeta.findMany({
+        where: metaWhere,
+        select: { clientName: true },
+      });
+
+      filteredClientNames = matchingMetas.map((m: any) => m.clientName);
+    }
+
     const salesRecords = await prisma.salesRecord.findMany({
+      where: {
+        ...(filteredClientNames !== null && {
+          clientName: { in: filteredClientNames },
+        }),
+      },
       include: {
         product: { include: { formulation: true } },
         createdBy: { select: { fullName: true } },
@@ -39,7 +63,7 @@ export async function GET(request: NextRequest) {
         batchId: null,
         batchNumber: null,
         clientName: record.clientName || null,
-        city: (record as any).city || null,           // ← city
+        city: (record as any).city || null,
         voucherNo: record.voucherNo || null,
         voucherType: record.voucherType || null,
         quantitySold: record.quantitySold,

@@ -61,7 +61,8 @@ interface DashboardData {
     date: string;
   }>;
   materialsCount: number;
-labelInventoryValue: number;
+  totalStock: number;   
+  labelInventoryValue: number;
 }
 
 export default function DashboardPage() {
@@ -228,12 +229,12 @@ export default function DashboardPage() {
             href="/sales"
           />
           <MetricCard
-            title="Materials"
-            value={dashboardData.materialsCount.toString()}
-            subtitle="Active items"
+            title="Total Stock"
+            value={`${dashboardData.totalStock?.toLocaleString('en-IN') ?? 0} kg`}
+            subtitle="Across all materials"
             icon={Boxes}
-            variant="default"
-            href="/"
+            variant="success"
+            href="/inventory"
           />
           <MetricCard
             title="Label Inventory Value"

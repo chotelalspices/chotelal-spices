@@ -130,28 +130,29 @@ const PackagingList = () => {
   const handleViewSummary  = (batchNumber: string) => router.push(`/packaging/${batchNumber}/summary`);
 
   const getActionButton = (batch: PackagingBatch) => {
-    if (batch.status === "Completed") {
-      return (
-        <Button
-          variant="outline"
-          size="sm"
-          className="min-w-[120px] justify-center"
-          onClick={() => handleViewSummary(batch.batchNumber)}
-        >
-          View Summary
-        </Button>
-      );
-    }
+  // If there's pending semi-packaged weight, always allow continuing
+  if (batch.status === "Completed" && (batch.semiPackaged ?? 0) <= 0) {
     return (
       <Button
+        variant="outline"
         size="sm"
         className="min-w-[120px] justify-center"
-        onClick={() => handlePackaging(batch.batchNumber)}
+        onClick={() => handleViewSummary(batch.batchNumber)}
       >
-        {batch.status === "Not Started" ? "Start" : "Continue"}
+        View Summary
       </Button>
     );
-  };
+  }
+  return (
+    <Button
+      size="sm"
+      className="min-w-[120px] justify-center"
+      onClick={() => handlePackaging(batch.batchNumber)}
+    >
+      {batch.status === "Not Started" ? "Start" : "Continue"}
+    </Button>
+  );
+};
 
   // ─── Loading / Error ──────────────────────────────────────────────────────
 

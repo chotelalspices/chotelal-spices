@@ -134,7 +134,7 @@ export default function PackagingEntry() {
           );
 
         const batchData: PackagingBatch = await batchRes.json();
-        if (batchData.status === "Completed") {
+        if (batchData.status === "Completed" && (batchData.semiPackaged ?? 0) <= 0) {
           router.push("/packaging");
           return;
         }
@@ -289,12 +289,30 @@ export default function PackagingEntry() {
 
   const lossValue = parseFloat(packagingLoss) || 0;
 
+  // Conversion weight — semi→fully, already counted against remainingQuantity when semi-packaged
+  const conversionWeightKg = useMemo(
+    () =>
+      labelEntries
+        .filter((e) => {
+          if (e.isCourierBox) return false;
+          const isSemiPackageable = !!selectedProduct?.labels.find(
+            (pl) => pl.type === e.type && pl.semiPackageable
+          );
+          return isSemiPackageable && semiToggles[e.type] === false && e.packets > 0;
+        })
+        .reduce((sum, e) => sum + e.weightKg, 0),
+    [labelEntries, semiToggles, selectedProduct]
+  );
+
+  // Net new weight = fully packaged minus conversions (conversions don't consume remaining)
+  const newWeightKg = totalNewPackagedWeightKg - conversionWeightKg;
+
   const isExactMatch = batch
-    ? Math.abs(totalNewPackagedWeightKg - batch.remainingQuantity) <= WEIGHT_TOLERANCE
+    ? Math.abs((newWeightKg + currentSessionSemiWeightKg) - batch.remainingQuantity) <= WEIGHT_TOLERANCE
     : false;
 
   const exceedsRemaining = batch
-    ? totalNewPackagedWeightKg > batch.remainingQuantity + WEIGHT_TOLERANCE
+    ? (newWeightKg + currentSessionSemiWeightKg) > batch.remainingQuantity + WEIGHT_TOLERANCE
     : false;
 
   // Stock errors only for fully-packaged (toggle OFF) entries
@@ -355,6 +373,26 @@ export default function PackagingEntry() {
           ? { ...entry, packets: 0, boxes: 0, weightKg: 0 }
           : entry
       )
+    );
+  };
+
+  // ─── Convert current session semi → fully packaged instantly ─────────────────
+  const handleConvertNow = (type: string) => {
+    const semiPackets = labelEntries.find((e) => e.type === type)?.packets ?? 0;
+    if (semiPackets === 0) return;
+
+    // Flip toggle to OFF (conversion/fully-packaged mode)
+    setSemiToggles((prev) => ({ ...prev, [type]: false }));
+
+    // Keep the same packet count — now counted as fully packaged
+    setLabelEntries((prev) =>
+      prev.map((entry) => {
+        if (entry.type !== type) return entry;
+        const boxes = Math.ceil(semiPackets / entry.qtyPerBox);
+        const weightKg = semiPackets * weightPerPacketKg;
+        const { availableStock, stockStatus } = lookupStock(type, semiPackets);
+        return { ...entry, packets: semiPackets, boxes, weightKg, availableStock, stockStatus };
+      })
     );
   };
 
@@ -913,7 +951,7 @@ export default function PackagingEntry() {
                       {/* ── Semi-packageable toggle row (below main row) ── */}
                       {isSemiPackageable && (
                         <div className="px-4 pb-4 border-t border-border/50">
-                          <div className="flex items-center gap-3 pt-3">
+                          <div className="flex items-center gap-3 pt-3 flex-wrap">
                             <Switch
                               id={`semi-toggle-${entry.type}`}
                               checked={isSemiMode}
@@ -924,17 +962,52 @@ export default function PackagingEntry() {
                             <Label
                               htmlFor={`semi-toggle-${entry.type}`}
                               className={cn(
-                                "text-sm select-none",
+                                "text-sm select-none flex-1",
                                 locked ? "cursor-not-allowed text-muted-foreground" : "cursor-pointer"
                               )}
                             >
                               {locked
                                 ? "Must semi-package first — toggle ON here to convert when ready"
                                 : isSemiMode
-                                  ? <span>Convert to fully packaged<span className="text-xs text-orange-600">(toggle OFF to convert these to fully packaged)</span></span>
-                                  : <span className="font-medium text-primary">Semi-packaging mode <span className="text-xs text-muted-foreground">(toggle ON to semi-packaging)</span></span>}
-
+                                  ? <span>Semi-packaging mode <span className="text-xs text-orange-600">(toggle OFF to convert to fully packaged)</span></span>
+                                  : <span className="font-medium text-primary">Converting to fully packaged <span className="text-xs text-muted-foreground">(toggle ON to go back to semi mode)</span></span>}
                             </Label>
+
+                            {/* ── Convert Now button — only shown when in semi mode with packets entered ── */}
+                            {isSemiMode && entry.packets > 0 && (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-primary text-primary hover:bg-primary hover:text-primary-foreground gap-1.5 shrink-0"
+                                  >
+                                    <RefreshCw className="h-3.5 w-3.5" />
+                                    Convert to Full Now
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Convert to Fully Packaged</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Convert <strong>{entry.packets} {entry.type}</strong> packets from semi-packaged
+                                      to fully packaged in this session?
+                                      <br /><br />
+                                      This will deduct <strong>{entry.packets}</strong> labels from inventory immediately
+                                      and count <strong>{(entry.packets * weightPerPacketKg).toFixed(3)} kg</strong> as
+                                      fully packaged.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => handleConvertNow(entry.type)}>
+                                      Convert Now
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
                           </div>
 
                           {/* Locked explanation */}
@@ -945,7 +1018,7 @@ export default function PackagingEntry() {
                             </p>
                           )}
 
-                          {/* Conversion mode: show remaining semi count */}
+                          {/* Conversion mode: show remaining semi count from previous sessions */}
                           {isConversionMode && (
                             <p className="text-xs text-orange-600 dark:text-orange-400 mt-2 ml-10">
                               Entering packets here converts from the{" "}
@@ -1014,7 +1087,7 @@ export default function PackagingEntry() {
                           ? `Reduce packets — max ${batch.remainingQuantity.toFixed(3)} kg remaining`
                           : isExactMatch
                             ? "Total weight matches remaining quantity"
-                            : `${(batch.remainingQuantity - totalNewPackagedWeightKg).toFixed(3)} kg still unpackaged`}
+                            : `${(batch.remainingQuantity - newWeightKg).toFixed(3)} kg still unpackaged`}
                       </p>
                       {currentSessionSemiWeightKg > 0 && (
                         <p className="text-xs text-orange-600 dark:text-orange-400 mt-0.5">
@@ -1191,8 +1264,7 @@ export default function PackagingEntry() {
                         isFinishing ||
                         hasStockErrors
                       }
-                      className="flex-1"
-                    >
+                      className="flex-1 text-white-600 bg-brown-50">
                       {isSubmitting ? (
                         <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</>
                       ) : (
@@ -1227,7 +1299,7 @@ export default function PackagingEntry() {
                       exceedsRemaining ||
                       isSubmitting ||
                       isFinishing ||
-                      batch.remainingQuantity <= 0 ||
+                      (batch.remainingQuantity <= 0 && (batch.semiPackaged ?? 0) <= 0) ||
                       hasStockErrors
                     }
                     className={cn(

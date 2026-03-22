@@ -205,6 +205,12 @@ export async function GET(request: NextRequest) {
       (m) => m.status === "active"
     ).length;
 
+    const totalStock = materialsWithStock
+  .filter((m) => m.status === "active")
+  .reduce((sum, m) => {
+    return sum + (m.unit === "gm" ? m.availableStock / 1000 : m.availableStock);
+  }, 0);
+
     // ── Label inventory value ─────────────────────────────────────────────────
     const labelsWithMovements = await prisma.label.findMany({
       include: { labelMovements: true },
@@ -233,6 +239,7 @@ export async function GET(request: NextRequest) {
         recentPackaging,
         recentSales,
         materialsCount: activeMaterialsCount,
+        totalStock: Math.round(totalStock * 100) / 100, 
         labelInventoryValue,
       },
       { status: 200 }

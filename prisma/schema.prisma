@@ -110,6 +110,7 @@ model User {
   researchFormulations ResearchFormulation[]
   labelMovements       LabelMovement[]
   formulationAudits FormulationAudit[]
+  extendedInventory ExtendedInventory[]
 }
 
 //////////////////////////////////////////////////////
@@ -387,6 +388,14 @@ model SalesRecord {
   createdBy User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
 }
 
+model ClientMeta {
+  id         String   @id @default(cuid())
+  clientName String   @unique
+  city       String?
+  salesman   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
 //////////////////////////////////////////////////////
 // RESEARCH MODULE
 //////////////////////////////////////////////////////
@@ -407,6 +416,7 @@ model ResearchFormulation {
   createdAt       DateTime       @default(now())
 
   ingredients ResearchIngredient[]
+  extendedItems ResearchExtendedItem[]
 }
 
 model ResearchIngredient {
@@ -416,6 +426,34 @@ model ResearchIngredient {
   rawMaterialId String
   rawMaterial   RawMaterial         @relation(fields: [rawMaterialId], references: [id])
   percentage    Float
+}
+
+model ExtendedInventory {
+  id          String    @id @default(uuid())
+  date        DateTime
+  companyName String
+  productName String
+  code        String?
+  price       Float     @default(0)
+  notes       String?
+  createdById String?
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  researchItems ResearchExtendedItem[]
+}
+
+model ResearchExtendedItem {
+  id                  String            @id @default(uuid())
+  researchId          String
+  research            ResearchFormulation @relation(fields: [researchId], references: [id], onDelete: Cascade)
+  extendedInventoryId String
+  extendedInventory   ExtendedInventory @relation(fields: [extendedInventoryId], references: [id], onDelete: Cascade)
+  notes               String?
+  quantity            Float             @default(0)
+  percentage          Float             @default(0)
+  createdAt           DateTime          @default(now())
 }
 
 //////////////////////////////////////////////////////

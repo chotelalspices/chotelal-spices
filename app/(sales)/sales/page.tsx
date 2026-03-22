@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -38,7 +38,7 @@ import {
   Plus, Upload, Filter, TrendingUp, IndianRupee, Package,
   Pencil, Trash2, Loader2, User, CheckCircle2, ArrowUpRight,
   ArrowDownRight, ChevronDown, ChevronRight, X, Check, ChevronsUpDown,
-  Download,
+  Download, Settings2, Save,
 } from 'lucide-react';
 
 import { StatCard } from '@/components/inventory/StatCard';
@@ -50,6 +50,15 @@ import {
 } from '@/data/salesData';
 
 const SHOW_PROFIT_TO_STAFF = true;
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface ClientMeta {
+  id: string;
+  clientName: string;
+  city: string | null;
+  salesman: string | null;
+}
 
 interface ClientGroup {
   groupKey: string;
@@ -65,6 +74,8 @@ interface ClientGroup {
   amountDue?: number;
   paymentNote?: string;
 }
+
+// ─── Group by client ──────────────────────────────────────────────────────────
 
 function groupByClient(records: SalesRecord[]): ClientGroup[] {
   const map = new Map<string, ClientGroup>();
@@ -97,7 +108,6 @@ function groupByClient(records: SalesRecord[]): ClientGroup[] {
     g.amountPaid  = (g.amountPaid ?? 0) + (record.amountPaid ?? record.totalAmount ?? 0);
     g.amountDue   = (g.amountDue  ?? 0) + (record.amountDue  ?? 0);
 
-    // Aggregate payment status — worst status wins
     const s = record.paymentStatus ?? 'paid';
     if (s === 'unpaid') g.paymentStatus = 'unpaid';
     else if (s === 'partial' && g.paymentStatus !== 'unpaid') g.paymentStatus = 'partial';
@@ -125,10 +135,7 @@ function SearchableFilter({
         <Button
           variant="outline"
           role="combobox"
-          className={cn(
-            'justify-between font-normal',
-            value !== 'all' && 'border-primary text-primary'
-          )}
+          className={cn('justify-between font-normal', value !== 'all' && 'border-primary text-primary')}
         >
           <span className="truncate max-w-[160px]">{displayLabel}</span>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -144,6 +151,44 @@ function SearchableFilter({
                 <Check className={cn('mr-2 h-4 w-4', value === 'all' ? 'opacity-100' : 'opacity-0')} />
                 All {label}s
               </CommandItem>
+              {options.map((opt) => (
+                <CommandItem key={opt} value={opt} onSelect={() => { onChange(opt); setOpen(false); }}>
+                  <Check className={cn('mr-2 h-4 w-4', value === opt ? 'opacity-100' : 'opacity-0')} />
+                  {opt}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/* ── Client combobox (for Sales Maintenance modal) ───────────────────────── */
+function ClientCombobox({
+  value, onChange, options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" role="combobox" className="w-full justify-between font-normal">
+          <span className="truncate">{value || 'Select client...'}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-full p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search client..." />
+          <CommandList className="max-h-[200px]">
+            <CommandEmpty>No client found.</CommandEmpty>
+            <CommandGroup>
               {options.map((opt) => (
                 <CommandItem key={opt} value={opt} onSelect={() => { onChange(opt); setOpen(false); }}>
                   <Check className={cn('mr-2 h-4 w-4', value === opt ? 'opacity-100' : 'opacity-0')} />
@@ -178,9 +223,9 @@ function ClientGroupRow({
     const paid = group.amountPaid ?? group.groupTotal;
     let cls = '';
     let label = '';
-    if (status === 'paid') { cls = 'bg-green-100 text-green-800 border-green-300'; label = 'PAID'; }
-    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300'; label = 'UNPAID'; }
-    else { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
+    if (status === 'paid')        { cls = 'bg-green-100 text-green-800 border-green-300';    label = 'PAID'; }
+    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300';          label = 'UNPAID'; }
+    else                          { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
     return (
       <Badge variant="outline" className={`${cls} text-xs cursor-pointer hover:opacity-80`}
         onClick={(e) => { e.stopPropagation(); onPaymentClick(group); }}>
@@ -299,9 +344,7 @@ function ClientGroupRow({
             <TableCell colSpan={5} className="pl-14 py-1.5 text-xs text-muted-foreground">
               {group.records.length} item{group.records.length !== 1 ? 's' : ''} for {group.clientName}
             </TableCell>
-            <TableCell className="text-right font-semibold text-sm py-1.5">
-              {formatCurrency(group.groupTotal)}
-            </TableCell>
+            <TableCell className="text-right font-semibold text-sm py-1.5">{formatCurrency(group.groupTotal)}</TableCell>
             <TableCell className="text-right text-xs text-muted-foreground py-1.5">
               {formatCurrency(group.records.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}
             </TableCell>
@@ -330,23 +373,42 @@ export default function SalesSummary() {
   const [salesRecords, setSalesRecords] = useState<SalesRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [productFilter, setProductFilter] = useState('all');
-  const [clientFilter, setClientFilter] = useState('all');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [filterOpen, setFilterOpen] = useState(false);
+  // ── Filters ───────────────────────────────────────────────────────────────
+  const [productFilter, setProductFilter]   = useState('all');
+  const [clientFilter, setClientFilter]     = useState('all');
+  const [cityFilter, setCityFilter]         = useState('all');
+  const [salesmanFilter, setSalesmanFilter] = useState('all');
+  const [startDate, setStartDate]           = useState('');
+  const [endDate, setEndDate]               = useState('');
+  const [filterOpen, setFilterOpen]         = useState(false);
 
+  // ── Client meta ───────────────────────────────────────────────────────────
+  const [clientMetas, setClientMetas] = useState<ClientMeta[]>([]);
+
+  // ── Sales Maintenance modal ───────────────────────────────────────────────
+  const [maintenanceOpen, setMaintenanceOpen]   = useState(false);
+  const [maintClient, setMaintClient]           = useState('');
+  const [maintCity, setMaintCity]               = useState('');
+  const [maintSalesman, setMaintSalesman]       = useState('');
+  const [isSavingMaint, setIsSavingMaint]       = useState(false);
+
+  // ── Payment modal ─────────────────────────────────────────────────────────
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
-  const [selectedGroup, setSelectedGroup] = useState<ClientGroup | null>(null);
-  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'unpaid' | 'partial'>('paid');
-  const [amountPaid, setAmountPaid] = useState('');
-  const [paymentNote, setPaymentNote] = useState('');
-  const [isSavingPayment, setIsSavingPayment] = useState(false);
+  const [selectedGroup, setSelectedGroup]       = useState<ClientGroup | null>(null);
+  const [paymentStatus, setPaymentStatus]       = useState<'paid' | 'unpaid' | 'partial'>('paid');
+  const [amountPaid, setAmountPaid]             = useState('');
+  const [paymentNote, setPaymentNote]           = useState('');
+  const [isSavingPayment, setIsSavingPayment]   = useState(false);
 
-  const fetchRecords = async () => {
+  // ── Fetch sales records ───────────────────────────────────────────────────
+  const fetchRecords = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/sales/records');
+      const params = new URLSearchParams();
+      if (cityFilter !== 'all')     params.set('city', cityFilter);
+      if (salesmanFilter !== 'all') params.set('salesman', salesmanFilter);
+
+      const res = await fetch(`/api/sales/records?${params.toString()}`);
       if (!res.ok) throw new Error();
       setSalesRecords(await res.json());
     } catch {
@@ -354,9 +416,21 @@ export default function SalesSummary() {
     } finally {
       setLoading(false);
     }
-  };
-  useEffect(() => { fetchRecords(); }, []);
+  }, [cityFilter, salesmanFilter]);
 
+  useEffect(() => { fetchRecords(); }, [fetchRecords]);
+
+  // ── Fetch client metas ────────────────────────────────────────────────────
+  const fetchClientMetas = useCallback(async () => {
+    try {
+      const res = await fetch('/api/clients/meta');
+      if (res.ok) setClientMetas(await res.json());
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => { fetchClientMetas(); }, [fetchClientMetas]);
+
+  // ── Derived filter options ────────────────────────────────────────────────
   const uniqueProducts = useMemo(
     () => [...new Set(salesRecords.map((r) => r.productName))].sort(),
     [salesRecords]
@@ -365,27 +439,86 @@ export default function SalesSummary() {
     () => [...new Set(salesRecords.map((r) => r.clientName?.trim()).filter((c): c is string => !!c))].sort(),
     [salesRecords]
   );
+  const uniqueCities = useMemo(
+    () => [...new Set(clientMetas.map((m) => m.city).filter((c): c is string => !!c))].sort(),
+    [clientMetas]
+  );
+  const uniqueSalesmen = useMemo(
+    () => [...new Set(clientMetas.map((m) => m.salesman).filter((s): s is string => !!s))].sort(),
+    [clientMetas]
+  );
 
+  // ── Client meta lookup map ────────────────────────────────────────────────
+  const clientMetaMap = useMemo(() => {
+    const map = new Map<string, ClientMeta>();
+    clientMetas.forEach((m) => map.set(m.clientName, m));
+    return map;
+  }, [clientMetas]);
+
+  // ── Frontend filters (product, client, date) ──────────────────────────────
   const filteredRecords = useMemo(() =>
     salesRecords.filter((r) => {
       if (productFilter !== 'all' && r.productName !== productFilter) return false;
       if (clientFilter !== 'all' && r.clientName?.trim() !== clientFilter) return false;
       if (startDate && new Date(r.saleDate) < new Date(startDate)) return false;
-      if (endDate && new Date(r.saleDate) > new Date(endDate)) return false;
+      if (endDate   && new Date(r.saleDate) > new Date(endDate)) return false;
       return true;
     }),
-    [salesRecords, productFilter, clientFilter, startDate, endDate]);
+    [salesRecords, productFilter, clientFilter, startDate, endDate]
+  );
 
   const clientGroups = useMemo(() => groupByClient(filteredRecords), [filteredRecords]);
-  const allRecords = useMemo(() => clientGroups.flatMap((g) => g.records), [clientGroups]);
-  const summary = useMemo(() => calculateSalesSummary(allRecords), [allRecords]);
+  const allRecords   = useMemo(() => clientGroups.flatMap((g) => g.records), [clientGroups]);
+  const summary      = useMemo(() => calculateSalesSummary(allRecords), [allRecords]);
 
-  const hasActiveFilters = productFilter !== 'all' || clientFilter !== 'all' || startDate || endDate;
+  const hasActiveFilters = productFilter !== 'all' || clientFilter !== 'all' || cityFilter !== 'all' || salesmanFilter !== 'all' || startDate || endDate;
+
   const clearFilters = () => {
     setProductFilter('all'); setClientFilter('all');
+    setCityFilter('all'); setSalesmanFilter('all');
     setStartDate(''); setEndDate(''); setFilterOpen(false);
   };
 
+  // ── Sales Maintenance ─────────────────────────────────────────────────────
+  const openMaintenance = () => {
+    setMaintClient('');
+    setMaintCity('');
+    setMaintSalesman('');
+    setMaintenanceOpen(true);
+  };
+
+  // When client selected in modal, pre-fill existing meta
+  const handleMaintClientChange = (name: string) => {
+    setMaintClient(name);
+    const existing = clientMetaMap.get(name);
+    setMaintCity(existing?.city ?? '');
+    setMaintSalesman(existing?.salesman ?? '');
+  };
+
+  const saveMaintenance = async () => {
+    if (!maintClient) { toast.error('Please select a client'); return; }
+    try {
+      setIsSavingMaint(true);
+      const res = await fetch('/api/clients/meta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientName: maintClient, city: maintCity, salesman: maintSalesman }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success(`Saved for ${maintClient}`);
+      await fetchClientMetas();
+      // Reset for next entry — keep modal open so user can do multiple
+      setMaintClient('');
+      setMaintCity('');
+      setMaintSalesman('');
+    } catch {
+      toast.error('Failed to save');
+    } finally {
+      setIsSavingMaint(false);
+    }
+  };
+
+  // ── Delete sale ───────────────────────────────────────────────────────────
   const handleDeleteSale = async (saleId: string) => {
     try {
       const res = await fetch(`/api/sales/records/${saleId}`, { method: 'DELETE' });
@@ -397,6 +530,7 @@ export default function SalesSummary() {
     }
   };
 
+  // ── Payment modal ─────────────────────────────────────────────────────────
   const openPaymentModal = (group: ClientGroup) => {
     setSelectedGroup(group);
     setPaymentStatus(group.paymentStatus ?? 'paid');
@@ -413,7 +547,6 @@ export default function SalesSummary() {
     setPaymentNote('');
   };
 
-  // ── Payment save — split proportionally across records ───────────────────
   const savePaymentStatus = async () => {
     if (!selectedGroup) return;
     const parsedAmount = parseFloat(amountPaid);
@@ -424,22 +557,16 @@ export default function SalesSummary() {
       setIsSavingPayment(true);
       await Promise.all(
         selectedGroup.records.map((record) => {
-          // Each record gets a proportional share of the total payment
           const proportion = selectedGroup.groupTotal > 0
             ? record.totalAmount / selectedGroup.groupTotal
             : 1 / selectedGroup.records.length;
           const recordAmountPaid = parseFloat((parsedAmount * proportion).toFixed(2));
-          const recordAmountDue = parseFloat(Math.max(0, record.totalAmount - recordAmountPaid).toFixed(2));
+          const recordAmountDue  = parseFloat(Math.max(0, record.totalAmount - recordAmountPaid).toFixed(2));
 
           return fetch(`/api/sales/records/${record.id}/payment`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              paymentStatus,
-              amountPaid: recordAmountPaid,
-              amountDue: recordAmountDue,
-              paymentNote: paymentNote.trim() || null,
-            }),
+            body: JSON.stringify({ paymentStatus, amountPaid: recordAmountPaid, amountDue: recordAmountDue, paymentNote: paymentNote.trim() || null }),
           });
         })
       );
@@ -462,6 +589,7 @@ export default function SalesSummary() {
   // ── PDF download ──────────────────────────────────────────────────────────
   const handleDownloadPDF = () => {
     const rows = clientGroups.map((group) => {
+      const meta = clientMetaMap.get(group.clientName);
       const productRows = group.records.map((r, idx) => `
         <tr>
           <td class="indent">${idx + 1}</td>
@@ -476,8 +604,8 @@ export default function SalesSummary() {
       `).join('');
 
       const payStatus = group.paymentStatus || 'paid';
-      const payClass = payStatus === 'paid' ? 'paid' : payStatus === 'unpaid' ? 'unpaid' : 'partial';
-      const payLabel = payStatus === 'paid' ? 'PAID' : payStatus === 'unpaid' ? 'UNPAID' : `PARTIAL (${formatCurrency(group.amountPaid ?? 0)})`;
+      const payClass  = payStatus === 'paid' ? 'paid' : payStatus === 'unpaid' ? 'unpaid' : 'partial';
+      const payLabel  = payStatus === 'paid' ? 'PAID' : payStatus === 'unpaid' ? 'UNPAID' : `PARTIAL (${formatCurrency(group.amountPaid ?? 0)})`;
 
       return `
         <tr class="group-header">
@@ -485,6 +613,8 @@ export default function SalesSummary() {
             <div class="group-row">
               <div>
                 <strong>${group.clientName}</strong>
+                ${meta?.city ? `<span class="tag">${meta.city}</span>` : ''}
+                ${meta?.salesman ? `<span class="tag">${meta.salesman}</span>` : ''}
                 <span class="meta">${formatSaleDate(group.saleDate)}${group.voucherType ? ' · ' + group.voucherType : ''}${group.voucherNo ? ' · ' + group.voucherNo : ''}</span>
               </div>
               <div class="group-right">
@@ -504,71 +634,57 @@ export default function SalesSummary() {
       `;
     }).join('');
 
-    const html = `
-      <!DOCTYPE html><html>
-      <head>
-        <meta charset="utf-8" />
-        <title>Sales Records</title>
-        <style>
-          * { box-sizing: border-box; margin: 0; padding: 0; }
-          body { font-family: Arial, sans-serif; font-size: 11px; color: #111; padding: 20px; }
-          h1 { font-size: 18px; margin-bottom: 4px; }
-          .meta-line { font-size: 11px; color: #666; margin-bottom: 16px; }
-          table { width: 100%; border-collapse: collapse; }
-          th { background: #f3f4f6; text-align: left; padding: 7px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #e5e7eb; }
-          th.right, td.right { text-align: right; }
-          td { padding: 6px 8px; border-bottom: 1px solid #f0f0f0; }
-          .group-header td { background: #f8f6f2; border-top: 2px solid #d4c5a9; padding: 8px; }
-          .group-row { display: flex; justify-content: space-between; align-items: center; }
-          .group-right { display: flex; align-items: center; gap: 12px; }
-          .meta { font-size: 10px; color: #888; margin-left: 8px; }
-          .indent { padding-left: 24px; color: #999; }
-          .indent-label { padding-left: 24px; color: #888; font-size: 10px; }
-          .subtotal td { background: #f9fafb; }
-          .badge { font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 600; }
-          .paid { background: #dcfce7; color: #166534; }
-          .unpaid { background: #fee2e2; color: #991b1b; }
-          .partial { background: #ffedd5; color: #9a3412; }
-          .profit { color: #16a34a; }
-          .loss { color: #dc2626; }
-          .muted { color: #888; }
-          .grand { background: #f3f4f6; font-weight: 700; border-top: 2px solid #ccc; }
-          @media print { body { padding: 0; } }
-        </style>
-      </head>
-      <body>
-        <h1>Sales Records</h1>
-        <p class="meta-line">
-          Generated: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-          &nbsp;·&nbsp; ${clientGroups.length} clients · ${allRecords.length} records
-          ${hasActiveFilters ? '&nbsp;·&nbsp; (filtered)' : ''}
-        </p>
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Product</th>
-              <th class="right">Packets</th>
-              <th class="right">Price/Pkt</th>
-              <th class="right">Discount</th>
-              <th class="right">Final Amt</th>
-              <th class="right">Prod. Cost</th>
-              <th class="right">Profit/Loss</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows}
-            <tr class="grand">
-              <td colspan="5">Grand Total — ${clientGroups.length} client${clientGroups.length !== 1 ? 's' : ''} · ${allRecords.length} records</td>
-              <td class="right">${formatCurrency(summary.totalRevenue)}</td>
-              <td class="right muted">${formatCurrency(allRecords.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}</td>
-              <td class="right ${summary.totalProfit >= 0 ? 'profit' : 'loss'}">${formatCurrency(summary.totalProfit)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </body>
-      </html>
-    `;
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Sales Records</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: Arial, sans-serif; font-size: 11px; color: #111; padding: 20px; }
+      h1 { font-size: 18px; margin-bottom: 4px; }
+      .meta-line { font-size: 11px; color: #666; margin-bottom: 16px; }
+      table { width: 100%; border-collapse: collapse; }
+      th { background: #f3f4f6; text-align: left; padding: 7px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #e5e7eb; }
+      th.right, td.right { text-align: right; }
+      td { padding: 6px 8px; border-bottom: 1px solid #f0f0f0; }
+      .group-header td { background: #f8f6f2; border-top: 2px solid #d4c5a9; padding: 8px; }
+      .group-row { display: flex; justify-content: space-between; align-items: center; }
+      .group-right { display: flex; align-items: center; gap: 12px; }
+      .meta { font-size: 10px; color: #888; margin-left: 8px; }
+      .tag { font-size: 10px; color: #555; background: #e5e7eb; border-radius: 3px; padding: 1px 5px; margin-left: 4px; }
+      .indent { padding-left: 24px; color: #999; }
+      .indent-label { padding-left: 24px; color: #888; font-size: 10px; }
+      .subtotal td { background: #f9fafb; }
+      .badge { font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 600; }
+      .paid { background: #dcfce7; color: #166534; }
+      .unpaid { background: #fee2e2; color: #991b1b; }
+      .partial { background: #ffedd5; color: #9a3412; }
+      .profit { color: #16a34a; }
+      .loss { color: #dc2626; }
+      .muted { color: #888; }
+      .grand { background: #f3f4f6; font-weight: 700; border-top: 2px solid #ccc; }
+      @media print { body { padding: 0; } }
+    </style></head><body>
+    <h1>Sales Records</h1>
+    <p class="meta-line">
+      Generated: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+      &nbsp;·&nbsp; ${clientGroups.length} clients · ${allRecords.length} records
+      ${hasActiveFilters ? '&nbsp;·&nbsp; (filtered)' : ''}
+    </p>
+    <table>
+      <thead><tr>
+        <th>#</th><th>Product</th>
+        <th class="right">Packets</th><th class="right">Price/Pkt</th>
+        <th class="right">Discount</th><th class="right">Final Amt</th>
+        <th class="right">Prod. Cost</th><th class="right">Profit/Loss</th>
+      </tr></thead>
+      <tbody>
+        ${rows}
+        <tr class="grand">
+          <td colspan="5">Grand Total — ${clientGroups.length} client${clientGroups.length !== 1 ? 's' : ''} · ${allRecords.length} records</td>
+          <td class="right">${formatCurrency(summary.totalRevenue)}</td>
+          <td class="right muted">${formatCurrency(allRecords.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}</td>
+          <td class="right ${summary.totalProfit >= 0 ? 'profit' : 'loss'}">${formatCurrency(summary.totalProfit)}</td>
+        </tr>
+      </tbody>
+    </table></body></html>`;
 
     const win = window.open('', '_blank');
     if (!win) return;
@@ -589,6 +705,14 @@ export default function SalesSummary() {
       <div className="space-y-2">
         <Label>Product</Label>
         <SearchableFilter label="Product" value={productFilter} onChange={setProductFilter} options={uniqueProducts} placeholder="All Products" />
+      </div>
+      <div className="space-y-2">
+        <Label>City</Label>
+        <SearchableFilter label="City" value={cityFilter} onChange={setCityFilter} options={uniqueCities} placeholder="All Cities" />
+      </div>
+      <div className="space-y-2">
+        <Label>Salesman</Label>
+        <SearchableFilter label="Salesman" value={salesmanFilter} onChange={setSalesmanFilter} options={uniqueSalesmen} placeholder="All Salesmen" />
       </div>
       <div className="space-y-2">
         <Label>Start Date</Label>
@@ -614,7 +738,10 @@ export default function SalesSummary() {
             <h1 className="text-2xl font-bold">Sales Summary</h1>
             <p className="text-sm text-muted-foreground">View and analyze sales records</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="outline" onClick={openMaintenance} className="gap-2">
+              <Settings2 className="h-4 w-4" />Sales Maintenance
+            </Button>
             <Button variant="outline" onClick={handleDownloadPDF} disabled={loading || allRecords.length === 0} className="gap-2">
               <Download className="h-4 w-4" />Download PDF
             </Button>
@@ -641,9 +768,9 @@ export default function SalesSummary() {
           </div>
         ) : (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard title="Total Sales" value={summary.salesCount.toString()} icon={Package} />
-            <StatCard title="Revenue" value={formatCurrency(summary.totalRevenue)} icon={IndianRupee} />
-            <StatCard title="Qty Sold" value={`${summary.totalQuantity} packets`} icon={TrendingUp} />
+            <StatCard title="Total Sales"   value={summary.salesCount.toString()}       icon={Package} />
+            <StatCard title="Revenue"       value={formatCurrency(summary.totalRevenue)} icon={IndianRupee} />
+            <StatCard title="Qty Sold"      value={`${summary.totalQuantity} packets`}   icon={TrendingUp} />
             {SHOW_PROFIT_TO_STAFF && (
               <StatCard title="Profit" value={formatCurrency(summary.totalProfit)} icon={TrendingUp} />
             )}
@@ -661,6 +788,14 @@ export default function SalesSummary() {
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Product</Label>
                 <SearchableFilter label="Product" value={productFilter} onChange={setProductFilter} options={uniqueProducts} placeholder="All Products" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">City</Label>
+                <SearchableFilter label="City" value={cityFilter} onChange={setCityFilter} options={uniqueCities} placeholder="All Cities" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Salesman</Label>
+                <SearchableFilter label="Salesman" value={salesmanFilter} onChange={setSalesmanFilter} options={uniqueSalesmen} placeholder="All Salesmen" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Start</Label>
@@ -791,6 +926,84 @@ export default function SalesSummary() {
           )}
         </div>
 
+        {/* ── Sales Maintenance Modal ── */}
+        <Dialog open={maintenanceOpen} onOpenChange={setMaintenanceOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Settings2 className="h-5 w-5" />
+                Sales Maintenance
+              </DialogTitle>
+              <DialogDescription>
+                Assign city and salesman to a client. This info is used for filtering only.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-2">
+              {/* Client dropdown with search */}
+              <div className="space-y-2">
+                <Label>Client Name *</Label>
+                <ClientCombobox
+                  value={maintClient}
+                  onChange={handleMaintClientChange}
+                  options={uniqueClients}
+                />
+              </div>
+
+              {/* City */}
+              <div className="space-y-2">
+                <Label>City</Label>
+                <Input
+                  placeholder="e.g. Surat, Navsari, Pune..."
+                  value={maintCity}
+                  onChange={(e) => setMaintCity(e.target.value)}
+                />
+              </div>
+
+              {/* Salesman */}
+              <div className="space-y-2">
+                <Label>Salesman</Label>
+                <Input
+                  placeholder="e.g. Ramesh, Suresh..."
+                  value={maintSalesman}
+                  onChange={(e) => setMaintSalesman(e.target.value)}
+                />
+              </div>
+
+              {/* Existing assignments table */}
+              {clientMetas.length > 0 && (
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Existing Assignments
+                  </div>
+                  <div className="max-h-[180px] overflow-y-auto divide-y">
+                    {clientMetas.filter((m) => m.city || m.salesman).map((m) => (
+                      <div
+                        key={m.id}
+                        className="px-3 py-2 flex items-center justify-between gap-2 text-sm hover:bg-muted/20 cursor-pointer"
+                        onClick={() => handleMaintClientChange(m.clientName)}
+                      >
+                        <span className="font-medium truncate">{m.clientName}</span>
+                        <div className="flex gap-1 shrink-0">
+                          {m.city && <span className="text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded px-1.5 py-0.5">{m.city}</span>}
+                          {m.salesman && <span className="text-xs bg-green-50 text-green-700 border border-green-200 rounded px-1.5 py-0.5">{m.salesman}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setMaintenanceOpen(false)}>Close</Button>
+              <Button onClick={saveMaintenance} disabled={isSavingMaint || !maintClient} className="gap-2">
+                {isSavingMaint ? <><Loader2 className="h-4 w-4 animate-spin" />Saving...</> : <><Save className="h-4 w-4" />Save</>}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Payment modal */}
         <Dialog open={paymentModalOpen} onOpenChange={setPaymentModalOpen}>
           <DialogContent className="sm:max-w-md">
@@ -820,16 +1033,12 @@ export default function SalesSummary() {
               <div className="space-y-2">
                 <Label>Amount Paid</Label>
                 <Input
-                  type="number"
-                  placeholder="0.00"
-                  value={amountPaid}
+                  type="number" placeholder="0.00" value={amountPaid}
                   onChange={(e) => setAmountPaid(e.target.value)}
                   disabled={paymentStatus === 'paid' || paymentStatus === 'unpaid'}
                 />
                 {selectedGroup && parseFloat(amountPaid) > 0 && parseFloat(amountPaid) < selectedGroup.groupTotal && (
-                  <p className="text-sm text-muted-foreground">
-                    Balance due: {formatCurrency(selectedGroup.groupTotal - parseFloat(amountPaid))}
-                  </p>
+                  <p className="text-sm text-muted-foreground">Balance due: {formatCurrency(selectedGroup.groupTotal - parseFloat(amountPaid))}</p>
                 )}
               </div>
               <div className="space-y-2">
@@ -868,11 +1077,10 @@ function MobileClientCard({
   const paymentBadge = (() => {
     const status = group.paymentStatus || 'paid';
     const paid = group.amountPaid ?? group.groupTotal;
-    let cls = '';
-    let label = '';
-    if (status === 'paid') { cls = 'bg-green-100 text-green-800 border-green-300'; label = 'PAID'; }
-    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300'; label = 'UNPAID'; }
-    else { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
+    let cls = ''; let label = '';
+    if (status === 'paid')        { cls = 'bg-green-100 text-green-800 border-green-300';    label = 'PAID'; }
+    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300';          label = 'UNPAID'; }
+    else                          { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
     return (
       <Badge variant="outline" className={`${cls} text-xs cursor-pointer hover:opacity-80`}
         onClick={(e) => { e.stopPropagation(); onPaymentClick(group); }}>
@@ -941,9 +1149,7 @@ function MobileClientCard({
                           <AlertDialogFooter>
                             <AlertDialogCancel>Cancel</AlertDialogCancel>
                             <AlertDialogAction onClick={() => handleDeleteSale(record.id)}
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                              Delete
-                            </AlertDialogAction>
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>
                       </AlertDialog>
