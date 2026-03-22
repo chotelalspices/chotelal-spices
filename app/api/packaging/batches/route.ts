@@ -72,14 +72,16 @@ export async function GET(request: NextRequest) {
 
       // ── Status logic (4 states) ─────────────────────────────────────────
       // Replace the status block with:
+      // Replace the status logic with:
       let status: "Not Started" | "Partial" | "Semi Packaged" | "Completed";
 
-      if (remainingQuantity <= 0.01) {
+      if (remainingQuantity <= 0.01 && batchSemiPackagedKg <= 0.01) {
+        // BOTH remaining AND semi-packaged must be zero for Completed
         status = "Completed";
       } else if (totalPackagedWeight === 0 && batchSemiPackagedKg === 0) {
         status = "Not Started";
       } else if (batchSemiPackagedKg > 0) {
-        // Any semi-packaged weight = Semi Packaged status, regardless of fully packaged
+        // Any pending semi-packaged weight = Semi Packaged status
         status = "Semi Packaged";
       } else {
         status = "Partial";
