@@ -41,7 +41,7 @@ interface AppLayoutProps {
 }
 
 const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, module: null },
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, module: 'dashboard' as const },
   { name: 'Inventory', href: '/inventory', icon: Package, module: 'inventory' as const },
   { name: 'Labels Inventory', href: '/labels/inventory', icon: Boxes, module: 'labels' as const },
   { name: 'Formulations', href: '/formulations', icon: FileText, module: 'formulations' as const },
