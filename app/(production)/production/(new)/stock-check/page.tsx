@@ -479,7 +479,16 @@ export default function ProductionStockCheck() {
                       <TableHead className="w-[12%] text-center">Stock</TableHead>
                       <TableHead className="w-[10%] text-center">Status</TableHead>
                       <TableHead className="w-[10%] text-right">Cost</TableHead>
-                      <TableHead className="w-[8%] text-center">✓</TableHead>
+                      <TableHead className="w-[8%] text-center">
+                        <Checkbox
+                          checked={requirements.length > 0 && requirements.filter(r => r.status !== 'inactive').every(r => r.isChecked)}
+                          onCheckedChange={(checked) => {
+                            setRequirements(prev =>
+                              prev.map(r => r.status === 'inactive' ? r : { ...r, isChecked: !!checked })
+                            );
+                          }}
+                        />
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

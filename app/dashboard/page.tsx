@@ -21,6 +21,14 @@ import { RecentActivity } from '@/components/dashboard/RecentActivity';
 import { DateRangeFilter } from '@/components/dashboard/DateRangeFilter';
 import { formatCurrency } from '@/data/sampleData';
 
+// Add this helper at the top of the file (after imports)
+const formatLakh = (amount: number): string => {
+  if (amount >= 100000) {
+    return `₹${(amount / 100000).toFixed(1)} L`;
+  }
+  return formatCurrency(amount);
+};
+
 // ✅ UPDATED: Added 'quarter' to DateRangeOption
 export type DateRangeOption = 'today' | 'week' | 'month' | 'quarter';
 
@@ -231,7 +239,7 @@ export default function DashboardPage() {
           />
           <MetricCard
             title="Raw Inventory Value"
-            value={formatCurrency(dashboardData.rawInventoryValue ?? 0)}
+            value={formatLakh(dashboardData.rawInventoryValue ?? 0)}
             subtitle="Cost × stock across all materials"
             icon={Boxes}
             variant="success"
@@ -239,7 +247,7 @@ export default function DashboardPage() {
           />
           <MetricCard
             title="Label Inventory Value"
-            value={formatCurrency(dashboardData.labelInventoryValue ?? 0)}
+            value={formatLakh(dashboardData.labelInventoryValue ?? 0)}
             subtitle="Stock × cost per unit"
             icon={IndianRupee}
             variant="default"
