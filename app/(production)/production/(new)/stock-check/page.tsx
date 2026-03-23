@@ -382,6 +382,25 @@ export default function ProductionStockCheck() {
             {isMobile ? (
               /* ── Mobile cards ── */
               <div className="divide-y">
+                <div className="px-4 py-3 bg-muted/30 flex items-center justify-between">
+                  <span className="text-sm font-medium text-muted-foreground">
+                    {requirements.filter(r => r.isChecked).length} / {requirements.length} confirmed
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="select-all-mobile" className="text-sm font-medium cursor-pointer">
+                      Select All
+                    </label>
+                    <Checkbox
+                      id="select-all-mobile"
+                      checked={requirements.length > 0 && requirements.filter(r => r.status !== 'inactive').every(r => r.isChecked)}
+                      onCheckedChange={(checked) => {
+                        setRequirements(prev =>
+                          prev.map(r => r.status === 'inactive' ? r : { ...r, isChecked: !!checked })
+                        );
+                      }}
+                    />
+                  </div>
+                </div>
                 {requirements.map((req, index) => (
                   <div key={`${req.originalRawMaterialId}-${index}`} className="p-4">
                     <div className="flex items-start justify-between gap-3">
