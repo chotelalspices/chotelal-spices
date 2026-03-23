@@ -14,6 +14,7 @@ const ROLE_HOME: Record<string, string> = {
   packaging:  '/packaging',
   sales:      '/sales',
   research:   '/research',
+  inventory:  '/inventory',
   labels:     '/labels/inventory',
 };
 

@@ -37,7 +37,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
 
-type UserRole = 'admin' | 'production' | 'packaging' | 'sales' | 'research';
+type UserRole = 'admin' | 'production' | 'packaging' | 'sales' | 'research' | 'inventory' | 'labels';
 type UserStatus = 'active' | 'inactive';
 
 interface User {
@@ -128,7 +128,7 @@ export default function AddEditUser() {
     try {
       const url = isEditing ? `/api/users/${id}` : '/api/users';
       const method = isEditing ? 'PUT' : 'POST';
-      
+
       const payload = isEditing ? {
         fullName: formData.fullName,
         phone: formData.phone,
@@ -340,7 +340,7 @@ export default function AddEditUser() {
               <div className="space-y-2">
                 <Label>Roles *</Label>
                 <div className="space-y-3">
-                  {(['admin', 'production', 'packaging', 'sales', 'research'] as UserRole[]).map((role) => (
+                  {(['admin', 'production', 'packaging', 'sales', 'research', 'inventory', 'labels'] as const).map((role) => (
                     <div key={role} className="flex items-center space-x-2">
                       <Checkbox
                         id={role}
@@ -349,7 +349,7 @@ export default function AddEditUser() {
                           if (checked) {
                             setFormData((prev) => ({
                               ...prev,
-                              roles: [...prev.roles, role],
+                              roles: [...prev.roles, role as UserRole],
                             }));
                           } else {
                             setFormData((prev) => ({
@@ -365,6 +365,8 @@ export default function AddEditUser() {
                         {role === 'packaging' && 'Packaging'}
                         {role === 'sales' && 'Sales'}
                         {role === 'research' && 'Research'}
+                        {role === 'inventory' && 'Inventory'}
+                        {role === 'labels' && 'Labels Inventory'}
                       </Label>
                     </div>
                   ))}
@@ -394,7 +396,7 @@ export default function AddEditUser() {
                   }
                 />
               </div>
-            {/* Reset Password */}
+              {/* Reset Password */}
               {isEditing && (
                 <div className="pt-4 border-t border-border">
                   <div className="flex items-center justify-between">

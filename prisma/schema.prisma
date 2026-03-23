@@ -57,6 +57,8 @@ enum UserRole {
   packaging
   sales
   research
+  inventory
+  labels
 }
 
 enum ResearchStatus {

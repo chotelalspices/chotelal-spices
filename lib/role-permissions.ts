@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'production' | 'packaging' | 'sales' | 'research'
+export type UserRole = 'admin' | 'production' | 'packaging' | 'sales' | 'research' | 'inventory' | 'labels'
 
 /**
  * Added new module: 'labels'
@@ -46,7 +46,6 @@ export const ROLE_PERMISSIONS: Record<UserRole, Module[]> = {
   ],
 
   production: [
-    'inventory',
     'production'
   ],
 
@@ -61,6 +60,13 @@ export const ROLE_PERMISSIONS: Record<UserRole, Module[]> = {
 
   research: [
     'research'
+  ],
+  inventory: [
+    'inventory'
+  ],
+
+  labels: [
+    'labels'
   ]
 }
 
@@ -70,7 +76,9 @@ export const FORMULATION_PERMISSIONS: Record<UserRole, FormulationPermission[]> 
   production: ['view_formulations', 'create_formulation', 'edit_formulation', 'delete_formulation'],
   packaging: ['view_formulations'],
   sales: [],
-  research: ['view_formulations']
+  research: ['view_formulations'],
+  inventory: [],
+  labels: []
 }
 
 // Granular product permissions
@@ -79,7 +87,9 @@ export const PRODUCT_PERMISSIONS: Record<UserRole, ProductPermission[]> = {
   production: ['view_products', 'create_product', 'edit_product', 'delete_product'],
   packaging: ['view_products', 'create_product', 'edit_product', 'delete_product'],
   sales: [],
-  research: ['view_products']
+  research: ['view_products'],
+   inventory: [],
+  labels: []
 }
 
 export function hasPermission(userRoles: UserRole[], module: Module): boolean {

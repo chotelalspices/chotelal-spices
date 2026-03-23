@@ -147,7 +147,7 @@ export async function PUT(
     }
 
     // Validate role enum values
-    const validRoles = ['admin', 'production', 'packaging', 'sales', 'research'];
+    const validRoles = ['admin', 'production', 'packaging', 'sales', 'research', 'inventory', 'labels'];
     const invalidRoles = roles.filter(role => !validRoles.includes(role.toLowerCase()));
     if (invalidRoles.length > 0) {
       return NextResponse.json(

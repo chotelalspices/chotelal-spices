@@ -125,7 +125,7 @@ export default function AddEditUser() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Validate at least one role is selected
     if (formData.roles.length === 0) {
       toast({
@@ -135,7 +135,7 @@ export default function AddEditUser() {
       });
       return;
     }
-    
+
     setShowConfirmDialog(true);
   };
 
@@ -146,7 +146,7 @@ export default function AddEditUser() {
     try {
       const url = isEditing ? `/api/users/${id}` : '/api/users';
       const method = isEditing ? 'PUT' : 'POST';
-      
+
       const payload = isEditing ? {
         fullName: formData.fullName,
         phone: formData.phone,
@@ -344,7 +344,7 @@ export default function AddEditUser() {
               <div className="space-y-3">
                 <Label>Roles *</Label>
                 <div className="space-y-2">
-                  {(['admin', 'production', 'packaging', 'sales', 'research'] as UserRole[]).map((role) => (
+                  {(['admin', 'production', 'packaging', 'sales', 'research', 'inventory', 'labels'] as UserRole[]).map((role) => (
                     <div key={role} className="flex items-center space-x-2">
                       <Checkbox
                         id={role}
@@ -369,6 +369,8 @@ export default function AddEditUser() {
                         {role === 'packaging' && 'Packaging'}
                         {role === 'sales' && 'Sales'}
                         {role === 'research' && 'Research'}
+                        {role === 'inventory' && 'Inventory'}
+                        {role === 'labels' && 'Labels Inventory'}
                       </Label>
                     </div>
                   ))}
