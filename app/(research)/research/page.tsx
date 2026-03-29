@@ -101,14 +101,17 @@ export default function ResearchList() {
   };
 
   // ── Visibility rules ─────────────────────────────────────────────────────
-  // Edit: shown to researcher only (not admin), on their own pending/rejected items
-  const canEdit = (research: any) =>
-    !isAdmin &&
-    isResearcher &&
-    research.researcher === currentUserName &&
-    research.status !== 'approved';
+  // Edit:
+  //   - Admin: can edit any research that is NOT approved (pending OR rejected)
+  //   - Researcher: can edit their own research that is NOT approved (pending OR rejected)
+  const canEdit = (research: any) => {
+    if (research.status === 'approved') return false;
+    if (isAdmin) return true;
+    if (isResearcher && research.researcher === currentUserName) return true;
+    return false;
+  };
 
-  // Delete: admin can delete any; researcher can delete their own pending/rejected
+  // Delete: admin can delete any; researcher can delete their own non-approved
   const canDelete = (research: any) => {
     if (isAdmin) return true;
     if (isResearcher && research.researcher === currentUserName && research.status !== 'approved') return true;
@@ -199,7 +202,7 @@ export default function ResearchList() {
         View
       </Button>
 
-      {/* Edit — researcher only, not admin, only on own pending/rejected */}
+      {/* Edit — admin (any non-approved) OR researcher (own non-approved) */}
       {canEdit(research) && (
         <Button size="sm" variant="outline" onClick={() => router.push(`/research/${research.id}/edit`)}>
           <Edit className="h-3.5 w-3.5 mr-1" />Edit

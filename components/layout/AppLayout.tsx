@@ -20,7 +20,8 @@ import {
   Settings,
   Users,
   LogOut,
-  Key
+  Key,
+  Package2
 } from 'lucide-react';
 import { cn } from '@/libs/utils';
 import { Button } from '@/components/ui/button';
@@ -44,6 +45,7 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, module: 'dashboard' as const },
   { name: 'Inventory', href: '/inventory', icon: Package, module: 'inventory' as const },
   { name: 'Labels Inventory', href: '/labels/inventory', icon: Boxes, module: 'labels' as const },
+  { name: 'Box Inventory', href: '/box-inventory', icon: Package2, module: 'box_inventory' as const },
   { name: 'Formulations', href: '/formulations', icon: FileText, module: 'formulations' as const },
   { name: 'Production', href: '/production', icon: Factory, module: 'production' as const },
   { name: 'Packaging', href: '/packaging', icon: PackageCheck, module: 'packaging' as const },
@@ -57,6 +59,7 @@ const mobileNav = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, module: null },
   { name: 'Inventory', href: '/inventory', icon: Package, module: 'inventory' as const },
   { name: 'Labels Inventory', href: '/labels/inventory', icon: Boxes, module: 'labels' as const },
+  { name: 'Box Inventory', href: '/box-inventory', icon: Package2, module: 'box_inventory' as const },
   { name: 'Formulations', href: '/formulations', icon: FileText, module: 'formulations' as const },
   { name: 'Production', href: '/production', icon: Factory, module: 'production' as const },
   { name: 'Packaging', href: '/packaging', icon: PackageCheck, module: 'packaging' as const },

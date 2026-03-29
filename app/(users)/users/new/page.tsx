@@ -344,7 +344,7 @@ export default function AddEditUser() {
               <div className="space-y-3">
                 <Label>Roles *</Label>
                 <div className="space-y-2">
-                  {(['admin', 'production', 'packaging', 'sales', 'research', 'inventory', 'labels'] as UserRole[]).map((role) => (
+                  {(['admin', 'production', 'packaging', 'sales', 'research', 'inventory', 'labels', 'box_inventory'] as UserRole[]).map((role) => (
                     <div key={role} className="flex items-center space-x-2">
                       <Checkbox
                         id={role}
@@ -371,6 +371,7 @@ export default function AddEditUser() {
                         {role === 'research' && 'Research'}
                         {role === 'inventory' && 'Inventory'}
                         {role === 'labels' && 'Labels Inventory'}
+                        {role === 'box_inventory' && 'Box Inventory'}
                       </Label>
                     </div>
                   ))}

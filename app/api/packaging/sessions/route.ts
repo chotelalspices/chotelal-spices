@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
 
     // ── Parse body ──────────────────────────────────────────────────────────
     const body = await request.json();
-    const { batchNumber, date, items, packagingLoss, remarks, courierBox, labels } = body;
+    const { batchNumber, date, items, packagingLoss, remarks, courierBox, labels, totalBoxes } = body;
 
     if (!batchNumber || !date) {
       return NextResponse.json(
@@ -50,10 +50,8 @@ export async function POST(request: NextRequest) {
       ? labels.filter((l) => l.type?.trim() && l.quantity > 0)
       : [];
 
-    // items can be empty for pure semi-packaged sessions that don't move product inventory
     const itemsArray = Array.isArray(items) ? items : [];
 
-    // Require at least items OR labels
     if (itemsArray.length === 0 && labelsArray.length === 0) {
       return NextResponse.json(
         { error: "At least one packaged item or label entry is required" },
@@ -108,10 +106,8 @@ export async function POST(request: NextRequest) {
         include: { labelMovements: true },
       });
 
-      // Only validate + deduct stock for fully-packaged labels (not semi-packaged)
-      // Conversions ARE fully-packaged so they get validated
       for (const entry of labelsArray) {
-        if (entry.semiPackaged) continue; // skip stock check — deduction happens at full packaging
+        if (entry.semiPackaged) continue;
 
         const labelRecord = foundLabels.find(
           (fl) => fl.name === entry.type.toLowerCase().trim()
@@ -145,7 +141,6 @@ export async function POST(request: NextRequest) {
     // ── Transaction ─────────────────────────────────────────────────────────
     const result = await prisma.$transaction(
       async (tx) => {
-        // 1. Create packaging session
         const packagingSession = await tx.packagingSession.create({
           data: {
             batchId: batch?.id ?? "",
@@ -156,7 +151,6 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        // 2. Update product inventory + build remarks
         let totalPackagedWeight = 0;
         const packagingDetails: string[] = [];
 
@@ -177,12 +171,9 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // 3. Determine session type and build remarks
         const isSemiPackagedSession =
           labelsArray.length > 0 && labelsArray.every((l) => l.semiPackaged === true);
-
         const hasConversions = labelsArray.some((l) => l.isConversion);
-
         const conversionNote = hasConversions ? " (conversion)" : "";
 
         if (packagingDetails.length > 0) {
@@ -196,7 +187,6 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        // 4. Create courier box record if provided
         let courierBoxRecord = null;
         if (courierBox) {
           const totalPackets = itemsArray.reduce(
@@ -214,9 +204,7 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        // 5. Create session label records
         let labelRecords: any[] = [];
-
         if (labelsArray.length > 0) {
           labelRecords = await Promise.all(
             labelsArray.map((l) =>
@@ -232,29 +220,20 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        // 6. Update batch.semiPackaged for semi-packaged labels
-        // Semi-packaged weight = packets of that label × weightPerPacket
-        // weightPerPacket comes from the items array (totalWeight / numberOfPackets)
         if (isSemiPackagedSession && totalPackagedWeight > 0) {
           await tx.packagingSession.update({
             where: { id: packagingSession.id },
             data: { semiPackaged: totalPackagedWeight },
           });
-
           await tx.productionBatch.update({
             where: { id: batch!.id },
-            data: {
-              semiPackaged: (batch!.semiPackaged || 0) + totalPackagedWeight,
-            },
+            data: { semiPackaged: (batch!.semiPackaged || 0) + totalPackagedWeight },
           });
         }
 
-        // 7. Handle label stock deductions
-        // Only deduct for fully-packaged labels (semiPackaged=false)
-        // Conversions are fully-packaged so they get deducted here
         if (labelsArray.length > 0 && labelRecordsForTx.length > 0) {
           for (const entry of labelsArray) {
-            if (entry.semiPackaged) continue; // no deduction yet for semi-packaged
+            if (entry.semiPackaged) continue;
 
             const labelRecord = labelRecordsForTx.find(
               (fl) => fl.name === entry.type.toLowerCase().trim()
@@ -273,17 +252,11 @@ export async function POST(request: NextRequest) {
               },
             });
 
-            // If converting semi → full: reduce batch.semiPackaged by converted weight
             if (entry.isConversion) {
-              // conversionWeight = the weight of packets being converted
-              // This is already captured in totalPackagedWeight for this session
               await tx.productionBatch.update({
                 where: { id: batch!.id },
                 data: {
-                  semiPackaged: Math.max(
-                    0,
-                    (batch!.semiPackaged || 0) - totalPackagedWeight
-                  ),
+                  semiPackaged: Math.max(0, (batch!.semiPackaged || 0) - totalPackagedWeight),
                 },
               });
             }
@@ -294,6 +267,36 @@ export async function POST(request: NextRequest) {
       },
       { timeout: 30000 }
     );
+
+    // ── Box inventory deduction (non-fatal, outside transaction) ─────────────
+    const totalBoxesNum = parseInt(totalBoxes) || 0;
+    if (totalBoxesNum > 0) {
+      try {
+        const boxItem = await (prisma as any).boxInventory.findUnique({
+          where: { id: "fixed-boxes-item" },
+        });
+        if (boxItem) {
+          await Promise.all([
+            (prisma as any).boxInventory.update({
+              where: { id: "fixed-boxes-item" },
+              data: { availableStock: boxItem.availableStock - totalBoxesNum },
+            }),
+            (prisma as any).boxMovement.create({
+              data: {
+                action: "reduce",
+                quantity: totalBoxesNum,
+                reason: "packaging",
+                reference: batchNumber,
+                remarks: `Auto-deducted for batch ${batchNumber}`,
+                performedById: authenticatedUserId,
+              },
+            }),
+          ]);
+        }
+      } catch (boxErr) {
+        console.error("Box deduction failed (non-fatal):", boxErr);
+      }
+    }
 
     // ── Fetch created session for response ──────────────────────────────────
     const createdSession = await prisma.packagingSession.findUnique({

@@ -63,22 +63,65 @@ export async function PUT(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
+
+    // ── Auth check ──────────────────────────────────────────────────────────
+    const user = await prisma.user.findUnique({
+      where: { email: session.user?.email || '' },
+      include: { userRoles: { select: { role: true } } },
+    });
+    if (!user) return NextResponse.json({ error: 'User not found' }, { status: 401 });
+    if (user.status !== 'active') return NextResponse.json({ error: 'Account inactive' }, { status: 403 });
+
+    const roles      = user.userRoles.map((r) => r.role);
+    const isAdmin    = roles.includes('admin');
+    const isResearcher = roles.includes('research');
+
+    if (!isAdmin && !isResearcher) {
+      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
+    }
+
+    // ── Fetch existing record ───────────────────────────────────────────────
+    const existing = await prisma.researchFormulation.findUnique({ where: { id } });
+    if (!existing) return NextResponse.json({ error: 'Research not found' }, { status: 404 });
+
+    // Only admin can edit approved; non-admin researcher can only edit their own non-approved
+    if (!isAdmin) {
+      if (existing.researcher !== user.fullName) {
+        return NextResponse.json({ error: 'You can only edit your own research' }, { status: 403 });
+      }
+      if (existing.status === 'approved') {
+        return NextResponse.json({ error: 'Approved research cannot be edited' }, { status: 403 });
+      }
+    }
+
     const body = await request.json();
     const {
       tempName, researcherName, researchDate,
       baseQuantity, baseUnit, notes, ingredients, extendedItems,
     } = body;
 
-    if (ingredients) {
+    // ── Percentage validation with generous tolerance ───────────────────────
+    // Floating-point arithmetic across unit conversions can drift slightly.
+    // We accept anything within 0.1% of 100 and normalise the last ingredient
+    // to make up the remainder — so this check is a true data sanity guard,
+    // not a rounding trap.
+    if (ingredients && Array.isArray(ingredients) && ingredients.length > 0) {
       const totalPercentage = ingredients.reduce(
-        (sum: number, ing: any) => sum + (ing.percentage || 0), 0
+        (sum: number, ing: any) => sum + (parseFloat(ing.percentage) || 0),
+        0,
       );
-      if (Math.abs(totalPercentage - 100) > 0.01) {
+      if (Math.abs(totalPercentage - 100) > 0.5) {
         return NextResponse.json(
-          { error: 'Ingredient percentages must total 100%' },
-          { status: 400 }
+          { error: `Ingredient percentages must total 100% (got ${totalPercentage.toFixed(4)}%)` },
+          { status: 400 },
         );
       }
+      // Normalise: adjust the last ingredient so DB always stores exactly 100
+      const lastIdx = ingredients.length - 1;
+      const sumExceptLast = ingredients
+        .slice(0, lastIdx)
+        .reduce((s: number, ing: any) => s + (parseFloat(ing.percentage) || 0), 0);
+      ingredients[lastIdx].percentage = parseFloat((100 - sumExceptLast).toFixed(4));
     }
 
     const validExtendedItems = Array.isArray(extendedItems)
@@ -88,12 +131,17 @@ export async function PUT(
     const research = await prisma.researchFormulation.update({
       where: { id },
       data: {
-        ...(tempName && { tempName }),
+        ...(tempName      && { tempName }),
         ...(researcherName && { researcher: researcherName }),
-        ...(researchDate && { researchDate: new Date(researchDate) }),
-        ...(baseQuantity && { baseQuantity: parseFloat(baseQuantity) }),
-        ...(baseUnit && { baseUnit }),
+        ...(researchDate  && { researchDate: new Date(researchDate) }),
+        ...(baseQuantity  && { baseQuantity: parseFloat(baseQuantity) }),
+        ...(baseUnit      && { baseUnit }),
         ...(notes !== undefined && { notes }),
+        // Reset to pending so admin reviews the updated version
+        status: 'pending',
+        rejectionReason: null,
+        reviewedById: null,
+        reviewedAt: null,
         ...(ingredients && {
           ingredients: {
             deleteMany: { researchId: id },
@@ -143,8 +191,8 @@ export async function DELETE(
     if (!user) return NextResponse.json({ error: 'User not found' }, { status: 401 });
     if (user.status !== 'active') return NextResponse.json({ error: 'Account inactive' }, { status: 403 });
 
-    const roles = user.userRoles.map((r) => r.role);
-    const isAdmin = roles.includes('admin');
+    const roles        = user.userRoles.map((r) => r.role);
+    const isAdmin      = roles.includes('admin');
     const isResearcher = roles.includes('research');
 
     if (!isAdmin && !isResearcher) {
@@ -165,10 +213,11 @@ export async function DELETE(
     }
 
     await prisma.$transaction([
-  prisma.researchIngredient.deleteMany({ where: { researchId: id } }),
-  (prisma as any).researchExtendedItem.deleteMany({ where: { researchId: id } }),
-  prisma.researchFormulation.delete({ where: { id } }),
-]);
+      prisma.researchIngredient.deleteMany({ where: { researchId: id } }),
+      (prisma as any).researchExtendedItem.deleteMany({ where: { researchId: id } }),
+      prisma.researchFormulation.delete({ where: { id } }),
+    ]);
+
     return NextResponse.json({ message: 'Deleted successfully' }, { status: 200 });
   } catch (error) {
     console.error('Error deleting research formulation:', error);

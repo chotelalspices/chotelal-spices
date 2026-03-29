@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -26,8 +26,6 @@ import { useAuth } from '@/hooks/use-auth';
 import { formatDate } from '@/data/sampleData';
 import { useIsMobile } from '@/hooks/use-mobile';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface ExtendedItemView {
   id: string;
   extendedInventoryId: string;
@@ -40,14 +38,8 @@ interface ExtendedItemView {
   notes: string | null;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 const fmt = (n: number) =>
-  new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    maximumFractionDigits: 2,
-  }).format(n);
+  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n);
 
 const getStatusColor = (status: string): string => {
   switch (status) {
@@ -67,13 +59,10 @@ const getStatusLabel = (status: string): string => {
   }
 };
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
 export default function ResearchApproval() {
   const router = useRouter();
   const params = useParams();
   const id = params?.id as string | undefined;
-
   const isMobile = useIsMobile();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -90,19 +79,14 @@ export default function ResearchApproval() {
 
   const isActioning = showApproveDialog || showRejectDialog;
 
-  // ─── Fetch ────────────────────────────────────────────────────────────────
-
   useEffect(() => {
     const fetchResearch = async () => {
       if (!id) { router.push('/research'); return; }
       try {
         const response = await fetch(`/api/research/${id}`);
-        if (response.ok) {
-          setResearch(await response.json());
-        } else {
-          throw new Error('Failed to fetch research formulation');
-        }
-      } catch (error) {
+        if (response.ok) setResearch(await response.json());
+        else throw new Error('Failed to fetch');
+      } catch {
         toast({ title: 'Error', description: 'Failed to load research formulation', variant: 'destructive' });
       } finally {
         setLoading(false);
@@ -119,9 +103,7 @@ export default function ResearchApproval() {
         const data = await res.json();
         setExistingFormulation(data.exists ? data.formulation : null);
       }
-    } catch { /* silent */ } finally {
-      setCheckingDuplicates(false);
-    }
+    } catch { } finally { setCheckingDuplicates(false); }
   };
 
   const handleApproveDialogOpen = () => {
@@ -129,14 +111,11 @@ export default function ResearchApproval() {
     setShowApproveDialog(true);
   };
 
-  // ─── Actions ──────────────────────────────────────────────────────────────
-
   const handleApprove = async () => {
     setIsSubmitting(true);
     try {
       const res = await fetch(`/api/research/${id}/approve`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'approve' }),
       });
       if (res.ok) {
@@ -147,15 +126,10 @@ export default function ResearchApproval() {
             : `"${research.tempName}" approved and added to formulations.`,
         });
         router.push('/research');
-      } else {
-        throw new Error('Failed to approve');
-      }
+      } else throw new Error('Failed to approve');
     } catch {
       toast({ title: 'Error', description: 'Failed to approve formulation', variant: 'destructive' });
-    } finally {
-      setIsSubmitting(false);
-      setShowApproveDialog(false);
-    }
+    } finally { setIsSubmitting(false); setShowApproveDialog(false); }
   };
 
   const handleReject = async () => {
@@ -163,29 +137,42 @@ export default function ResearchApproval() {
     setIsSubmitting(true);
     try {
       const res = await fetch(`/api/research/${id}/approve`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'reject', rejectionReason }),
       });
       if (res.ok) {
-        toast({
-          title: 'Formulation Rejected',
-          description: `"${research.tempName}" has been rejected with feedback.`,
-          variant: 'destructive',
-        });
+        toast({ title: 'Formulation Rejected', description: `"${research.tempName}" has been rejected with feedback.`, variant: 'destructive' });
         router.push('/research');
-      } else {
-        throw new Error('Failed to reject');
-      }
+      } else throw new Error('Failed to reject');
     } catch {
       toast({ title: 'Error', description: 'Failed to reject formulation', variant: 'destructive' });
-    } finally {
-      setIsSubmitting(false);
-      setShowRejectDialog(false);
-    }
+    } finally { setIsSubmitting(false); setShowRejectDialog(false); }
   };
 
-  // ─── Loading ──────────────────────────────────────────────────────────────
+  // ── Combined percentage math (same logic as new/edit page) ────────────────
+
+  const { combinedTotalQtyKg, rmTotalQtyKg, extendedTotalQtyKg, combinedCostPerKg, rmPct, extPct } = useMemo(() => {
+    if (!research) return { combinedTotalQtyKg: 0, rmTotalQtyKg: 0, extendedTotalQtyKg: 0, combinedCostPerKg: 0, rmPct: 0, extPct: 0 };
+
+    // baseQuantity stored is the rm total kg
+    const rmTotal = research.baseQuantity || 0;
+    const extTotal = (research.extendedItems ?? []).reduce((s: number, i: any) => s + (i.quantity || 0), 0);
+    const combined = rmTotal + extTotal;
+
+    // cost: sum of (percentage/100 * baseQuantity * ratePerKg) — but we don't have ratePerKg here
+    // so we just show the combined qty breakdown; cost shown only if available
+    return {
+      combinedTotalQtyKg: combined,
+      rmTotalQtyKg: rmTotal,
+      extendedTotalQtyKg: extTotal,
+      combinedCostPerKg: 0, // cost not stored on research record view
+      rmPct: combined > 0 ? (rmTotal / combined) * 100 : 0,
+      extPct: combined > 0 ? (extTotal / combined) * 100 : 0,
+    };
+  }, [research]);
+
+  const getPct = (qtyKg: number) =>
+    combinedTotalQtyKg > 0 ? (qtyKg / combinedTotalQtyKg) * 100 : 0;
 
   if (loading) {
     return (
@@ -215,9 +202,6 @@ export default function ResearchApproval() {
   }
 
   const extendedItems: ExtendedItemView[] = research.extendedItems ?? [];
-  const extendedTotalQty = extendedItems.reduce((s, i) => s + (i.quantity || 0), 0);
-
-  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <AppLayout>
@@ -278,9 +262,7 @@ export default function ResearchApproval() {
                   <div>
                     <p className="text-sm text-muted-foreground">Reviewed By</p>
                     <p className="font-medium">{research.reviewedBy.fullName}</p>
-                    {research.reviewedAt && (
-                      <p className="text-xs text-muted-foreground">{formatDate(research.reviewedAt)}</p>
-                    )}
+                    {research.reviewedAt && <p className="text-xs text-muted-foreground">{formatDate(research.reviewedAt)}</p>}
                   </div>
                 </div>
               )}
@@ -288,7 +270,7 @@ export default function ResearchApproval() {
           </CardContent>
         </Card>
 
-        {/* Ingredients */}
+        {/* Ingredient Breakdown — no summary strip */}
         <Card>
           <CardHeader><CardTitle>Ingredient Breakdown</CardTitle></CardHeader>
           <CardContent className="p-0">
@@ -300,7 +282,7 @@ export default function ResearchApproval() {
                       <p className="font-medium">{ing?.rawMaterial?.name}</p>
                       <p className="text-sm text-muted-foreground">Ingredient {index + 1}</p>
                     </div>
-                    <p className="text-lg font-bold">{ing.percentage.toFixed(2)}%</p>
+                    <p className="text-lg font-bold">{getPct(ing.percentage / 100 * rmTotalQtyKg).toFixed(1)}%</p>
                   </div>
                 ))}
               </div>
@@ -310,24 +292,25 @@ export default function ResearchApproval() {
                   <TableRow>
                     <TableHead>#</TableHead>
                     <TableHead>Raw Material</TableHead>
-                    <TableHead className="text-right">Percentage</TableHead>
+                    <TableHead className="text-right">% of Total</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {research.ingredients.map((ing: any, index: number) => (
-                    <TableRow key={ing.rawMaterialId}>
-                      <TableCell>{index + 1}</TableCell>
-                      <TableCell className="font-medium">{ing?.rawMaterial?.name}</TableCell>
-                      <TableCell className="text-right">{ing.percentage.toFixed(2)}%</TableCell>
-                    </TableRow>
-                  ))}
+                  {research.ingredients.map((ing: any, index: number) => {
+                    // Recalculate using combined denominator
+                    const ingQtyKg = (ing.percentage / 100) * rmTotalQtyKg;
+                    const combinedPct = getPct(ingQtyKg);
+                    return (
+                      <TableRow key={ing.rawMaterialId}>
+                        <TableCell>{index + 1}</TableCell>
+                        <TableCell className="font-medium">{ing?.rawMaterial?.name}</TableCell>
+                        <TableCell className="text-right">{combinedPct.toFixed(2)}%</TableCell>
+                      </TableRow>
+                    );
+                  })}
                   <TableRow className="font-bold bg-muted/40">
-                    <TableCell colSpan={2}>Total</TableCell>
-                    <TableCell className="text-right">
-                      {research.ingredients
-                        .reduce((sum: number, ing: any) => sum + ing.percentage, 0)
-                        .toFixed(2)}%
-                    </TableCell>
+                    <TableCell colSpan={2}>Raw Materials Subtotal</TableCell>
+                    <TableCell className="text-right">{rmPct.toFixed(1)}%</TableCell>
                   </TableRow>
                 </TableBody>
               </Table>
@@ -347,7 +330,7 @@ export default function ResearchApproval() {
             <CardContent className="p-0">
               {isMobile ? (
                 <div className="divide-y">
-                  {extendedItems.map((item, index) => (
+                  {extendedItems.map((item) => (
                     <div key={item.id} className="p-4">
                       <div className="flex justify-between items-start mb-1">
                         <div>
@@ -357,7 +340,7 @@ export default function ResearchApproval() {
                             {isAdmin && item.companyName && <span>{item.companyName}</span>}
                           </div>
                         </div>
-                        <p className="text-lg font-bold">{item.percentage.toFixed(1)}%</p>
+                        <p className="text-lg font-bold">{getPct(item.quantity).toFixed(1)}%</p>
                       </div>
                       <div className="flex gap-4 text-sm text-muted-foreground mt-1">
                         <span>{item.quantity.toFixed(3)} kg</span>
@@ -376,7 +359,7 @@ export default function ResearchApproval() {
                       {isAdmin && <TableHead>Company</TableHead>}
                       <TableHead>Code</TableHead>
                       <TableHead className="text-right">Qty (kg)</TableHead>
-                      <TableHead className="text-right">%</TableHead>
+                      <TableHead className="text-right">% of Total</TableHead>
                       <TableHead className="text-right">Price</TableHead>
                       <TableHead>Notes</TableHead>
                     </TableRow>
@@ -386,41 +369,53 @@ export default function ResearchApproval() {
                       <TableRow key={item.id}>
                         <TableCell className="text-muted-foreground">{index + 1}</TableCell>
                         <TableCell className="font-medium">{item.productName}</TableCell>
-                        {isAdmin && (
-                          <TableCell className="text-muted-foreground text-sm">
-                            {item.companyName ?? '—'}
-                          </TableCell>
-                        )}
+                        {isAdmin && <TableCell className="text-muted-foreground text-sm">{item.companyName ?? '—'}</TableCell>}
                         <TableCell>
-                          {item.code
-                            ? <span className="font-mono text-xs">{item.code}</span>
-                            : <span className="text-muted-foreground">—</span>}
+                          {item.code ? <span className="font-mono text-xs">{item.code}</span> : <span className="text-muted-foreground">—</span>}
                         </TableCell>
                         <TableCell className="text-right">{item.quantity.toFixed(3)}</TableCell>
-                        <TableCell className="text-right font-medium">
-                          {item.percentage.toFixed(1)}%
-                        </TableCell>
+                        <TableCell className="text-right font-medium">{getPct(item.quantity).toFixed(1)}%</TableCell>
                         <TableCell className="text-right">
                           {item.price > 0 ? fmt(item.price) : <span className="text-muted-foreground">—</span>}
                         </TableCell>
-                        <TableCell className="text-muted-foreground text-sm">
-                          {item.notes ?? '—'}
-                        </TableCell>
+                        <TableCell className="text-muted-foreground text-sm">{item.notes ?? '—'}</TableCell>
                       </TableRow>
                     ))}
-                    {/* Totals row */}
-                    <TableRow className="font-semibold bg-muted/40 border-t-2">
-                      <TableCell />
-                      <TableCell className="text-muted-foreground text-sm">Total</TableCell>
-                      {isAdmin && <TableCell />}
-                      <TableCell />
-                      <TableCell className="text-right">{extendedTotalQty.toFixed(3)} kg</TableCell>
-                      <TableCell className="text-right">100%</TableCell>
-                      <TableCell />
-                      <TableCell />
+                    <TableRow className="font-bold bg-muted/40">
+                      <TableCell colSpan={isAdmin ? 4 : 3}>Extended Items Subtotal</TableCell>
+                      <TableCell className="text-right">{extendedTotalQtyKg.toFixed(3)} kg</TableCell>
+                      <TableCell className="text-right">{extPct.toFixed(1)}%</TableCell>
+                      <TableCell /><TableCell />
                     </TableRow>
                   </TableBody>
                 </Table>
+              )}
+
+              {/* ── Single unified summary strip ── */}
+              {combinedTotalQtyKg > 0 && (
+                <div className="grid grid-cols-3 divide-x border-t">
+                  <div className="p-4">
+                    <div className="text-xs text-muted-foreground mb-0.5">Combined Qty</div>
+                    <div className="font-semibold text-base">{combinedTotalQtyKg.toFixed(2)} kg</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {rmTotalQtyKg.toFixed(2)} RM
+                      {extendedTotalQtyKg > 0 && ` + ${extendedTotalQtyKg.toFixed(3)} Ext`}
+                    </div>
+                  </div>
+                  <div className="p-4 bg-green-50">
+                    <div className="text-xs text-muted-foreground mb-0.5">Total Percentage</div>
+                    <div className="font-semibold text-base">100%</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      RM {rmPct.toFixed(1)}%
+                      {extendedTotalQtyKg > 0 && ` · Ext ${extPct.toFixed(1)}%`}
+                    </div>
+                  </div>
+                  <div className="p-4 bg-primary/5">
+                    <div className="text-xs text-muted-foreground mb-0.5">Total Qty Basis</div>
+                    <div className="font-semibold text-base">{combinedTotalQtyKg.toFixed(2)} kg</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">raw + extended</div>
+                  </div>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -431,8 +426,7 @@ export default function ResearchApproval() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Research Notes
+                <FileText className="h-5 w-5" />Research Notes
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -446,8 +440,7 @@ export default function ResearchApproval() {
           <Card className="border-destructive/50">
             <CardHeader>
               <CardTitle className="text-destructive flex items-center gap-2">
-                <XCircle className="h-5 w-5" />
-                Rejection Reason
+                <XCircle className="h-5 w-5" />Rejection Reason
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -461,19 +454,10 @@ export default function ResearchApproval() {
           <Card className="border-primary/50 bg-primary/5">
             <CardHeader><CardTitle>Admin Review</CardTitle></CardHeader>
             <CardContent className="flex gap-3">
-              <Button
-                onClick={handleApproveDialogOpen}
-                className="flex-1 bg-green-600 hover:bg-green-700"
-                disabled={isActioning}
-              >
+              <Button onClick={handleApproveDialogOpen} className="flex-1 bg-green-600 hover:bg-green-700" disabled={isActioning}>
                 <CheckCircle className="h-4 w-4 mr-2" />Approve
               </Button>
-              <Button
-                variant="destructive"
-                onClick={() => setShowRejectDialog(true)}
-                className="flex-1"
-                disabled={isActioning}
-              >
+              <Button variant="destructive" onClick={() => setShowRejectDialog(true)} className="flex-1" disabled={isActioning}>
                 <XCircle className="h-4 w-4 mr-2" />Reject
               </Button>
             </CardContent>
@@ -486,24 +470,15 @@ export default function ResearchApproval() {
             <AlertDialogHeader>
               <AlertDialogTitle>Approve Formulation?</AlertDialogTitle>
               <AlertDialogDescription>
-                {checkingDuplicates ? (
-                  'Checking for existing formulations...'
-                ) : existingFormulation ? (
-                  <span className="text-amber-600 font-medium">
-                    ⚠️ A formulation named "{research.tempName}" already exists and will be replaced.
-                  </span>
-                ) : (
-                  <>This will add "{research.tempName}" to the main formulation list and make it available for production.</>
-                )}
+                {checkingDuplicates ? 'Checking for existing formulations...'
+                  : existingFormulation
+                    ? <span className="text-amber-600 font-medium">⚠️ A formulation named "{research.tempName}" already exists and will be replaced.</span>
+                    : <>This will add "{research.tempName}" to the main formulation list and make it available for production.</>}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel disabled={isSubmitting}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={handleApprove}
-                disabled={isSubmitting || checkingDuplicates}
-                className="bg-green-600 hover:bg-green-700"
-              >
+              <AlertDialogAction onClick={handleApprove} disabled={isSubmitting || checkingDuplicates} className="bg-green-600 hover:bg-green-700">
                 {isSubmitting ? 'Approving...' : existingFormulation ? 'Replace & Approve' : 'Approve'}
               </AlertDialogAction>
             </AlertDialogFooter>
@@ -515,28 +490,16 @@ export default function ResearchApproval() {
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Reject Formulation?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Please provide a reason for rejection. This will be visible to the researcher.
-              </AlertDialogDescription>
+              <AlertDialogDescription>Please provide a reason for rejection. This will be visible to the researcher.</AlertDialogDescription>
             </AlertDialogHeader>
             <div className="py-4">
               <Label htmlFor="reason">Rejection Reason *</Label>
-              <Textarea
-                id="reason"
-                placeholder="Explain why this formulation is being rejected..."
-                value={rejectionReason}
-                onChange={(e) => setRejectionReason(e.target.value)}
-                className="mt-2"
-                rows={4}
-              />
+              <Textarea id="reason" placeholder="Explain why this formulation is being rejected..."
+                value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="mt-2" rows={4} />
             </div>
             <AlertDialogFooter>
               <AlertDialogCancel disabled={isSubmitting}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={handleReject}
-                disabled={isSubmitting || !rejectionReason.trim()}
-                className="bg-destructive hover:bg-destructive/90"
-              >
+              <AlertDialogAction onClick={handleReject} disabled={isSubmitting || !rejectionReason.trim()} className="bg-destructive hover:bg-destructive/90">
                 {isSubmitting ? 'Rejecting...' : 'Reject'}
               </AlertDialogAction>
             </AlertDialogFooter>

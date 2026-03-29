@@ -31,8 +31,6 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/libs/utils';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface RawMaterial {
   id: string;
   name: string;
@@ -53,13 +51,14 @@ interface ExtendedItem {
 interface IngredientRow {
   id: string;
   rawMaterialId: string;
-  quantity: string; // user-entered quantity (for display/calc)
-  percentage: number; // stored percentage
+  quantity: string;
+  percentage: number;
 }
 
 interface SelectedExtendedItem {
   rowId: string;
   extendedItemId: string;
+  quantity: string;
   notes: string;
   comboOpen: boolean;
 }
@@ -69,7 +68,7 @@ interface CalculatedIngredient {
   name: string;
   quantity: number;
   unit: string;
-  percentage: number;
+  qtyKg: number;
   ratePerKg: number;
   costContribution: number;
 }
@@ -78,12 +77,9 @@ export default function ResearchEdit() {
   const router = useRouter();
   const params = useParams();
   const id = params?.id as string;
-
   const { toast } = useToast();
   const { user } = useAuth();
   const isAdmin = user?.roles?.includes('admin') || false;
-
-  // ─── State ────────────────────────────────────────────────────────────────
 
   const [formData, setFormData] = useState({
     tempName: '',
@@ -92,18 +88,14 @@ export default function ResearchEdit() {
     baseQuantity: '100',
     notes: '',
   });
-
   const [ingredients, setIngredients] = useState<IngredientRow[]>([
     { id: '1', rawMaterialId: '', quantity: '', percentage: 0 },
   ]);
-
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [extendedItems, setExtendedItems] = useState<ExtendedItem[]>([]);
   const [selectedExtended, setSelectedExtended] = useState<SelectedExtendedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // ─── Fetch all data ───────────────────────────────────────────────────────
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -113,20 +105,15 @@ export default function ResearchEdit() {
           fetch('/api/inventory'),
           fetch('/api/extended-inventory'),
         ]);
-
         if (!researchRes.ok) throw new Error('Research not found');
-
         const [researchData, materialsData, extendedData] = await Promise.all([
           researchRes.json(),
           materialsRes.ok ? materialsRes.json() : [],
           extendedRes.ok ? extendedRes.json() : [],
         ]);
-
         const activeRMs: RawMaterial[] = materialsData.filter((rm: RawMaterial) => rm.status === 'active');
         setRawMaterials(activeRMs);
         setExtendedItems(extendedData);
-
-        // ── Pre-fill formData ──
         setFormData({
           tempName: researchData.tempName || '',
           researcherName: researchData.researcher || '',
@@ -136,111 +123,120 @@ export default function ResearchEdit() {
           baseQuantity: researchData.baseQuantity?.toString() || '100',
           notes: researchData.notes || '',
         });
-
-        // ── Pre-fill ingredients ──
-        // Convert stored percentages back to quantities using baseQuantity
         const base = researchData.baseQuantity || 100;
         if (researchData.ingredients?.length > 0) {
-          setIngredients(
-            researchData.ingredients.map((ing: any, index: number) => {
-              const rm = activeRMs.find((r) => r.id === ing.rawMaterialId);
-              const qtyKg = (ing.percentage / 100) * base;
-              // Convert back to material's native unit
-              const qty = rm?.unit === 'gm' ? (qtyKg * 1000).toFixed(2) : qtyKg.toFixed(2);
-              return {
-                id: String(index + 1),
-                rawMaterialId: ing.rawMaterialId,
-                quantity: qty,
-                percentage: ing.percentage,
-              };
-            })
-          );
+          setIngredients(researchData.ingredients.map((ing: any, index: number) => {
+            const rm = activeRMs.find(r => r.id === ing.rawMaterialId);
+            const qtyKg = (ing.percentage / 100) * base;
+            const qty = rm?.unit === 'gm' ? (qtyKg * 1000).toFixed(2) : qtyKg.toFixed(2);
+            return { id: String(index + 1), rawMaterialId: ing.rawMaterialId, quantity: qty, percentage: ing.percentage };
+          }));
         }
-
-        // ── Pre-fill extended items ──
         if (researchData.extendedItems?.length > 0) {
-          setSelectedExtended(
-            researchData.extendedItems.map((item: any, index: number) => ({
-              rowId: String(Date.now() + index),
-              extendedItemId: item.extendedInventoryId,
-              notes: item.notes || '',
-              comboOpen: false,
-            }))
-          );
+          setSelectedExtended(researchData.extendedItems.map((item: any, index: number) => ({
+            rowId: String(Date.now() + index),
+            extendedItemId: item.extendedInventoryId,
+            quantity: item.quantity?.toString() || '',
+            notes: item.notes || '',
+            comboOpen: false,
+          })));
         }
-      } catch (error) {
+      } catch {
         toast({ title: 'Error', description: 'Failed to load research formulation', variant: 'destructive' });
         router.push('/research');
       } finally {
         setLoading(false);
       }
     };
-
     if (id) fetchAll();
   }, [id]);
 
-  // ─── Calculations ─────────────────────────────────────────────────────────
+  // ── Raw material calc rows ────────────────────────────────────────────────
 
-  const calculations = useMemo(() => {
-    const valid = ingredients.filter((i) => i.rawMaterialId && i.quantity && parseFloat(i.quantity) > 0);
-    if (valid.length === 0) return { rows: [], totalQtyKg: 0, totalCost: 0, costPerKg: 0, totalPercentage: 0 };
-
-    let totalQtyKg = 0;
-    valid.forEach((ing) => {
-      const rm = rawMaterials.find((r) => r.id === ing.rawMaterialId);
-      if (!rm) return;
-      const qty = parseFloat(ing.quantity);
-      totalQtyKg += rm.unit === 'gm' ? qty / 1000 : qty;
-    });
-
-    let totalCost = 0;
-    const rows: CalculatedIngredient[] = valid.map((ing) => {
-      const rm = rawMaterials.find((r) => r.id === ing.rawMaterialId)!;
+  const rmRows = useMemo((): CalculatedIngredient[] => {
+    const valid = ingredients.filter(i => i.rawMaterialId && i.quantity && parseFloat(i.quantity) > 0);
+    return valid.map(ing => {
+      const rm = rawMaterials.find(r => r.id === ing.rawMaterialId);
+      if (!rm) return null!;
       const qty = parseFloat(ing.quantity);
       const qtyKg = rm.unit === 'gm' ? qty / 1000 : qty;
-      const percentage = totalQtyKg > 0 ? (qtyKg / totalQtyKg) * 100 : 0;
       const ratePerKg = rm.unit === 'gm' ? rm.costPerUnit * 1000 : rm.costPerUnit;
-      const costContribution = qtyKg * ratePerKg;
-      totalCost += costContribution;
-      return { rawMaterialId: ing.rawMaterialId, name: rm.name, quantity: qty, unit: rm.unit, percentage, ratePerKg, costContribution };
-    });
-
-    const costPerKg = totalQtyKg > 0 ? totalCost / totalQtyKg : 0;
-    const totalPercentage = rows.reduce((s, r) => s + r.percentage, 0);
-    return { rows, totalQtyKg, totalCost, costPerKg, totalPercentage };
+      return { rawMaterialId: ing.rawMaterialId, name: rm.name, quantity: qty, unit: rm.unit, qtyKg, ratePerKg, costContribution: qtyKg * ratePerKg };
+    }).filter(Boolean);
   }, [ingredients, rawMaterials]);
 
-  // ─── Ingredient helpers ───────────────────────────────────────────────────
+  const rmTotalQtyKg = useMemo(() => rmRows.reduce((s, r) => s + r.qtyKg, 0), [rmRows]);
+  const rmTotalCost = useMemo(() => rmRows.reduce((s, r) => s + r.costContribution, 0), [rmRows]);
 
-  const usedRMIds = ingredients.filter((i) => i.rawMaterialId).map((i) => i.rawMaterialId);
+  // ── Extended total ────────────────────────────────────────────────────────
+
+  const extendedTotalQtyKg = useMemo(
+    () => selectedExtended.reduce((s, r) => s + (parseFloat(r.quantity) || 0), 0),
+    [selectedExtended]
+  );
+
+  // ── Combined ──────────────────────────────────────────────────────────────
+
+  const combinedTotalQtyKg = rmTotalQtyKg + extendedTotalQtyKg;
+  const getPct = (qtyKg: number) => combinedTotalQtyKg > 0 ? (qtyKg / combinedTotalQtyKg) * 100 : 0;
+  const combinedCostPerKg = combinedTotalQtyKg > 0 ? rmTotalCost / combinedTotalQtyKg : 0;
+
+  const ingredientsPayload = useMemo(() => {
+    if (rmRows.length === 0) return [];
+
+    const rawPcts = rmRows.map(r =>
+      rmTotalQtyKg > 0 ? (r.qtyKg / rmTotalQtyKg) * 100 : 0
+    );
+
+    let accumulated = 0;
+
+    return rmRows.map((r, i) => {
+      let pct: number;
+
+      if (i === rmRows.length - 1) {
+        pct = parseFloat((100 - accumulated).toFixed(4));
+      } else {
+        pct = parseFloat(rawPcts[i].toFixed(4));
+        accumulated += pct;
+      }
+
+      return {
+        rawMaterialId: r.rawMaterialId,
+        percentage: pct,
+      };
+    });
+  }, [rmRows, rmTotalQtyKg]);
+
+  const fmt = (n: number) =>
+    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n);
+
+  // ── Ingredient helpers ────────────────────────────────────────────────────
+
+  const usedRMIds = ingredients.filter(i => i.rawMaterialId).map(i => i.rawMaterialId);
   const getAvailableRMs = (currentIngId: string) => {
-    const currentRmId = ingredients.find((i) => i.id === currentIngId)?.rawMaterialId;
-    return rawMaterials.filter((rm) => !usedRMIds.includes(rm.id) || rm.id === currentRmId);
+    const cur = ingredients.find(i => i.id === currentIngId)?.rawMaterialId;
+    return rawMaterials.filter(rm => !usedRMIds.includes(rm.id) || rm.id === cur);
   };
-
-  const addIngredient = () => setIngredients((prev) => [...prev, { id: Date.now().toString(), rawMaterialId: '', quantity: '', percentage: 0 }]);
-  const removeIngredient = (ingId: string) => { if (ingredients.length <= 1) return; setIngredients((prev) => prev.filter((i) => i.id !== ingId)); };
+  const addIngredient = () => setIngredients(prev => [...prev, { id: Date.now().toString(), rawMaterialId: '', quantity: '', percentage: 0 }]);
+  const removeIngredient = (ingId: string) => { if (ingredients.length <= 1) return; setIngredients(prev => prev.filter(i => i.id !== ingId)); };
   const updateIngredient = (ingId: string, field: 'rawMaterialId' | 'quantity', value: string) =>
-    setIngredients((prev) => prev.map((i) => (i.id === ingId ? { ...i, [field]: value } : i)));
-  const getCalcRow = (rawMaterialId: string) => calculations.rows.find((r) => r.rawMaterialId === rawMaterialId);
+    setIngredients(prev => prev.map(i => i.id === ingId ? { ...i, [field]: value } : i));
+  const getRmRow = (rawMaterialId: string) => rmRows.find(r => r.rawMaterialId === rawMaterialId);
 
-  // ─── Extended item helpers ────────────────────────────────────────────────
+  // ── Extended helpers ──────────────────────────────────────────────────────
 
-  const addExtendedItem = () => setSelectedExtended((prev) => [...prev, { rowId: Date.now().toString(), extendedItemId: '', notes: '', comboOpen: false }]);
-  const removeExtendedItem = (rowId: string) => setSelectedExtended((prev) => prev.filter((r) => r.rowId !== rowId));
+  const addExtendedItem = () => setSelectedExtended(prev => [...prev, { rowId: Date.now().toString(), extendedItemId: '', quantity: '', notes: '', comboOpen: false }]);
+  const removeExtendedItem = (rowId: string) => setSelectedExtended(prev => prev.filter(r => r.rowId !== rowId));
   const updateExtendedItem = (rowId: string, field: keyof Omit<SelectedExtendedItem, 'rowId'>, value: string | boolean) =>
-    setSelectedExtended((prev) => prev.map((r) => r.rowId === rowId ? { ...r, [field]: value } : r));
-  const usedExtendedIds = selectedExtended.map((r) => r.extendedItemId).filter(Boolean);
+    setSelectedExtended(prev => prev.map(r => r.rowId === rowId ? { ...r, [field]: value } : r));
+  const usedExtendedIds = selectedExtended.map(r => r.extendedItemId).filter(Boolean);
 
-  // ─── Validation ───────────────────────────────────────────────────────────
-
-  const canSubmit = formData.tempName && formData.researcherName && formData.researchDate && calculations.rows.length > 0;
-
-  // ─── Submit ───────────────────────────────────────────────────────────────
+  const canSubmit = formData.tempName && formData.researcherName && formData.researchDate && rmRows.length > 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
+
     setIsSubmitting(true);
 
     try {
@@ -251,17 +247,16 @@ export default function ResearchEdit() {
           tempName: formData.tempName,
           researcherName: formData.researcherName,
           researchDate: formData.researchDate,
-          baseQuantity: calculations.totalQtyKg,
+          baseQuantity: combinedTotalQtyKg,
           baseUnit: 'kg',
           notes: formData.notes,
-          ingredients: calculations.rows.map((r) => ({
-            rawMaterialId: r.rawMaterialId,
-            percentage: r.percentage,
-          })),
+          ingredients: ingredientsPayload,
           extendedItems: selectedExtended
-            .filter((r) => r.extendedItemId)
-            .map((r) => ({
+            .filter(r => r.extendedItemId)
+            .map(r => ({
               extendedInventoryId: r.extendedItemId,
+              quantity: parseFloat(r.quantity) || 0,
+              percentage: getPct(parseFloat(r.quantity) || 0),
               notes: r.notes || null,
             })),
         }),
@@ -269,19 +264,22 @@ export default function ResearchEdit() {
 
       if (!res.ok) throw new Error('Failed to update research');
 
-      toast({ title: 'Research Updated', description: `"${formData.tempName}" has been re-submitted for approval.` });
+      toast({
+        title: 'Research Updated',
+        description: `"${formData.tempName}" has been re-submitted for approval.`,
+      });
+
       router.push('/research');
-    } catch (error) {
-      toast({ title: 'Error', description: 'Failed to update research. Please try again.', variant: 'destructive' });
+    } catch {
+      toast({
+        title: 'Error',
+        description: 'Failed to update research. Please try again.',
+        variant: 'destructive',
+      });
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  const fmt = (n: number) =>
-    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n);
-
-  // ─── Loading ──────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -293,8 +291,6 @@ export default function ResearchEdit() {
       </AppLayout>
     );
   }
-
-  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <AppLayout>
@@ -323,7 +319,7 @@ export default function ResearchEdit() {
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Temporary Masala Name *</Label>
-                <Input value={formData.tempName} onChange={(e) => setFormData({ ...formData, tempName: e.target.value })} />
+                <Input value={formData.tempName} onChange={e => setFormData({ ...formData, tempName: e.target.value })} />
               </div>
               <div className="space-y-2">
                 <Label>Researcher Name *</Label>
@@ -335,18 +331,18 @@ export default function ResearchEdit() {
                 <Label>Research Date *</Label>
                 <div className="relative">
                   <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input type="date" value={formData.researchDate} onChange={(e) => setFormData({ ...formData, researchDate: e.target.value })} className="pl-10" />
+                  <Input type="date" value={formData.researchDate} onChange={e => setFormData({ ...formData, researchDate: e.target.value })} className="pl-10" />
                 </div>
               </div>
               <div className="space-y-2">
                 <Label>Base Quantity (kg)</Label>
-                <Input value={calculations.totalQtyKg > 0 ? calculations.totalQtyKg.toFixed(3) : formData.baseQuantity} readOnly className="bg-muted/50" />
+                <Input value={combinedTotalQtyKg > 0 ? combinedTotalQtyKg.toFixed(3) : formData.baseQuantity} readOnly className="bg-muted/50" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Ingredients */}
+        {/* Raw Material Breakdown — no summary strip */}
         <Card>
           <CardHeader className="flex flex-row justify-between items-center">
             <CardTitle>Raw Material Breakdown</CardTitle>
@@ -369,16 +365,16 @@ export default function ResearchEdit() {
                 </TableHeader>
                 <TableBody>
                   {ingredients.map((ing, index) => {
-                    const calc = getCalcRow(ing.rawMaterialId);
-                    const rm = rawMaterials.find((r) => r.id === ing.rawMaterialId);
+                    const row = getRmRow(ing.rawMaterialId);
+                    const rm = rawMaterials.find(r => r.id === ing.rawMaterialId);
                     return (
                       <TableRow key={ing.id}>
                         <TableCell className="text-muted-foreground">{index + 1}</TableCell>
                         <TableCell>
-                          <Select value={ing.rawMaterialId} onValueChange={(v) => updateIngredient(ing.id, 'rawMaterialId', v)}>
+                          <Select value={ing.rawMaterialId} onValueChange={v => updateIngredient(ing.id, 'rawMaterialId', v)}>
                             <SelectTrigger className="min-w-[140px]"><SelectValue placeholder="Select" /></SelectTrigger>
                             <SelectContent>
-                              {getAvailableRMs(ing.id).map((rm) => (
+                              {getAvailableRMs(ing.id).map(rm => (
                                 <SelectItem key={rm.id} value={rm.id}>{rm.name}</SelectItem>
                               ))}
                             </SelectContent>
@@ -386,21 +382,19 @@ export default function ResearchEdit() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1.5">
-                            <Input
-                              type="number" min="0" step="0.01" placeholder="0"
-                              value={ing.quantity}
-                              onChange={(e) => updateIngredient(ing.id, 'quantity', e.target.value)}
-                              className="w-24"
-                            />
+                            <Input type="number" min="0" step="0.01" placeholder="0" value={ing.quantity}
+                              onChange={e => updateIngredient(ing.id, 'quantity', e.target.value)} className="w-24" />
                             {rm && <span className="text-xs text-muted-foreground">{rm.unit}</span>}
                           </div>
                         </TableCell>
                         <TableCell>
-                          <span className={`text-sm font-medium ${calc ? 'text-foreground' : 'text-muted-foreground'}`}>
-                            {calc ? `${calc.percentage.toFixed(1)}%` : '—'}
+                          <span className={`text-sm font-medium ${row ? 'text-foreground' : 'text-muted-foreground'}`}>
+                            {row && combinedTotalQtyKg > 0 ? `${getPct(row.qtyKg).toFixed(1)}%` : '—'}
                           </span>
                         </TableCell>
-                        <TableCell><span className="text-sm">{calc ? fmt(calc.ratePerKg) : '—'}</span></TableCell>
+                        <TableCell>
+                          <span className="text-sm">{row ? fmt(row.ratePerKg) : '—'}</span>
+                        </TableCell>
                         <TableCell>
                           {ingredients.length > 1 && (
                             <Button type="button" variant="ghost" size="icon" onClick={() => removeIngredient(ing.id)}>
@@ -411,28 +405,21 @@ export default function ResearchEdit() {
                       </TableRow>
                     );
                   })}
-                  {calculations.rows.length > 0 && (
+                  {rmRows.length > 0 && (
                     <TableRow className="font-semibold bg-muted/40 border-t-2">
-                      <TableCell /><TableCell className="text-muted-foreground text-sm">Total</TableCell>
-                      <TableCell className="text-sm">{calculations.totalQtyKg.toFixed(2)} kg</TableCell>
-                      <TableCell className="text-sm">{calculations.totalPercentage.toFixed(1)}%</TableCell>
-                      <TableCell className="text-sm">{fmt(calculations.costPerKg)}<span className="text-xs font-normal text-muted-foreground ml-1">/ kg</span></TableCell>
                       <TableCell />
+                      <TableCell className="text-muted-foreground text-sm">Subtotal</TableCell>
+                      <TableCell className="text-sm">{rmTotalQtyKg.toFixed(2)} kg</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {combinedTotalQtyKg > 0 ? `${getPct(rmTotalQtyKg).toFixed(1)}%` : '—'}
+                      </TableCell>
+                      <TableCell /><TableCell />
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
             </div>
-            <div className="grid grid-cols-2 divide-x border-t">
-              <div className={`p-4 ${calculations.totalPercentage > 0 && Math.abs(calculations.totalPercentage - 100) < 0.01 ? 'bg-green-50' : 'bg-amber-50'}`}>
-                <div className="text-xs text-muted-foreground mb-0.5">Total Percentage</div>
-                <div className="font-semibold text-base">{calculations.totalPercentage > 0 ? `${calculations.totalPercentage.toFixed(1)}%` : '0%'}</div>
-              </div>
-              <div className="p-4 bg-primary/5">
-                <div className="text-xs text-muted-foreground mb-0.5">Cost per kg</div>
-                <div className="font-semibold text-base">{calculations.costPerKg > 0 ? fmt(calculations.costPerKg) : '—'}</div>
-              </div>
-            </div>
+            {/* No strip here — shown below extended section */}
           </CardContent>
         </Card>
 
@@ -451,9 +438,9 @@ export default function ResearchEdit() {
               <Plus className="h-4 w-4 mr-1" />Add Item
             </Button>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0">
             {extendedItems.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground text-sm">
+              <div className="text-center py-6 text-muted-foreground text-sm px-6">
                 No extended inventory items available.{' '}
                 <button type="button" className="text-primary underline" onClick={() => router.push('/research/extended-inventory')}>
                   Add some first
@@ -464,91 +451,124 @@ export default function ResearchEdit() {
                 Click "Add Item" to reference extended inventory products.
               </div>
             ) : (
-              <div className="space-y-3">
-                {selectedExtended.map((row, index) => {
-                  const selected = extendedItems.find((e) => e.id === row.extendedItemId);
-                  const available = extendedItems.filter(
-                    (e) => !usedExtendedIds.includes(e.id) || e.id === row.extendedItemId
-                  );
-
-                  return (
-                    <div key={row.rowId} className="flex items-start gap-3 p-3 border rounded-lg bg-muted/20">
-                      <div className="flex-1 space-y-1">
-                        <Label className="text-xs text-muted-foreground">Item {index + 1}</Label>
-                        <Popover
-                          open={row.comboOpen}
-                          onOpenChange={(open) => updateExtendedItem(row.rowId, 'comboOpen', open)}
-                        >
-                          <PopoverTrigger asChild>
-                            <Button variant="outline" role="combobox" className="w-full justify-between font-normal">
-                              <span className="truncate">
-                                {selected
-                                  ? `${selected.productName}${selected.code ? ` (${selected.code})` : ''}`
-                                  : 'Select item...'}
-                              </span>
-                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-8">#</TableHead>
+                      <TableHead>Item</TableHead>
+                      <TableHead>Qty (kg)</TableHead>
+                      <TableHead>%</TableHead>
+                      <TableHead>Notes</TableHead>
+                      <TableHead />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {selectedExtended.map((row, index) => {
+                      const selected = extendedItems.find(e => e.id === row.extendedItemId);
+                      const available = extendedItems.filter(e => !usedExtendedIds.includes(e.id) || e.id === row.extendedItemId);
+                      const qty = parseFloat(row.quantity) || 0;
+                      const pct = getPct(qty);
+                      return (
+                        <TableRow key={row.rowId}>
+                          <TableCell className="text-muted-foreground">{index + 1}</TableCell>
+                          <TableCell>
+                            <Popover open={row.comboOpen} onOpenChange={open => updateExtendedItem(row.rowId, 'comboOpen', open)}>
+                              <PopoverTrigger asChild>
+                                <Button variant="outline" role="combobox" className="min-w-[200px] justify-between font-normal">
+                                  <span className="truncate">
+                                    {selected ? `${selected.productName}${selected.code ? ` (${selected.code})` : ''}` : 'Select item...'}
+                                  </span>
+                                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-[320px] p-0" align="start">
+                                <Command>
+                                  <CommandInput placeholder="Search product name or code..." />
+                                  <CommandList className="max-h-[200px]">
+                                    <CommandEmpty>No items found.</CommandEmpty>
+                                    <CommandGroup>
+                                      {available.map(item => (
+                                        <CommandItem key={item.id} value={`${item.productName} ${item.code || ''}`}
+                                          onSelect={() => { updateExtendedItem(row.rowId, 'extendedItemId', item.id); updateExtendedItem(row.rowId, 'comboOpen', false); }}>
+                                          <Check className={cn('mr-2 h-4 w-4', row.extendedItemId === item.id ? 'opacity-100' : 'opacity-0')} />
+                                          <div className="flex-1 min-w-0">
+                                            <p className="font-medium text-sm truncate">{item.productName}</p>
+                                            <div className="flex gap-2 text-xs text-muted-foreground">
+                                              {item.code && <span className="font-mono">{item.code}</span>}
+                                              {isAdmin && item.companyName && <span>{item.companyName}</span>}
+                                            </div>
+                                          </div>
+                                        </CommandItem>
+                                      ))}
+                                    </CommandGroup>
+                                  </CommandList>
+                                </Command>
+                              </PopoverContent>
+                            </Popover>
+                          </TableCell>
+                          <TableCell>
+                            <Input type="number" min="0" step="0.001" placeholder="0.000" value={row.quantity}
+                              onChange={e => updateExtendedItem(row.rowId, 'quantity', e.target.value)} className="w-24" />
+                          </TableCell>
+                          <TableCell>
+                            <span className={`text-sm font-medium ${pct > 0 ? 'text-foreground' : 'text-muted-foreground'}`}>
+                              {pct > 0 ? `${pct.toFixed(1)}%` : '—'}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <Input placeholder="Optional notes..." value={row.notes}
+                              onChange={e => updateExtendedItem(row.rowId, 'notes', e.target.value)} className="text-sm h-9 w-32" />
+                          </TableCell>
+                          <TableCell>
+                            <Button type="button" variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive"
+                              onClick={() => removeExtendedItem(row.rowId)}>
+                              <X className="h-4 w-4" />
                             </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-[320px] p-0" align="start">
-                            <Command>
-                              <CommandInput placeholder="Search product name or code..." />
-                              <CommandList className="max-h-[200px]">
-                                <CommandEmpty>No items found.</CommandEmpty>
-                                <CommandGroup>
-                                  {available.map((item) => (
-                                    <CommandItem
-                                      key={item.id}
-                                      value={`${item.productName} ${item.code || ''}`}
-                                      onSelect={() => {
-                                        updateExtendedItem(row.rowId, 'extendedItemId', item.id);
-                                        updateExtendedItem(row.rowId, 'comboOpen', false);
-                                      }}
-                                    >
-                                      <Check className={cn('mr-2 h-4 w-4', row.extendedItemId === item.id ? 'opacity-100' : 'opacity-0')} />
-                                      <div className="flex-1 min-w-0">
-                                        <p className="font-medium text-sm truncate">{item.productName}</p>
-                                        <div className="flex gap-2 text-xs text-muted-foreground">
-                                          {item.code && <span className="font-mono">{item.code}</span>}
-                                          {isAdmin && item.companyName && <span>{item.companyName}</span>}
-                                          {item.price > 0 && <span>{fmt(item.price)}</span>}
-                                        </div>
-                                      </div>
-                                    </CommandItem>
-                                  ))}
-                                </CommandGroup>
-                              </CommandList>
-                            </Command>
-                          </PopoverContent>
-                        </Popover>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {selectedExtended.filter(r => parseFloat(r.quantity) > 0).length > 0 && (
+                      <TableRow className="font-semibold bg-muted/40 border-t-2">
+                        <TableCell />
+                        <TableCell className="text-muted-foreground text-sm">Subtotal</TableCell>
+                        <TableCell className="text-sm">{extendedTotalQtyKg.toFixed(3)} kg</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {combinedTotalQtyKg > 0 ? `${getPct(extendedTotalQtyKg).toFixed(1)}%` : '—'}
+                        </TableCell>
+                        <TableCell /><TableCell />
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
 
-                        {selected && (
-                          <div className="flex flex-wrap gap-1.5 mt-1.5">
-                            {selected.code && <Badge variant="outline" className="font-mono text-xs">{selected.code}</Badge>}
-                            {selected.price > 0 && <Badge variant="secondary" className="text-xs">{fmt(selected.price)}</Badge>}
-                            {isAdmin && selected.companyName && (
-                              <span className="text-xs text-muted-foreground">{selected.companyName}</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="w-44 space-y-1">
-                        <Label className="text-xs text-muted-foreground">Notes</Label>
-                        <Input
-                          placeholder="Optional notes..."
-                          value={row.notes}
-                          onChange={(e) => updateExtendedItem(row.rowId, 'notes', e.target.value)}
-                          className="text-sm h-9"
-                        />
-                      </div>
-
-                      <Button type="button" variant="ghost" size="icon" className="mt-5 text-muted-foreground hover:text-destructive shrink-0"
-                        onClick={() => removeExtendedItem(row.rowId)}>
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  );
-                })}
+            {/* ── Single unified summary strip ── */}
+            {combinedTotalQtyKg > 0 && (
+              <div className="grid grid-cols-3 divide-x border-t">
+                <div className="p-4">
+                  <div className="text-xs text-muted-foreground mb-0.5">Combined Qty</div>
+                  <div className="font-semibold text-base">{combinedTotalQtyKg.toFixed(2)} kg</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    {rmTotalQtyKg.toFixed(2)} RM
+                    {extendedTotalQtyKg > 0 && ` + ${extendedTotalQtyKg.toFixed(3)} Ext`}
+                  </div>
+                </div>
+                <div className="p-4 bg-green-50">
+                  <div className="text-xs text-muted-foreground mb-0.5">Total Percentage</div>
+                  <div className="font-semibold text-base">100%</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    RM {getPct(rmTotalQtyKg).toFixed(1)}%
+                    {extendedTotalQtyKg > 0 && ` · Ext ${getPct(extendedTotalQtyKg).toFixed(1)}%`}
+                  </div>
+                </div>
+                <div className="p-4 bg-primary/5">
+                  <div className="text-xs text-muted-foreground mb-0.5">Cost per kg</div>
+                  <div className="font-semibold text-base">{combinedCostPerKg > 0 ? fmt(combinedCostPerKg) : '—'}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">based on raw materials</div>
+                </div>
               </div>
             )}
           </CardContent>
@@ -558,7 +578,7 @@ export default function ResearchEdit() {
         <Card>
           <CardHeader><CardTitle>Research Notes</CardTitle></CardHeader>
           <CardContent>
-            <Textarea rows={4} value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} />
+            <Textarea rows={4} value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
           </CardContent>
         </Card>
 

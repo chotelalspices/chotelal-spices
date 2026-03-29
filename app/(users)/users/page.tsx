@@ -54,7 +54,16 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
 
-type UserRole = 'admin' | 'production' | 'packaging' | 'sales' | 'research';
+type UserRole =
+  | 'admin'
+  | 'production'
+  | 'packaging'
+  | 'sales'
+  | 'research'
+  | 'inventory'
+  | 'labels'
+  | 'box_inventory';
+
 type UserStatus = 'active' | 'inactive';
 
 interface User {
@@ -229,9 +238,22 @@ export default function UserListPage() {
   };
 
   const getRoleDisplayNames = (roles: string[]): string => {
+    const roleLabels: Record<string, string> = {
+      admin: 'Administrator',
+      production: 'Production',
+      packaging: 'Packaging',
+      sales: 'Sales',
+      research: 'Research',
+      inventory: 'Inventory',
+      labels: 'Labels',
+      box_inventory: 'Box Inventory',
+    };
+
     if (roles.includes('admin')) return 'Administrator';
-    if (roles.length === 1) return roles[0].charAt(0).toUpperCase() + roles[0].slice(1);
-    return roles.map(r => r.charAt(0).toUpperCase() + r.slice(1)).join(', ');
+
+    return roles
+      .map((role) => roleLabels[role] || role)
+      .join(', ');
   };
 
   return (
@@ -269,16 +291,21 @@ export default function UserListPage() {
 
             <div className="flex gap-3">
               <Select value={roleFilter} onValueChange={setRoleFilter}>
-                <SelectTrigger className="w-[140px]">
+                <SelectTrigger className="w-[180px]">
                   <SelectValue placeholder="All Roles" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Roles</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="staff">Staff</SelectItem>
+                  <SelectItem value="production">Production</SelectItem>
+                  <SelectItem value="packaging">Packaging</SelectItem>
+                  <SelectItem value="sales">Sales</SelectItem>
+                  <SelectItem value="research">Research</SelectItem>
+                  <SelectItem value="inventory">Inventory</SelectItem>
+                  <SelectItem value="labels">Labels</SelectItem>
+                  <SelectItem value="box_inventory">Box Inventory</SelectItem>
                 </SelectContent>
               </Select>
-
               <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="w-[140px]">
                   <SelectValue placeholder="All Status" />
@@ -337,11 +364,10 @@ export default function UserListPage() {
 
                   <TableCell>
                     <span
-                      className={`status-badge ${
-                        user.status === 'active'
-                          ? 'status-active'
-                          : 'status-inactive'
-                      }`}
+                      className={`status-badge ${user.status === 'active'
+                        ? 'status-active'
+                        : 'status-inactive'
+                        }`}
                     >
                       {user.status === 'active' ? 'Active' : 'Inactive'}
                     </span>
@@ -350,10 +376,10 @@ export default function UserListPage() {
                   <TableCell className="text-muted-foreground">
                     {user.lastLogin
                       ? new Intl.DateTimeFormat('en-IN', {
-                          timeZone: 'Asia/Kolkata',
-                          dateStyle: 'medium',
-                          timeStyle: 'short',
-                        }).format(new Date(user.lastLogin))
+                        timeZone: 'Asia/Kolkata',
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      }).format(new Date(user.lastLogin))
                       : 'Never'}
                   </TableCell>
 
@@ -505,11 +531,10 @@ export default function UserListPage() {
                 </Badge>
 
                 <span
-                  className={`status-badge text-xs ${
-                    user.status === 'active'
-                      ? 'status-active'
-                      : 'status-inactive'
-                  }`}
+                  className={`status-badge text-xs ${user.status === 'active'
+                    ? 'status-active'
+                    : 'status-inactive'
+                    }`}
                 >
                   {user.status === 'active' ? 'Active' : 'Inactive'}
                 </span>

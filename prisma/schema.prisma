@@ -59,6 +59,7 @@ enum UserRole {
   research
   inventory
   labels
+  box_inventory
 }
 
 enum ResearchStatus {
@@ -113,6 +114,8 @@ model User {
   labelMovements       LabelMovement[]
   formulationAudits FormulationAudit[]
   extendedInventory ExtendedInventory[]
+  salesAuditLogs SalesAuditLog[]
+  boxMovements BoxMovement[]
 }
 
 //////////////////////////////////////////////////////
@@ -499,4 +502,44 @@ model FormulationAudit {
   changedBy     User?       @relation(fields: [changedById], references: [id], onDelete: SetNull)
   changedAt     DateTime    @default(now())
   changes       Json
+}
+
+model SalesAuditLog {
+  id           String   @id @default(uuid())
+  salesRecordId String
+  changedById  String?
+  changedBy    User?    @relation(fields: [changedById], references: [id], onDelete: SetNull)
+  changedAt    DateTime @default(now())
+  action       String   // "edit" | "delete" | "payment"
+  changes      Json     // snapshot of what changed: { field, oldValue, newValue }
+}
+
+// Add these two models to your schema.prisma
+
+model BoxType {
+  id             String   @id @default(uuid())
+  name           String   @unique
+  costPerUnit    Float    @default(0)
+  availableStock Int      @default(0)
+  minimumStock   Int      @default(0)
+  description    String?
+  status         String   @default("active") // "active" | "inactive"
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  movements BoxMovement[]
+}
+
+model BoxMovement {
+  id            String   @id @default(uuid())
+  boxTypeId     String?
+  boxType       BoxType? @relation(fields: [boxTypeId], references: [id], onDelete: SetNull)
+  action        String   // 'add' | 'reduce'
+  quantity      Int
+  reason        String   // 'purchase' | 'packaging' | 'correction' | 'wastage'
+  reference     String?
+  remarks       String?
+  performedById String?
+  performedBy   User?    @relation(fields: [performedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now())
 }

@@ -37,7 +37,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
 
-type UserRole = 'admin' | 'production' | 'packaging' | 'sales' | 'research' | 'inventory' | 'labels';
+type UserRole = 'admin' | 'production' | 'packaging' | 'sales' | 'research' | 'inventory' | 'labels' | 'box_inventory';
 type UserStatus = 'active' | 'inactive';
 
 interface User {
@@ -340,7 +340,7 @@ export default function AddEditUser() {
               <div className="space-y-2">
                 <Label>Roles *</Label>
                 <div className="space-y-3">
-                  {(['admin', 'production', 'packaging', 'sales', 'research', 'inventory', 'labels'] as const).map((role) => (
+                  {(['admin', 'production', 'packaging', 'sales', 'research', 'inventory', 'labels', 'box_inventory'] as const).map((role) => (
                     <div key={role} className="flex items-center space-x-2">
                       <Checkbox
                         id={role}
@@ -367,6 +367,7 @@ export default function AddEditUser() {
                         {role === 'research' && 'Research'}
                         {role === 'inventory' && 'Inventory'}
                         {role === 'labels' && 'Labels Inventory'}
+                        {role === 'box_inventory' && 'Box Inventory'}
                       </Label>
                     </div>
                   ))}

@@ -1,13 +1,21 @@
-export type UserRole = 'admin' | 'production' | 'packaging' | 'sales' | 'research' | 'inventory' | 'labels'
-
-/**
- * Added new module: 'labels'
- * This allows us to control Labels Inventory separately
- */
-export type Module =
-  | 'dashboard'     // ← add this
+export type UserRole =
+  | 'admin'
+  | 'production'
+  | 'packaging'
+  | 'sales'
+  | 'research'
   | 'inventory'
   | 'labels'
+  | 'box_inventory'
+
+/**
+ * Added new module: 'box_inventory'
+ */
+export type Module =
+  | 'dashboard'
+  | 'inventory'
+  | 'labels'
+  | 'box_inventory'
   | 'formulations'
   | 'production'
   | 'packaging'
@@ -29,14 +37,22 @@ export type ProductPermission =
   | 'delete_product'
 
 /**
+ * Optional: Box Inventory granular permissions
+ */
+export type BoxInventoryPermission =
+  | 'view_box_inventory'
+  | 'adjust_box_inventory'
+  | 'update_box_minimum_stock'
+
+/**
  * Role → Module Access Mapping
- * Only admin has access to 'labels'
  */
 export const ROLE_PERMISSIONS: Record<UserRole, Module[]> = {
   admin: [
-    'dashboard',    // ← only admin gets this
+    'dashboard',
     'inventory',
     'labels',
+    'box_inventory',
     'formulations',
     'production',
     'packaging',
@@ -51,7 +67,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Module[]> = {
 
   packaging: [
     'packaging',
-    'formulations'
+    'formulations',
   ],
 
   sales: [
@@ -61,13 +77,17 @@ export const ROLE_PERMISSIONS: Record<UserRole, Module[]> = {
   research: [
     'research'
   ],
+
   inventory: [
     'inventory'
   ],
 
   labels: [
     'labels'
-  ]
+  ],
+  box_inventory: [
+  'box_inventory'
+]
 }
 
 // Granular formulation permissions
@@ -75,6 +95,7 @@ export const FORMULATION_PERMISSIONS: Record<UserRole, FormulationPermission[]> 
   admin: ['view_formulations', 'create_formulation', 'edit_formulation', 'delete_formulation'],
   production: ['view_formulations', 'create_formulation', 'edit_formulation', 'delete_formulation'],
   packaging: ['view_formulations'],
+  box_inventory: [],
   sales: [],
   research: ['view_formulations'],
   inventory: [],
@@ -86,14 +107,32 @@ export const PRODUCT_PERMISSIONS: Record<UserRole, ProductPermission[]> = {
   admin: ['view_products', 'create_product', 'edit_product', 'delete_product'],
   production: ['view_products', 'create_product', 'edit_product', 'delete_product'],
   packaging: ['view_products', 'create_product', 'edit_product', 'delete_product'],
+  box_inventory: [],
   sales: [],
   research: ['view_products'],
-   inventory: [],
+  inventory: [],
+  labels: []
+}
+
+/**
+ * Box Inventory permissions
+ */
+export const BOX_INVENTORY_PERMISSIONS: Record<UserRole, BoxInventoryPermission[]> = {
+  admin: [
+    'view_box_inventory',
+    'adjust_box_inventory',
+    'update_box_minimum_stock'
+  ],
+  production: [],
+  packaging: [],
+  sales: [],
+  box_inventory: [],
+  research: [],
+  inventory: [],
   labels: []
 }
 
 export function hasPermission(userRoles: UserRole[], module: Module): boolean {
-  // Admin always has access
   if (userRoles.includes('admin')) {
     return true
   }
@@ -129,6 +168,19 @@ export function hasProductPermission(
   )
 }
 
+export function hasBoxInventoryPermission(
+  userRoles: UserRole[],
+  permission: BoxInventoryPermission
+): boolean {
+  if (userRoles.includes('admin')) {
+    return true
+  }
+
+  return userRoles.some(role =>
+    BOX_INVENTORY_PERMISSIONS[role]?.includes(permission)
+  )
+}
+
 export function getAccessibleModules(userRoles: UserRole[]): Module[] {
   if (userRoles.includes('admin')) {
     return ROLE_PERMISSIONS.admin
@@ -147,16 +199,19 @@ export function canAccessModule(userRoles: UserRole[], module: Module): boolean 
   return hasPermission(userRoles, module)
 }
 
-// Helper to check if user can manage formulations
 export function canManageFormulations(userRoles: UserRole[]): boolean {
   return hasFormulationPermission(userRoles, 'create_formulation') ||
          hasFormulationPermission(userRoles, 'edit_formulation') ||
          hasFormulationPermission(userRoles, 'delete_formulation')
 }
 
-// Helper to check if user can manage products
 export function canManageProducts(userRoles: UserRole[]): boolean {
   return hasProductPermission(userRoles, 'create_product') ||
          hasProductPermission(userRoles, 'edit_product') ||
          hasProductPermission(userRoles, 'delete_product')
+}
+
+export function canManageBoxInventory(userRoles: UserRole[]): boolean {
+  return hasBoxInventoryPermission(userRoles, 'adjust_box_inventory') ||
+         hasBoxInventoryPermission(userRoles, 'update_box_minimum_stock')
 }

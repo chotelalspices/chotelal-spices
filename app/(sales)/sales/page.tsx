@@ -37,7 +37,7 @@ import {
   Plus, Upload, Filter, TrendingUp, IndianRupee, Package,
   Pencil, Trash2, Loader2, User, CheckCircle2, ArrowUpRight,
   ArrowDownRight, ChevronDown, ChevronRight, X, Check, ChevronsUpDown,
-  Download, Settings2, Save, BarChart3,
+  Download, Settings2, Save, BarChart3, History,
 } from 'lucide-react';
 
 import { StatCard } from '@/components/inventory/StatCard';
@@ -49,7 +49,7 @@ import {
 } from '@/data/salesData';
 
 const SHOW_PROFIT_TO_STAFF = true;
-const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -262,14 +262,24 @@ function ClientGroupRow({
 
   const paymentBadge = (() => {
     const status = group.paymentStatus || 'paid';
-    const paid = group.amountPaid ?? group.groupTotal;
     let cls = ''; let label = '';
-    if (status === 'paid') { cls = 'bg-green-100 text-green-800 border-green-300'; label = 'PAID'; }
-    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300'; label = 'UNPAID'; }
-    else { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
+    if (status === 'paid') {
+      cls = 'bg-green-100 text-green-800 border-green-300';
+      label = 'PAID';
+    } else if (status === 'unpaid') {
+      cls = 'bg-red-100 text-red-800 border-red-300';
+      label = 'UNPAID';
+    } else {
+      cls = 'bg-orange-100 text-orange-800 border-orange-300';
+      const balance = Math.max(0, group.groupTotal - (group.amountPaid ?? 0));
+      label = `BALANCE ${formatCurrency(balance)}`;
+    }
     return (
-      <Badge variant="outline" className={`${cls} text-xs cursor-pointer hover:opacity-80`}
-        onClick={(e) => { e.stopPropagation(); onPaymentClick(group); }}>
+      <Badge
+        variant="outline"
+        className={`${cls} text-xs cursor-pointer hover:opacity-80`}
+        onClick={(e) => { e.stopPropagation(); onPaymentClick(group); }}
+      >
         {label}
       </Badge>
     );
@@ -450,8 +460,7 @@ export default function SalesSummary() {
   // ── Payment modal ─────────────────────────────────────────────────────────
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<ClientGroup | null>(null);
-  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'unpaid' | 'partial'>('paid');
-  const [amountPaid, setAmountPaid] = useState('');
+  const [additionalAmount, setAdditionalAmount] = useState('');
   const [paymentNote, setPaymentNote] = useState('');
   const [isSavingPayment, setIsSavingPayment] = useState(false);
 
@@ -608,50 +617,117 @@ export default function SalesSummary() {
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to delete'); }
   };
 
-  // ── Payment ───────────────────────────────────────────────────────────────
+  // ── Payment modal ─────────────────────────────────────────────────────────
   const openPaymentModal = (group: ClientGroup) => {
     setSelectedGroup(group);
-    setPaymentStatus(group.paymentStatus ?? 'paid');
-    setAmountPaid((group.amountPaid ?? group.groupTotal).toString());
-    setPaymentNote(group.paymentNote ?? '');
+    setAdditionalAmount('');
+    setPaymentNote('');
     setPaymentModalOpen(true);
   };
+
   const closePaymentModal = () => {
-    setPaymentModalOpen(false); setSelectedGroup(null);
-    setPaymentStatus('paid'); setAmountPaid(''); setPaymentNote('');
+    setPaymentModalOpen(false);
+    setSelectedGroup(null);
+    setAdditionalAmount('');
+    setPaymentNote('');
   };
+
   const savePaymentStatus = async () => {
     if (!selectedGroup) return;
-    const parsedAmount = parseFloat(amountPaid);
-    if (isNaN(parsedAmount) || parsedAmount < 0) { toast.error('Please enter a valid amount'); return; }
-    if (parsedAmount > selectedGroup.groupTotal) { toast.error('Amount paid cannot exceed total amount'); return; }
+
+    const addedAmount = parseFloat(additionalAmount);
+    if (isNaN(addedAmount) || addedAmount <= 0) {
+      toast.error('Please enter a valid amount greater than 0');
+      return;
+    }
+
+    const previouslyPaid = selectedGroup.amountPaid ?? 0;
+    const maxAdditional = selectedGroup.groupTotal - previouslyPaid;
+
+    if (addedAmount > maxAdditional) {
+      toast.error(`Max additional payment: ${formatCurrency(maxAdditional)}`);
+      return;
+    }
+
+    const newTotalPaid = previouslyPaid + addedAmount;
+    const newBalance = selectedGroup.groupTotal - newTotalPaid;
+    const newStatus: 'paid' | 'partial' = newBalance <= 0 ? 'paid' : 'partial';
+
     try {
       setIsSavingPayment(true);
+
+      // Audit log — record this payment installment
+      await fetch('/api/sales/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          salesRecordId: selectedGroup.records[0].id,
+          action: 'payment',
+          changes: {
+            productName: selectedGroup.voucherNo
+              ? `Invoice ${selectedGroup.voucherNo}`
+              : `${selectedGroup.records.length} item${selectedGroup.records.length !== 1 ? 's' : ''}`,
+            clientName: selectedGroup.clientName,
+            saleDate: selectedGroup.saleDate,
+            voucherNo: selectedGroup.voucherNo || null,
+            changes: [
+              {
+                field: 'paymentInstallment',
+                oldValue: previouslyPaid,
+                newValue: newTotalPaid,
+                note: `Received ${formatCurrency(addedAmount)}${paymentNote ? ` — ${paymentNote}` : ''}`,
+              },
+              {
+                field: 'paymentStatus',
+                oldValue: selectedGroup.paymentStatus ?? 'unpaid',
+                newValue: newStatus,
+              },
+              {
+                field: 'balance',
+                oldValue: selectedGroup.groupTotal - previouslyPaid,
+                newValue: newBalance,
+              },
+            ],
+          },
+        }),
+      });
+
+      // Update each record proportionally
       await Promise.all(
         selectedGroup.records.map((record) => {
-          const proportion = selectedGroup.groupTotal > 0
-            ? record.totalAmount / selectedGroup.groupTotal
-            : 1 / selectedGroup.records.length;
-          const recordAmountPaid = parseFloat((parsedAmount * proportion).toFixed(2));
+          const proportion =
+            selectedGroup.groupTotal > 0
+              ? record.totalAmount / selectedGroup.groupTotal
+              : 1 / selectedGroup.records.length;
+          const recordAmountPaid = parseFloat((newTotalPaid * proportion).toFixed(2));
           const recordAmountDue = parseFloat(Math.max(0, record.totalAmount - recordAmountPaid).toFixed(2));
-          return fetch(`/api/sales/records/${record.id}/payment`, {
+          return fetch(`/api/sales/records/${record.id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paymentStatus, amountPaid: recordAmountPaid, amountDue: recordAmountDue, paymentNote: paymentNote.trim() || null }),
+            body: JSON.stringify({
+              paymentStatus: newStatus,
+              amountPaid: recordAmountPaid,
+              amountDue: recordAmountDue,
+              paymentNote: paymentNote.trim() || null,
+              skipAuditLog: true,
+            }),
           });
         }),
       );
-      toast.success('Payment status updated');
+
+      toast.success(
+        newStatus === 'paid'
+          ? `Invoice fully paid — ${formatCurrency(selectedGroup.groupTotal)}`
+          : `Payment of ${formatCurrency(addedAmount)} recorded. Balance: ${formatCurrency(newBalance)}`,
+      );
       closePaymentModal();
       fetchRecords();
-    } catch { toast.error('Failed to update payment status'); }
-    finally { setIsSavingPayment(false); }
+    } catch {
+      toast.error('Failed to update payment status');
+    } finally {
+      setIsSavingPayment(false);
+    }
   };
-  useEffect(() => {
-    if (!selectedGroup) return;
-    if (paymentStatus === 'paid') setAmountPaid(selectedGroup.groupTotal.toString());
-    else if (paymentStatus === 'unpaid') setAmountPaid('0');
-  }, [paymentStatus, selectedGroup]);
 
   // ── PDF download ──────────────────────────────────────────────────────────
   const handleDownloadPDF = () => {
@@ -692,7 +768,12 @@ export default function SalesSummary() {
           <td class="right ${r.profit >= 0 ? 'profit' : 'loss'}">${formatCurrency(r.profit)}</td>
         </tr>`).join('');
       const payStatus = group.paymentStatus || 'paid';
-      const payLabel2 = payStatus === 'paid' ? 'PAID' : payStatus === 'unpaid' ? 'UNPAID' : `PARTIAL (${formatCurrency(group.amountPaid ?? 0)})`;
+      const balance = Math.max(0, group.groupTotal - (group.amountPaid ?? 0));
+      const payLabel2 = payStatus === 'paid'
+        ? 'PAID'
+        : payStatus === 'unpaid'
+          ? 'UNPAID'
+          : `BALANCE ${formatCurrency(balance)}`;
       return `
         <tr class="group-header"><td colspan="8">
           <div class="group-row">
@@ -815,23 +896,34 @@ export default function SalesSummary() {
       <div className="space-y-6">
 
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold">Sales Summary</h1>
-            <p className="text-sm text-muted-foreground">View and analyze sales records</p>
+        <div className="flex items-center justify-between gap-4 overflow-x-auto">
+          <div className="shrink-0">
+            <h1 className="text-2xl font-bold whitespace-nowrap">Sales Summary</h1>
+            <p className="text-sm text-muted-foreground whitespace-nowrap">
+              View and analyze sales records
+            </p>
           </div>
-          <div className="flex gap-2 flex-wrap">
-            <Button variant="outline" onClick={openMaintenance} className="gap-2">
+
+          <div className="flex items-center gap-2 shrink-0 whitespace-nowrap">
+            <Button variant="outline" onClick={() => router.push('/sales/history')} className="gap-2 shrink-0">
+              <History className="h-4 w-4" />Sales History
+            </Button>
+            <Button variant="outline" onClick={openMaintenance} className="gap-2 shrink-0">
               <Settings2 className="h-4 w-4" />Sales Maintenance
             </Button>
-            <Button variant="outline" onClick={handleDownloadPDF} disabled={loading || allRecords.length === 0} className="gap-2">
+            <Button
+              variant="outline"
+              onClick={handleDownloadPDF}
+              disabled={loading || allRecords.length === 0}
+              className="gap-2 shrink-0"
+            >
               <Download className="h-4 w-4" />Download PDF
             </Button>
-            <Button variant="outline" onClick={() => router.push('/sales/upload')}>
-              <Upload className="h-4 w-4 mr-2" />Upload
+            <Button variant="outline" onClick={() => router.push('/sales/upload')} className="gap-2 shrink-0">
+              <Upload className="h-4 w-4" />Upload
             </Button>
-            <Button onClick={() => router.push('/sales/new')}>
-              <Plus className="h-4 w-4 mr-2" />New Sale
+            <Button onClick={() => router.push('/sales/new')} className="gap-2 shrink-0">
+              <Plus className="h-4 w-4" />New Sale
             </Button>
           </div>
         </div>
@@ -1137,7 +1229,7 @@ export default function SalesSummary() {
           ))}
         </div>
 
-        {/* Maintenance modal */}
+        {/* ── Maintenance modal ── */}
         <Dialog open={maintenanceOpen} onOpenChange={setMaintenanceOpen}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
@@ -1228,67 +1320,146 @@ export default function SalesSummary() {
           </DialogContent>
         </Dialog>
 
-        {/* Payment modal */}
+        {/* ── Payment modal ── */}
         <Dialog open={paymentModalOpen} onOpenChange={setPaymentModalOpen}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Payment Status</DialogTitle>
+              <DialogTitle>Record Payment</DialogTitle>
               <DialogDescription>
-                Update payment for {selectedGroup?.clientName}
-                {selectedGroup?.voucherNo ? ` — ${selectedGroup.voucherNo}` : ''}
+                {selectedGroup?.clientName}
+                {selectedGroup?.voucherNo ? ` — Invoice ${selectedGroup.voucherNo}` : ''}
               </DialogDescription>
             </DialogHeader>
+
             <div className="space-y-4 py-4">
-              <div className="bg-muted/50 rounded-lg p-3">
-                <p className="text-sm text-muted-foreground mb-1">
-                  Invoice Total ({selectedGroup?.records.length} items)
-                </p>
-                <p className="text-2xl font-bold">
-                  {selectedGroup && formatCurrency(selectedGroup.groupTotal)}
-                </p>
+
+              {/* ── Payment summary card ── */}
+              <div className="rounded-lg border bg-muted/30 divide-y overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-2.5 text-sm">
+                  <span className="text-muted-foreground">Invoice Total</span>
+                  <span className="font-semibold">
+                    {selectedGroup && formatCurrency(selectedGroup.groupTotal)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between px-4 py-2.5 text-sm">
+                  <span className="text-muted-foreground">Total Paid So Far</span>
+                  <span className={cn(
+                    'font-semibold',
+                    (selectedGroup?.amountPaid ?? 0) > 0 ? 'text-green-600' : 'text-muted-foreground',
+                  )}>
+                    {selectedGroup && formatCurrency(selectedGroup.amountPaid ?? 0)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between px-4 py-2.5 text-sm bg-orange-50/70">
+                  <span className="font-medium text-orange-700">Balance Due</span>
+                  <span className="font-bold text-orange-700">
+                    {selectedGroup && formatCurrency(
+                      Math.max(0, selectedGroup.groupTotal - (selectedGroup.amountPaid ?? 0)),
+                    )}
+                  </span>
+                </div>
               </div>
+
+              {/* ── New payment input ── */}
               <div className="space-y-2">
-                <Label>Payment Status</Label>
-                <Select
-                  value={paymentStatus}
-                  onValueChange={(v: 'paid' | 'unpaid' | 'partial') => setPaymentStatus(v)}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="paid">Paid (Full)</SelectItem>
-                    <SelectItem value="partial">Partial Payment</SelectItem>
-                    <SelectItem value="unpaid">Unpaid</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Amount Paid</Label>
+                <Label>
+                  Amount Received Now
+                  <span className="text-muted-foreground font-normal ml-1 text-xs">
+                    (max{' '}
+                    {selectedGroup && formatCurrency(
+                      Math.max(0, selectedGroup.groupTotal - (selectedGroup.amountPaid ?? 0)),
+                    )}
+                    )
+                  </span>
+                </Label>
                 <Input
-                  type="number" placeholder="0.00" value={amountPaid}
-                  onChange={(e) => setAmountPaid(e.target.value)}
-                  disabled={paymentStatus === 'paid' || paymentStatus === 'unpaid'}
+                  type="number"
+                  placeholder="0.00"
+                  value={additionalAmount}
+                  onChange={(e) => setAdditionalAmount(e.target.value)}
+                  min={0.01}
+                  autoFocus
                 />
-                {selectedGroup && parseFloat(amountPaid) > 0 && parseFloat(amountPaid) < selectedGroup.groupTotal && (
-                  <p className="text-sm text-muted-foreground">
-                    Balance due: {formatCurrency(selectedGroup.groupTotal - parseFloat(amountPaid))}
-                  </p>
-                )}
+
+                {/* Live preview */}
+                {selectedGroup &&
+                  additionalAmount &&
+                  !isNaN(parseFloat(additionalAmount)) &&
+                  parseFloat(additionalAmount) > 0 &&
+                  (() => {
+                    const added = parseFloat(additionalAmount);
+                    const prevPaid = selectedGroup.amountPaid ?? 0;
+                    const newTotal = prevPaid + added;
+                    const newBalance = Math.max(0, selectedGroup.groupTotal - newTotal);
+                    const isFullyPaid = newBalance <= 0;
+                    return (
+                      <div className={cn(
+                        'rounded-md border px-3 py-2.5 text-xs space-y-1.5',
+                        isFullyPaid ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200',
+                      )}>
+                        <div className="flex justify-between">
+                          <span className={isFullyPaid ? 'text-green-700' : 'text-blue-700'}>
+                            New total paid
+                          </span>
+                          <span className={cn('font-semibold', isFullyPaid ? 'text-green-800' : 'text-blue-800')}>
+                            {formatCurrency(newTotal)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className={isFullyPaid ? 'text-green-700' : 'text-blue-700'}>
+                            Remaining balance
+                          </span>
+                          <span className={cn('font-semibold', isFullyPaid ? 'text-green-800' : 'text-blue-800')}>
+                            {isFullyPaid ? '✓ Fully Paid' : formatCurrency(newBalance)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()
+                }
               </div>
+
+              {/* ── Note ── */}
               <div className="space-y-2">
-                <Label>Note (Optional)</Label>
+                <Label>
+                  Note{' '}
+                  <span className="text-muted-foreground font-normal text-xs">(optional)</span>
+                </Label>
                 <Input
-                  placeholder="Payment reference, remarks..."
+                  placeholder="e.g. Cheque no. 1234, UPI ref, cash..."
                   value={paymentNote}
                   onChange={(e) => setPaymentNote(e.target.value)}
                 />
               </div>
+
+              {/* ── Irreversibility notice ── */}
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 flex items-start gap-1.5">
+                <span className="mt-0.5 shrink-0">⚠</span>
+                Payments are cumulative and permanent. Once saved, the paid amount cannot be reduced.
+              </p>
+
             </div>
+
             <DialogFooter>
-              <Button variant="outline" onClick={closePaymentModal} disabled={isSavingPayment}>Cancel</Button>
-              <Button onClick={savePaymentStatus} disabled={isSavingPayment}>
-                {isSavingPayment
-                  ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving...</>
-                  : 'Save Payment Status'}
+              <Button variant="outline" onClick={closePaymentModal} disabled={isSavingPayment}>
+                Cancel
+              </Button>
+              <Button
+                onClick={savePaymentStatus}
+                disabled={
+                  isSavingPayment ||
+                  !additionalAmount ||
+                  isNaN(parseFloat(additionalAmount)) ||
+                  parseFloat(additionalAmount) <= 0
+                }
+              >
+                {isSavingPayment ? (
+                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving...</>
+                ) : (
+                  `Record ${additionalAmount && !isNaN(parseFloat(additionalAmount)) && parseFloat(additionalAmount) > 0
+                    ? formatCurrency(parseFloat(additionalAmount))
+                    : 'Payment'}`
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1312,14 +1483,24 @@ function MobileClientCard({
 
   const paymentBadge = (() => {
     const status = group.paymentStatus || 'paid';
-    const paid = group.amountPaid ?? group.groupTotal;
     let cls = ''; let label = '';
-    if (status === 'paid') { cls = 'bg-green-100 text-green-800 border-green-300'; label = 'PAID'; }
-    else if (status === 'unpaid') { cls = 'bg-red-100 text-red-800 border-red-300'; label = 'UNPAID'; }
-    else { cls = 'bg-orange-100 text-orange-800 border-orange-300'; label = `PARTIAL (${formatCurrency(paid)})`; }
+    if (status === 'paid') {
+      cls = 'bg-green-100 text-green-800 border-green-300';
+      label = 'PAID';
+    } else if (status === 'unpaid') {
+      cls = 'bg-red-100 text-red-800 border-red-300';
+      label = 'UNPAID';
+    } else {
+      cls = 'bg-orange-100 text-orange-800 border-orange-300';
+      const balance = Math.max(0, group.groupTotal - (group.amountPaid ?? 0));
+      label = `BALANCE ${formatCurrency(balance)}`;
+    }
     return (
-      <Badge variant="outline" className={`${cls} text-xs cursor-pointer hover:opacity-80`}
-        onClick={(e) => { e.stopPropagation(); onPaymentClick(group); }}>
+      <Badge
+        variant="outline"
+        className={`${cls} text-xs cursor-pointer hover:opacity-80`}
+        onClick={(e) => { e.stopPropagation(); onPaymentClick(group); }}
+      >
         {label}
       </Badge>
     );

@@ -98,6 +98,8 @@ export default function PackagingEntry() {
   const [batch, setBatch] = useState<PackagingBatch | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [inventoryLabels, setInventoryLabels] = useState<InventoryLabel[]>([]);
+  const [boxStock, setBoxStock] = useState<number>(0);
+  const [boxMinStock, setBoxMinStock] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,6 +139,13 @@ export default function PackagingEntry() {
         if (batchData.status === "Completed" && (batchData.semiPackaged ?? 0) <= 0) {
           router.push("/packaging");
           return;
+        }
+
+        const boxRes = await fetch('/api/box-inventory');
+        if (boxRes.ok) {
+          const boxData = await boxRes.json();
+          setBoxStock(boxData.availableStock);
+          setBoxMinStock(boxData.minimumStock);
         }
 
         const productsRes = await fetch(
@@ -315,6 +324,20 @@ export default function PackagingEntry() {
     ? (newWeightKg + currentSessionSemiWeightKg) > batch.remainingQuantity + WEIGHT_TOLERANCE
     : false;
 
+  const totalBoxesNeeded = useMemo(
+    () => labelEntries
+      .filter((e) => !e.isCourierBox && semiToggles[e.type] !== true && e.boxes > 0)
+      .reduce((sum, e) => sum + e.boxes, 0),
+    [labelEntries, semiToggles]
+  );
+
+  const boxStockStatus = useMemo((): 'ok' | 'low' | 'out' | 'none' => {
+    if (totalBoxesNeeded === 0) return 'none';
+    if (boxStock <= 0 || totalBoxesNeeded > boxStock) return 'out';
+    if (boxStock <= boxMinStock) return 'low';
+    return 'ok';
+  }, [totalBoxesNeeded, boxStock, boxMinStock]);
+
   // Stock errors only for fully-packaged (toggle OFF) entries
   const labelStockErrors = labelEntries.filter((e) => {
     if (e.isCourierBox || semiToggles[e.type] === true) return false;
@@ -492,6 +515,7 @@ export default function PackagingEntry() {
         : undefined,
       packagingLoss: lossValue,
       remarks: remarks || undefined,
+      totalBoxes: totalBoxesNeeded,
     };
   };
 
@@ -1050,6 +1074,35 @@ export default function PackagingEntry() {
                         </p>
                       ))}
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {totalBoxesNeeded > 0 && (
+                <div className={cn(
+                  "mt-4 flex items-start gap-3 rounded-lg border p-4",
+                  boxStockStatus === 'out' || boxStockStatus === 'low'
+                    ? "border-amber-300/50 bg-amber-50/50"
+                    : "border-green-300/30 bg-green-50/30"
+                )}>
+                  {boxStockStatus === 'out' || boxStockStatus === 'low'
+                    ? <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                    : <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />}
+                  <div>
+                    <p className={cn("font-medium text-sm",
+                      boxStockStatus === 'out' || boxStockStatus === 'low' ? "text-amber-700" : "text-green-700"
+                    )}>
+                      {boxStockStatus === 'out'
+                        ? `Box stock insufficient — need ${totalBoxesNeeded}, have ${boxStock}`
+                        : boxStockStatus === 'low'
+                          ? `Box stock low — need ${totalBoxesNeeded}, have ${boxStock} (below minimum)`
+                          : `Box stock OK — need ${totalBoxesNeeded}, have ${boxStock}`}
+                    </p>
+                    {boxStockStatus === 'out' && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Packaging will proceed but box stock will go negative. Restock in Box Inventory.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}

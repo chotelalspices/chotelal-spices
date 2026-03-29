@@ -4,15 +4,25 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../auth/[...nextauth]/route";
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from "bcrypt";
+
+type UserRole =
+  | "admin"
+  | "production"
+  | "packaging"
+  | "sales"
+  | "research"
+  | "inventory"
+  | "labels"
+  | "box_inventory";
 
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    
+
     if (!session || !session.user) {
       return NextResponse.json(
-        { error: 'Unauthorized. Please log in to perform this action.' },
+        { error: "Unauthorized. Please log in to perform this action." },
         { status: 401 }
       );
     }
@@ -22,14 +32,14 @@ export async function GET(request: NextRequest) {
       where: { email: session.user.email! },
       include: {
         userRoles: {
-          select: { role: true }
-        }
-      }
+          select: { role: true },
+        },
+      },
     });
 
-    if (!currentUser || !currentUser.userRoles.some(ur => ur.role === 'admin')) {
+    if (!currentUser || !currentUser.userRoles.some((ur) => ur.role === "admin")) {
       return NextResponse.json(
-        { error: 'Access denied. Admin privileges required.' },
+        { error: "Access denied. Admin privileges required." },
         { status: 403 }
       );
     }
@@ -37,11 +47,11 @@ export async function GET(request: NextRequest) {
     const users = await prisma.user.findMany({
       include: {
         userRoles: {
-          select: { role: true }
-        }
+          select: { role: true },
+        },
       },
       orderBy: {
-        createdAt: 'desc',
+        createdAt: "desc",
       },
     });
 
@@ -50,8 +60,8 @@ export async function GET(request: NextRequest) {
       fullName: user.fullName,
       email: user.email,
       phone: user.phone,
-      roles: user.userRoles.map(ur => ur.role as 'admin' | 'production' | 'packaging' | 'sales' | 'research'),
-      status: user.status.toLowerCase() as 'active' | 'inactive',
+      roles: user.userRoles.map((ur) => ur.role as UserRole),
+      status: user.status.toLowerCase() as "active" | "inactive",
       createdAt: user.createdAt.toISOString(),
       lastLogin: user.lastLogin?.toISOString(),
       mustChangePassword: user.mustChangePassword,
@@ -59,9 +69,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(formattedUsers, { status: 200 });
   } catch (error) {
-    console.error('Error fetching users:', error);
+    console.error("Error fetching users:", error);
     return NextResponse.json(
-      { error: 'Failed to fetch users' },
+      { error: "Failed to fetch users" },
       { status: 500 }
     );
   }
@@ -70,10 +80,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    
+
     if (!session || !session.user) {
       return NextResponse.json(
-        { error: 'Unauthorized. Please log in to perform this action.' },
+        { error: "Unauthorized. Please log in to perform this action." },
         { status: 401 }
       );
     }
@@ -83,14 +93,14 @@ export async function POST(request: NextRequest) {
       where: { email: session.user.email! },
       include: {
         userRoles: {
-          select: { role: true }
-        }
-      }
+          select: { role: true },
+        },
+      },
     });
 
-    if (!currentUser || !currentUser.userRoles.some(ur => ur.role === 'admin')) {
+    if (!currentUser || !currentUser.userRoles.some((ur) => ur.role === "admin")) {
       return NextResponse.json(
-        { error: 'Access denied. Admin privileges required.' },
+        { error: "Access denied. Admin privileges required." },
         { status: 403 }
       );
     }
@@ -108,7 +118,10 @@ export async function POST(request: NextRequest) {
     // Validate required fields
     if (!fullName || !email || !tempPassword || !roles || !status) {
       return NextResponse.json(
-        { error: 'Missing required fields: fullName, email, tempPassword, roles, and status are required' },
+        {
+          error:
+            "Missing required fields: fullName, email, tempPassword, roles, and status are required",
+        },
         { status: 400 }
       );
     }
@@ -116,17 +129,34 @@ export async function POST(request: NextRequest) {
     // Validate roles array
     if (!Array.isArray(roles) || roles.length === 0) {
       return NextResponse.json(
-        { error: 'At least one role must be selected' },
+        { error: "At least one role must be selected" },
         { status: 400 }
       );
     }
 
     // Validate role enum values
-    const validRoles = ['admin', 'production', 'packaging', 'sales', 'research', 'inventory', 'labels'];
-    const invalidRoles = roles.filter(role => !validRoles.includes(role.toLowerCase()));
+    const validRoles: UserRole[] = [
+      "admin",
+      "production",
+      "packaging",
+      "sales",
+      "research",
+      "inventory",
+      "labels",
+      "box_inventory",
+    ];
+
+    const invalidRoles = roles.filter(
+      (role: string) => !validRoles.includes(role.toLowerCase() as UserRole)
+    );
+
     if (invalidRoles.length > 0) {
       return NextResponse.json(
-        { error: `Invalid roles: ${invalidRoles.join(', ')}. Valid roles are: ${validRoles.join(', ')}` },
+        {
+          error: `Invalid roles: ${invalidRoles.join(
+            ", "
+          )}. Valid roles are: ${validRoles.join(", ")}`,
+        },
         { status: 400 }
       );
     }
@@ -135,13 +165,13 @@ export async function POST(request: NextRequest) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return NextResponse.json(
-        { error: 'Invalid email format' },
+        { error: "Invalid email format" },
         { status: 400 }
       );
     }
 
     // Validate status enum
-    if (!['active', 'inactive'].includes(status.toLowerCase())) {
+    if (!["active", "inactive"].includes(status.toLowerCase())) {
       return NextResponse.json(
         { error: 'Invalid status. Must be "active" or "inactive"' },
         { status: 400 }
@@ -155,7 +185,7 @@ export async function POST(request: NextRequest) {
 
     if (existingUser) {
       return NextResponse.json(
-        { error: 'A user with this email already exists' },
+        { error: "A user with this email already exists" },
         { status: 409 }
       );
     }
@@ -170,19 +200,19 @@ export async function POST(request: NextRequest) {
         email: email.toLowerCase(),
         phone: phone?.trim() || null,
         hashedPassword,
-        status: status.toLowerCase() as 'active' | 'inactive',
+        status: status.toLowerCase() as "active" | "inactive",
         mustChangePassword: true,
         userRoles: {
           create: roles.map((role: string) => ({
-            role: role.toLowerCase() as 'admin' | 'production' | 'packaging' | 'sales' | 'research'
-          }))
-        }
+            role: role.toLowerCase() as UserRole,
+          })),
+        },
       },
       include: {
         userRoles: {
-          select: { role: true }
-        }
-      }
+          select: { role: true },
+        },
+      },
     });
 
     const formattedUser = {
@@ -190,8 +220,8 @@ export async function POST(request: NextRequest) {
       fullName: user.fullName,
       email: user.email,
       phone: user.phone,
-      roles: user.userRoles.map(ur => ur.role as 'admin' | 'production' | 'packaging' | 'sales' | 'research'),
-      status: user.status.toLowerCase() as 'active' | 'inactive',
+      roles: user.userRoles.map((ur) => ur.role as UserRole),
+      status: user.status.toLowerCase() as "active" | "inactive",
       createdAt: user.createdAt.toISOString(),
       lastLogin: user.lastLogin?.toISOString(),
       mustChangePassword: user.mustChangePassword,
@@ -199,20 +229,20 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(formattedUser, { status: 201 });
   } catch (error) {
-    console.error('Error creating user:', error);
-    
+    console.error("Error creating user:", error);
+
     // Handle Prisma validation errors
     if (error instanceof Error) {
-      if (error.message.includes('Unique constraint')) {
+      if (error.message.includes("Unique constraint")) {
         return NextResponse.json(
-          { error: 'A user with this email already exists' },
+          { error: "A user with this email already exists" },
           { status: 409 }
         );
       }
     }
 
     return NextResponse.json(
-      { error: 'Failed to create user' },
+      { error: "Failed to create user" },
       { status: 500 }
     );
   }
