@@ -42,6 +42,8 @@ import { getStatusColor } from "@/data/packagingData";
 interface SessionLabel {
   type: string;
   quantity: number;
+  boxTypeId?: string;
+  boxesUsed?: number;
   semiPackaged?: boolean;
 }
 
@@ -55,7 +57,7 @@ interface SessionCourierBox {
 
 interface ProductLabel {
   type: string;
-  quantity: number; // qtyPerBox
+  quantity: number;
 }
 
 interface Product {
@@ -86,6 +88,8 @@ interface PackagingSession {
   performedBy: string;
   labels?: SessionLabel[];
   courierBoxes?: SessionCourierBox[];
+  // Box type deductions stored per session
+  boxTypeDeductions?: Array<{ boxTypeId: string; boxTypeName: string; boxesUsed: number }>;
 }
 
 interface PackagingBatch {
@@ -100,6 +104,12 @@ interface PackagingBatch {
   sessions: PackagingSession[];
   semiPackaged: number;
   semiPackagedLabels?: Array<{ type: string; quantity: number }>;
+}
+
+interface BoxTypeInfo {
+  id: string;
+  name: string;
+  availableStock: number;
 }
 
 // ─── Session type helpers ─────────────────────────────────────────────────────
@@ -118,28 +128,24 @@ const SESSION_TYPE_CONFIG: Record<
 > = {
   semi: {
     label: "Semi-Packaged",
-    badgeClass:
-      "text-white-700 border-orange-300 bg-orange-50 dark:bg-orange-900/20 dark:text-white-300",
+    badgeClass: "text-white-700 border-orange-300 bg-orange-50 dark:bg-orange-900/20 dark:text-white-300",
     rowClass: "bg-orange-50/40 dark:bg-orange-900/10",
   },
   conversion: {
     label: "Converted → Full",
-    badgeClass:
-      "text-primary border-primary/30 bg-primary/5",
+    badgeClass: "text-primary border-primary/30 bg-primary/5",
     rowClass: "bg-primary/5 dark:bg-primary/10",
   },
   full: {
     label: "Fully Packaged",
-    badgeClass:
-      "text-white-700 border-green-300 bg-green-50 dark:bg-green-900/20 dark:text-white-300",
+    badgeClass: "text-white-700 border-green-300 bg-green-50 dark:bg-green-900/20 dark:text-white-300",
     rowClass: "",
   },
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const isCourierBoxLabel = (name: string) =>
-  name.toLowerCase().includes("courier box");
+const isCourierBoxLabel = (name: string) => name.toLowerCase().includes("courier box");
 
 const parseProductsFromRemarks = (remarks?: string) => {
   if (!remarks) return [];
@@ -167,6 +173,8 @@ const getBoxCount = (
 ): number | null => {
   const label = sessionLabels.find((l) => l.type === labelType);
   if (!label) return null;
+  // If boxesUsed is stored directly, prefer it
+  if (label.boxesUsed !== undefined && label.boxesUsed > 0) return label.boxesUsed;
   for (const p of products) {
     const pl = p.labels.find((l) => l.type === labelType);
     if (pl && pl.quantity > 0) return Math.ceil(label.quantity / pl.quantity);
@@ -190,7 +198,6 @@ const SessionTypeBadge = ({ type }: { type: SessionType }) => {
 
 const LabelsDisplay = ({ labels, sessionType }: { labels?: SessionLabel[]; sessionType: SessionType }) => {
   if (!labels || labels.length === 0) return null;
-  // For semi sessions show semi labels; for others show fully-packaged labels
   const filtered = sessionType === "semi"
     ? labels.filter((l) => l.semiPackaged)
     : labels.filter((l) => !l.semiPackaged);
@@ -202,6 +209,53 @@ const LabelsDisplay = ({ labels, sessionType }: { labels?: SessionLabel[]; sessi
         {filtered.map((l, i) => (
           <Badge key={i} variant="outline" className="text-xs">
             {l.type}: {l.quantity}
+          </Badge>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// Box type deductions display used in mobile cards and desktop table
+const BoxTypeDeductionsDisplay = ({
+  session,
+  sessionType,
+  boxTypesMap,
+}: {
+  session: PackagingSession;
+  sessionType: SessionType;
+  boxTypesMap: Map<string, BoxTypeInfo>;
+}) => {
+  if (sessionType === "semi") return null;
+
+  // Build deduction list from boxTypeDeductions (if stored) OR from labels
+  const deductions: Array<{ name: string; boxes: number }> = [];
+
+  if (session.boxTypeDeductions && session.boxTypeDeductions.length > 0) {
+    session.boxTypeDeductions.forEach((d) => {
+      deductions.push({ name: d.boxTypeName || boxTypesMap.get(d.boxTypeId)?.name || d.boxTypeId, boxes: d.boxesUsed });
+    });
+  } else if (session.labels) {
+    // Fallback: aggregate from labels
+    const seen = new Map<string, number>();
+    session.labels
+      .filter((l) => !l.semiPackaged && l.boxTypeId && (l.boxesUsed ?? 0) > 0)
+      .forEach((l) => {
+        const name = boxTypesMap.get(l.boxTypeId!)?.name ?? l.boxTypeId!;
+        seen.set(name, (seen.get(name) ?? 0) + (l.boxesUsed ?? 0));
+      });
+    seen.forEach((boxes, name) => deductions.push({ name, boxes }));
+  }
+
+  if (deductions.length === 0) return null;
+
+  return (
+    <div className="flex items-start gap-2 mt-2">
+      <Box className="h-3.5 w-3.5 text-blue-500 mt-0.5 shrink-0" />
+      <div className="flex flex-wrap gap-1">
+        {deductions.map((d, i) => (
+          <Badge key={i} variant="outline" className="text-xs border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/20">
+            {d.name}: {d.boxes} boxes
           </Badge>
         ))}
       </div>
@@ -235,6 +289,7 @@ const PackagingSummary = () => {
   const isMobile = useIsMobile();
   const [batch, setBatch] = useState<PackagingBatch | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [boxTypesMap, setBoxTypesMap] = useState<Map<string, BoxTypeInfo>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -249,29 +304,34 @@ const PackagingSummary = () => {
         setIsLoading(true);
         setError(null);
 
-        const response = await fetch(
-          `/api/packaging/batches/${encodeURIComponent(batchNumber)}`
-        );
-        if (!response.ok) {
-          throw new Error(
-            response.status === 404 ? "Batch not found" : "Failed to fetch packaging batch"
-          );
+        const [batchRes, boxTypesRes] = await Promise.all([
+          fetch(`/api/packaging/batches/${encodeURIComponent(batchNumber)}`),
+          fetch("/api/box-inventory"),
+        ]);
+
+        if (!batchRes.ok) {
+          throw new Error(batchRes.status === 404 ? "Batch not found" : "Failed to fetch packaging batch");
         }
-        const data: PackagingBatch = await response.json();
+        const data: PackagingBatch = await batchRes.json();
         setBatch(data);
 
+        // Build box types map for name lookups
+        if (boxTypesRes.ok) {
+          const boxTypesData: BoxTypeInfo[] = await boxTypesRes.json();
+          const map = new Map<string, BoxTypeInfo>();
+          boxTypesData.forEach((b) => map.set(b.id, b));
+          setBoxTypesMap(map);
+        }
+
         if (data.formulationId) {
-          const productsRes = await fetch(
-            `/api/formulations/${data.formulationId}/products/packaging`
-          );
+          const productsRes = await fetch(`/api/formulations/${data.formulationId}/products/packaging`);
           if (productsRes.ok) {
             const productsData: Product[] = await productsRes.json();
             setProducts(productsData);
           }
         }
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Failed to load packaging batch";
+        const errorMessage = error instanceof Error ? error.message : "Failed to load packaging batch";
         setError(errorMessage);
         toast({ title: "Error", description: errorMessage, variant: "destructive" });
       } finally {
@@ -311,9 +371,7 @@ const PackagingSummary = () => {
         setBatch({
           ...batch,
           sessions: batch.sessions.map((s) =>
-            s.id === sessionId
-              ? { ...s, date: new Date(editedDate).toISOString() }
-              : s
+            s.id === sessionId ? { ...s, date: new Date(editedDate).toISOString() } : s
           ),
         });
       }
@@ -321,11 +379,7 @@ const PackagingSummary = () => {
       setEditingSessionId(null);
       setEditedDate("");
     } catch (err) {
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to update date",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to update date", variant: "destructive" });
     } finally {
       setIsSavingDate(false);
     }
@@ -350,13 +404,8 @@ const PackagingSummary = () => {
         <div className="flex flex-col items-center justify-center py-12">
           <Package className="h-16 w-16 text-muted-foreground mb-4" />
           <h2 className="text-xl font-semibold mb-2">Batch Not Found</h2>
-          <p className="text-muted-foreground mb-4">
-            {error || "The requested batch could not be found."}
-          </p>
-          <Button
-            className="h-11 min-w-[200px] justify-center"
-            onClick={() => router.push("/packaging")}
-          >
+          <p className="text-muted-foreground mb-4">{error || "The requested batch could not be found."}</p>
+          <Button className="h-11 min-w-[200px] justify-center" onClick={() => router.push("/packaging")}>
             Back to Packaging
           </Button>
         </div>
@@ -364,47 +413,23 @@ const PackagingSummary = () => {
     );
   }
 
-  // Show ALL sessions — semi, conversion, and full — sorted oldest first
-  // Show ALL sessions — but filter out empty ghost sessions (0 weight, no labels, no products)
-const displaySessions = [...batch.sessions]
-  .reverse()
-  .filter((s) => {
-    const sessionType = getSessionType(s);
-    // For semi sessions: must have semiPackaged weight > 0
-    if (sessionType === "semi") return (s.semiPackaged ?? 0) > 0;
-    // For full/conversion: must have packaged weight > 0 OR labels OR courier boxes
-    return (
-      s.totalPackagedWeight > 0 ||
-      (s.labels && s.labels.filter((l) => !l.semiPackaged).length > 0) ||
-      (s.courierBoxes && s.courierBoxes.length > 0)
-    );
-  });
+  const displaySessions = [...batch.sessions]
+    .reverse()
+    .filter((s) => {
+      const sessionType = getSessionType(s);
+      if (sessionType === "semi") return (s.semiPackaged ?? 0) > 0;
+      return (
+        s.totalPackagedWeight > 0 ||
+        (s.labels && s.labels.filter((l) => !l.semiPackaged).length > 0) ||
+        (s.courierBoxes && s.courierBoxes.length > 0)
+      );
+    });
 
   const summaryItems = [
-    {
-      label: "Total Produced",
-      value: `${batch.producedQuantity.toFixed(2)} kg`,
-      icon: Boxes,
-      color: "bg-muted/50 text-foreground",
-    },
-    {
-      label: "Total Packaged",
-      value: `${batch.alreadyPackaged.toFixed(2)} kg`,
-      icon: PackageCheck,
-      color: "bg-green-100 text-black dark:bg-green-900/30 dark:text-black",
-    },
-    {
-      label: "Total Loss",
-      value: `${batch.totalLoss.toFixed(3)} kg`,
-      icon: AlertTriangle,
-      color: "bg-amber-100 text-black dark:bg-amber-900/30 dark:text-black",
-    },
-    {
-      label: "Remaining",
-      value: `${batch.remainingQuantity.toFixed(2)} kg`,
-      icon: Package,
-      color: "bg-primary/10 text-primary",
-    },
+    { label: "Total Produced", value: `${batch.producedQuantity.toFixed(2)} kg`, icon: Boxes, color: "bg-muted/50 text-foreground" },
+    { label: "Total Packaged", value: `${batch.alreadyPackaged.toFixed(2)} kg`, icon: PackageCheck, color: "bg-green-100 text-black dark:bg-green-900/30 dark:text-black" },
+    { label: "Total Loss", value: `${batch.totalLoss.toFixed(3)} kg`, icon: AlertTriangle, color: "bg-amber-100 text-black dark:bg-amber-900/30 dark:text-black" },
+    { label: "Remaining", value: `${batch.remainingQuantity.toFixed(2)} kg`, icon: Package, color: "bg-primary/10 text-primary" },
   ];
 
   if (batch.semiPackaged > 0) {
@@ -435,15 +460,10 @@ const displaySessions = [...batch.sessions]
               <h1 className="text-2xl font-bold">Packaging Summary</h1>
               <Badge className={getStatusColor(batch.status)}>{batch.status}</Badge>
             </div>
-            <p className="text-sm text-muted-foreground">
-              {batch.productName} • {batch.batchNumber}
-            </p>
+            <p className="text-sm text-muted-foreground">{batch.productName} • {batch.batchNumber}</p>
           </div>
           {batch.status !== "Completed" && (
-            <Button
-              className="h-11 min-w-[200px] justify-center"
-              onClick={() => router.push(`/packaging/${batchNumber}/entry`)}
-            >
+            <Button className="h-11 min-w-[200px] justify-center" onClick={() => router.push(`/packaging/${batchNumber}/entry`)}>
               Continue Packaging
             </Button>
           )}
@@ -478,9 +498,7 @@ const displaySessions = [...batch.sessions]
               <div className="h-full flex">
                 <div
                   className="h-full bg-primary transition-all"
-                  style={{
-                    width: `${Math.min(100, (batch.alreadyPackaged / batch.producedQuantity) * 100)}%`,
-                  }}
+                  style={{ width: `${Math.min(100, (batch.alreadyPackaged / batch.producedQuantity) * 100)}%` }}
                 />
                 {batch.semiPackaged > 0 && (
                   <div
@@ -526,60 +544,30 @@ const displaySessions = [...batch.sessions]
                   const sessionType = getSessionType(session);
                   const config = SESSION_TYPE_CONFIG[sessionType];
                   return (
-                    <Card
-                      key={session.id}
-                      className={`${config.rowClass} border`}
-                    >
+                    <Card key={session.id} className={`${config.rowClass} border`}>
                       <CardContent className="p-4">
-
-                        {/* Session type badge */}
                         <div className="mb-3">
                           <SessionTypeBadge type={sessionType} />
                         </div>
 
-                        {/* Date + performer row */}
+                        {/* Date + performer */}
                         <div className="flex justify-between items-center mb-3 text-sm text-muted-foreground">
                           <div className="flex items-center gap-2">
                             <Calendar className="h-4 w-4" />
                             {editingSessionId === session.id ? (
                               <div className="flex items-center gap-1">
-                                <Input
-                                  type="date"
-                                  value={editedDate}
-                                  onChange={(e) => setEditedDate(e.target.value)}
-                                  className="h-7 w-32 text-xs"
-                                  disabled={isSavingDate}
-                                />
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-7 w-7"
-                                  onClick={() => saveDate(session.id)}
-                                  disabled={isSavingDate}
-                                >
-                                  {isSavingDate
-                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    : <Check className="h-3.5 w-3.5 text-green-600" />}
+                                <Input type="date" value={editedDate} onChange={(e) => setEditedDate(e.target.value)} className="h-7 w-32 text-xs" disabled={isSavingDate} />
+                                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => saveDate(session.id)} disabled={isSavingDate}>
+                                  {isSavingDate ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5 text-green-600" />}
                                 </Button>
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-7 w-7"
-                                  onClick={cancelEditingDate}
-                                  disabled={isSavingDate}
-                                >
+                                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={cancelEditingDate} disabled={isSavingDate}>
                                   <X className="h-3.5 w-3.5 text-red-600" />
                                 </Button>
                               </div>
                             ) : (
                               <>
                                 <span>{format(new Date(session.date), "dd MMM yyyy")}</span>
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-6 w-6"
-                                  onClick={() => startEditingDate(session.id, session.date)}
-                                >
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => startEditingDate(session.id, session.date)}>
                                   <Pencil className="h-3 w-3" />
                                 </Button>
                               </>
@@ -591,14 +579,11 @@ const displaySessions = [...batch.sessions]
                           </div>
                         </div>
 
-                        {/* Products — only for non-semi sessions */}
+                        {/* Products */}
                         {sessionType !== "semi" && (
                           <div className="space-y-2 mb-3">
                             {parseProductsFromRemarks(session.remarks).map((product, index) => (
-                              <div
-                                key={index}
-                                className="flex justify-between text-sm bg-background rounded-lg p-2"
-                              >
+                              <div key={index} className="flex justify-between text-sm bg-background rounded-lg p-2">
                                 <span>{product.name} × {product.packets}</span>
                                 <span className="font-medium">{product.weight.toFixed(3)} kg</span>
                               </div>
@@ -608,20 +593,10 @@ const displaySessions = [...batch.sessions]
 
                         {/* Weight display */}
                         <div className="grid grid-cols-2 gap-2 text-sm">
-                          <div
-                            className={
-                              sessionType === "semi"
-                                ? "bg-orange-100 dark:bg-orange-900/30 rounded-lg p-2 text-center"
-                                : "bg-green-100 dark:bg-green-900/30 rounded-lg p-2 text-center"
-                            }
-                          >
-                            <p className="text-xs">
-                              {sessionType === "semi" ? "Semi-Packaged" : "Packaged"}
-                            </p>
+                          <div className={sessionType === "semi" ? "bg-orange-100 dark:bg-orange-900/30 rounded-lg p-2 text-center" : "bg-green-100 dark:bg-green-900/30 rounded-lg p-2 text-center"}>
+                            <p className="text-xs">{sessionType === "semi" ? "Semi-Packaged" : "Packaged"}</p>
                             <p className="font-semibold">
-                              {sessionType === "semi"
-                                ? `${(session.semiPackaged ?? 0).toFixed(3)} kg`
-                                : `${session.totalPackagedWeight.toFixed(3)} kg`}
+                              {sessionType === "semi" ? `${(session.semiPackaged ?? 0).toFixed(3)} kg` : `${session.totalPackagedWeight.toFixed(3)} kg`}
                             </p>
                           </div>
                           <div className="bg-amber-100 dark:bg-amber-900/30 rounded-lg p-2 text-center">
@@ -633,10 +608,11 @@ const displaySessions = [...batch.sessions]
                         {/* Labels */}
                         <LabelsDisplay labels={session.labels} sessionType={sessionType} />
 
+                        {/* Box type deductions */}
+                        <BoxTypeDeductionsDisplay session={session} sessionType={sessionType} boxTypesMap={boxTypesMap} />
+
                         {/* Courier box */}
-                        {sessionType !== "semi" && (
-                          <CourierBoxDisplay courierBoxes={session.courierBoxes} />
-                        )}
+                        {sessionType !== "semi" && <CourierBoxDisplay courierBoxes={session.courierBoxes} />}
                       </CardContent>
                     </Card>
                   );
@@ -651,7 +627,7 @@ const displaySessions = [...batch.sessions]
                     <TableHead>Type</TableHead>
                     <TableHead>Products</TableHead>
                     <TableHead>Labels</TableHead>
-                    <TableHead>Boxes</TableHead>
+                    <TableHead>Boxes Used</TableHead>
                     <TableHead className="text-right">Weight (kg)</TableHead>
                     <TableHead className="text-right">Loss (kg)</TableHead>
                     <TableHead>Performed By</TableHead>
@@ -662,65 +638,59 @@ const displaySessions = [...batch.sessions]
                     const sessionType = getSessionType(session);
                     const config = SESSION_TYPE_CONFIG[sessionType];
 
-                    return (
-                      <TableRow
-                        key={session.id}
-                        className={config.rowClass}
-                      >
+                    // Build box type deductions for this session
+                    const boxDeductions: Array<{ name: string; boxes: number; forLabel?: string }> = [];
+                    if (session.boxTypeDeductions && session.boxTypeDeductions.length > 0) {
+                      session.boxTypeDeductions.forEach((d) => {
+                        boxDeductions.push({
+                          name: d.boxTypeName || boxTypesMap.get(d.boxTypeId)?.name || d.boxTypeId,
+                          boxes: d.boxesUsed,
+                        });
+                      });
+                    } else if (session.labels) {
+                      const seen = new Map<string, { boxes: number; forLabel: string }>();
+                      session.labels
+                        .filter((l) => !l.semiPackaged && l.boxTypeId && (l.boxesUsed ?? 0) > 0)
+                        .forEach((l) => {
+                          const name = boxTypesMap.get(l.boxTypeId!)?.name ?? l.boxTypeId!;
+                          const existing = seen.get(name);
+                          seen.set(name, {
+                            boxes: (existing?.boxes ?? 0) + (l.boxesUsed ?? 0),
+                            forLabel: existing?.forLabel ? `${existing.forLabel}, ${l.type}` : l.type,
+                          });
+                        });
+                      seen.forEach((val, name) => boxDeductions.push({ name, boxes: val.boxes, forLabel: val.forLabel }));
+                    }
 
-                        {/* Date cell */}
+                    return (
+                      <TableRow key={session.id} className={config.rowClass}>
+
+                        {/* Date */}
                         <TableCell>
                           {editingSessionId === session.id ? (
                             <div className="flex items-center gap-1">
-                              <Input
-                                type="date"
-                                value={editedDate}
-                                onChange={(e) => setEditedDate(e.target.value)}
-                                className="h-8 w-36"
-                                disabled={isSavingDate}
-                              />
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-8 w-8"
-                                onClick={() => saveDate(session.id)}
-                                disabled={isSavingDate}
-                              >
-                                {isSavingDate
-                                  ? <Loader2 className="h-4 w-4 animate-spin" />
-                                  : <Check className="h-4 w-4 text-green-600" />}
+                              <Input type="date" value={editedDate} onChange={(e) => setEditedDate(e.target.value)} className="h-8 w-36" disabled={isSavingDate} />
+                              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => saveDate(session.id)} disabled={isSavingDate}>
+                                {isSavingDate ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4 text-green-600" />}
                               </Button>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-8 w-8"
-                                onClick={cancelEditingDate}
-                                disabled={isSavingDate}
-                              >
+                              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={cancelEditingDate} disabled={isSavingDate}>
                                 <X className="h-4 w-4 text-red-600" />
                               </Button>
                             </div>
                           ) : (
                             <div className="flex items-center gap-2">
                               <span>{format(new Date(session.date), "dd MMM yyyy")}</span>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7"
-                                onClick={() => startEditingDate(session.id, session.date)}
-                              >
+                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startEditingDate(session.id, session.date)}>
                                 <Pencil className="h-3.5 w-3.5" />
                               </Button>
                             </div>
                           )}
                         </TableCell>
 
-                        {/* Type cell */}
-                        <TableCell>
-                          <SessionTypeBadge type={sessionType} />
-                        </TableCell>
+                        {/* Type */}
+                        <TableCell><SessionTypeBadge type={sessionType} /></TableCell>
 
-                        {/* Products cell — empty for semi sessions */}
+                        {/* Products */}
                         <TableCell>
                           {sessionType !== "semi" ? (
                             <div className="flex flex-wrap gap-1">
@@ -735,7 +705,7 @@ const displaySessions = [...batch.sessions]
                           )}
                         </TableCell>
 
-                        {/* Labels cell */}
+                        {/* Labels */}
                         <TableCell>
                           {(() => {
                             const relevant = sessionType === "semi"
@@ -755,10 +725,11 @@ const displaySessions = [...batch.sessions]
                           })()}
                         </TableCell>
 
-                        {/* Boxes cell — only for non-semi */}
+                        {/* Boxes Used — label boxes + box type deductions */}
                         <TableCell>
                           {sessionType !== "semi" ? (
                             <div className="flex flex-col gap-1">
+                              {/* Per-label box counts */}
                               {session.labels &&
                                 session.labels
                                   .filter((l) => !isCourierBoxLabel(l.type) && !l.semiPackaged)
@@ -768,31 +739,42 @@ const displaySessions = [...batch.sessions]
                                       <div key={i} className="flex items-center gap-1 text-sm">
                                         <Box className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                                         <span className="font-medium">
-                                          {boxes !== null
-                                            ? boxes.toLocaleString("en-IN")
-                                            : l.quantity.toLocaleString("en-IN")}
+                                          {boxes !== null ? boxes.toLocaleString("en-IN") : l.quantity.toLocaleString("en-IN")}
                                         </span>
-                                        <span className="text-muted-foreground text-xs">
-                                          boxes · {l.type}
-                                        </span>
+                                        <span className="text-muted-foreground text-xs">boxes · {l.type}</span>
                                       </div>
                                     );
                                   })}
+
+                              {/* Box type deductions */}
+                              {boxDeductions.map((d, i) => (
+                                <div key={`bt-${i}`} className="flex items-center gap-1 text-sm">
+                                  <Box className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                                  <span className="font-medium text-blue-700 dark:text-blue-300">
+                                    {d.boxes.toLocaleString("en-IN")}
+                                  </span>
+                                  <span className="text-muted-foreground text-xs">
+                                    {d.name}
+                                    {d.forLabel && <span className="ml-1 text-[10px]">({d.forLabel})</span>}
+                                  </span>
+                                </div>
+                              ))}
+
+                              {/* Courier boxes */}
                               {session.courierBoxes && session.courierBoxes.length > 0 && (
                                 <div className="flex items-center gap-1 text-sm">
                                   <Box className="h-3.5 w-3.5 text-primary shrink-0" />
-                                  <span className="font-medium">
-                                    {session.courierBoxes[0].boxesNeeded.toLocaleString("en-IN")}
-                                  </span>
+                                  <span className="font-medium">{session.courierBoxes[0].boxesNeeded.toLocaleString("en-IN")}</span>
                                   <span className="text-muted-foreground text-xs">
-                                    boxes · {session.courierBoxes[0].label || "courier box"}
-                                    {` · ${session.courierBoxes[0].itemsPerBox}/box`}
+                                    boxes · {session.courierBoxes[0].label || "courier box"}{" "}
+                                    · {session.courierBoxes[0].itemsPerBox}/box
                                   </span>
                                 </div>
                               )}
-                              {(!session.labels ||
-                                session.labels.filter((l) => !isCourierBoxLabel(l.type) && !l.semiPackaged).length === 0) &&
-                                (!session.courierBoxes || session.courierBoxes.length === 0) && (
+
+                              {(!session.labels || session.labels.filter((l) => !isCourierBoxLabel(l.type) && !l.semiPackaged).length === 0) &&
+                                (!session.courierBoxes || session.courierBoxes.length === 0) &&
+                                boxDeductions.length === 0 && (
                                   <span className="text-muted-foreground text-xs">—</span>
                                 )}
                             </div>
@@ -801,7 +783,7 @@ const displaySessions = [...batch.sessions]
                           )}
                         </TableCell>
 
-                        {/* Weight cell */}
+                        {/* Weight */}
                         <TableCell className="text-right font-medium">
                           {sessionType === "semi" ? (
                             <span className="text-orange-600 dark:text-orange-400">
@@ -819,7 +801,6 @@ const displaySessions = [...batch.sessions]
 
                         {/* Performer */}
                         <TableCell>{session.performedBy}</TableCell>
-
                       </TableRow>
                     );
                   })}
@@ -831,18 +812,11 @@ const displaySessions = [...batch.sessions]
 
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-3">
-          <Button
-            variant="outline"
-            className="h-11 min-w-[200px]"
-            onClick={() => router.push("/packaging")}
-          >
+          <Button variant="outline" className="h-11 min-w-[200px]" onClick={() => router.push("/packaging")}>
             Back to Batches
           </Button>
           {batch.status !== "Completed" && (
-            <Button
-              className="h-11 min-w-[200px]"
-              onClick={() => router.push(`/packaging/${batchNumber}/entry`)}
-            >
+            <Button className="h-11 min-w-[200px]" onClick={() => router.push(`/packaging/${batchNumber}/entry`)}>
               Continue Packaging
             </Button>
           )}

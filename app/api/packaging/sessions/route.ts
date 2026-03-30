@@ -32,7 +32,17 @@ export async function POST(request: NextRequest) {
 
     // ── Parse body ──────────────────────────────────────────────────────────
     const body = await request.json();
-    const { batchNumber, date, items, packagingLoss, remarks, courierBox, labels, totalBoxes } = body;
+    const {
+      batchNumber,
+      date,
+      items,
+      packagingLoss,
+      remarks,
+      courierBox,
+      labels,
+      totalBoxes,
+      boxTypeDeductions,
+    } = body;
 
     if (!batchNumber || !date) {
       return NextResponse.json(
@@ -44,6 +54,8 @@ export async function POST(request: NextRequest) {
     const labelsArray: Array<{
       type: string;
       quantity: number;
+      boxTypeId?: string | null;
+      boxesUsed?: number;
       semiPackaged?: boolean;
       isConversion?: boolean;
     }> = Array.isArray(labels)
@@ -96,7 +108,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── Pre-fetch label records OUTSIDE transaction ─────────────────────────
+    // ── Pre-fetch and validate label stock OUTSIDE transaction ──────────────
     let labelRecordsForTx: Array<{ id: string; name: string }> = [];
 
     if (labelsArray.length > 0) {
@@ -108,7 +120,6 @@ export async function POST(request: NextRequest) {
 
       for (const entry of labelsArray) {
         if (entry.semiPackaged) continue;
-
         const labelRecord = foundLabels.find(
           (fl) => fl.name === entry.type.toLowerCase().trim()
         );
@@ -136,6 +147,47 @@ export async function POST(request: NextRequest) {
         where: { name: { in: labelNames } },
         select: { id: true, name: true },
       });
+    }
+
+    // ── Build and validate box type deductions OUTSIDE transaction ──────────
+    const deductionsArray: Array<{ boxTypeId: string; boxesUsed: number }> =
+      Array.isArray(boxTypeDeductions) && boxTypeDeductions.length > 0
+        ? boxTypeDeductions.filter(
+            (d: any) =>
+              d.boxTypeId &&
+              typeof d.boxesUsed === "number" &&
+              d.boxesUsed > 0
+          )
+        : (() => {
+            // Legacy fallback: single totalBoxes value (only if no real boxTypeDeductions)
+            const totalBoxesNum = parseInt(totalBoxes) || 0;
+            return totalBoxesNum > 0
+              ? [{ boxTypeId: "fixed-boxes-item", boxesUsed: totalBoxesNum }]
+              : [];
+          })();
+
+    for (const { boxTypeId, boxesUsed } of deductionsArray) {
+      const boxType = await (prisma as any).boxType.findUnique({
+        where: { id: boxTypeId },
+      });
+      if (!boxType) {
+        // Skip unknown legacy IDs silently, error only on real boxType IDs
+        if (boxTypeId !== "fixed-boxes-item") {
+          return NextResponse.json(
+            { error: `Box type not found for ID "${boxTypeId}".` },
+            { status: 404 }
+          );
+        }
+        continue;
+      }
+      if (boxType.availableStock < boxesUsed) {
+        return NextResponse.json(
+          {
+            error: `Insufficient stock for box type "${boxType.name}". Available: ${boxType.availableStock}, Required: ${boxesUsed}.`,
+          },
+          { status: 400 }
+        );
+      }
     }
 
     // ── Transaction ─────────────────────────────────────────────────────────
@@ -204,6 +256,7 @@ export async function POST(request: NextRequest) {
           });
         }
 
+        // Create session labels — now including boxTypeId and boxesUsed
         let labelRecords: any[] = [];
         if (labelsArray.length > 0) {
           labelRecords = await Promise.all(
@@ -214,6 +267,8 @@ export async function POST(request: NextRequest) {
                   type: l.type.trim(),
                   quantity: l.quantity,
                   semiPackaged: l.semiPackaged || false,
+                  boxTypeId: l.semiPackaged ? null : (l.boxTypeId ?? null),
+                  boxesUsed: l.semiPackaged ? 0 : (l.boxesUsed ?? 0),
                 },
               })
             )
@@ -231,10 +286,10 @@ export async function POST(request: NextRequest) {
           });
         }
 
+        // Deduct label stock
         if (labelsArray.length > 0 && labelRecordsForTx.length > 0) {
           for (const entry of labelsArray) {
             if (entry.semiPackaged) continue;
-
             const labelRecord = labelRecordsForTx.find(
               (fl) => fl.name === entry.type.toLowerCase().trim()
             );
@@ -256,7 +311,10 @@ export async function POST(request: NextRequest) {
               await tx.productionBatch.update({
                 where: { id: batch!.id },
                 data: {
-                  semiPackaged: Math.max(0, (batch!.semiPackaged || 0) - totalPackagedWeight),
+                  semiPackaged: Math.max(
+                    0,
+                    (batch!.semiPackaged || 0) - totalPackagedWeight
+                  ),
                 },
               });
             }
@@ -268,33 +326,38 @@ export async function POST(request: NextRequest) {
       { timeout: 30000 }
     );
 
-    // ── Box inventory deduction (non-fatal, outside transaction) ─────────────
-    const totalBoxesNum = parseInt(totalBoxes) || 0;
-    if (totalBoxesNum > 0) {
+    // ── Per-box-type stock deduction (non-fatal, outside transaction) ────────
+    for (const { boxTypeId, boxesUsed } of deductionsArray) {
       try {
-        const boxItem = await (prisma as any).boxInventory.findUnique({
-          where: { id: "fixed-boxes-item" },
+        const boxType = await (prisma as any).boxType.findUnique({
+          where: { id: boxTypeId },
         });
-        if (boxItem) {
-          await Promise.all([
-            (prisma as any).boxInventory.update({
-              where: { id: "fixed-boxes-item" },
-              data: { availableStock: boxItem.availableStock - totalBoxesNum },
-            }),
-            (prisma as any).boxMovement.create({
-              data: {
-                action: "reduce",
-                quantity: totalBoxesNum,
-                reason: "packaging",
-                reference: batchNumber,
-                remarks: `Auto-deducted for batch ${batchNumber}`,
-                performedById: authenticatedUserId,
-              },
-            }),
-          ]);
+        if (!boxType) {
+          console.warn(`Box type ${boxTypeId} not found — skipping deduction`);
+          continue;
         }
+        await Promise.all([
+          (prisma as any).boxType.update({
+            where: { id: boxTypeId },
+            data: { availableStock: boxType.availableStock - boxesUsed },
+          }),
+          (prisma as any).boxMovement.create({
+            data: {
+              boxTypeId,
+              action: "reduce",
+              quantity: boxesUsed,
+              reason: "packaging",
+              reference: batchNumber,
+              remarks: `Auto-deducted for batch ${batchNumber}`,
+              performedById: authenticatedUserId,
+            },
+          }),
+        ]);
       } catch (boxErr) {
-        console.error("Box deduction failed (non-fatal):", boxErr);
+        console.error(
+          `Box deduction failed for boxTypeId ${boxTypeId} (non-fatal):`,
+          boxErr
+        );
       }
     }
 
@@ -333,7 +396,10 @@ export async function POST(request: NextRequest) {
           type: l.type,
           quantity: l.quantity,
           semiPackaged: l.semiPackaged,
+          boxTypeId: l.boxTypeId ?? null,
+          boxesUsed: l.boxesUsed ?? 0,
         })),
+        boxTypeDeductions: deductionsArray,
       },
       { status: 201 }
     );

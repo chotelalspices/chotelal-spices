@@ -42,12 +42,21 @@ interface InventoryLabel {
   status: string;
 }
 
+interface BoxType {
+  id: string;
+  name: string;
+  availableStock: number;
+  status: string;
+}
+
 interface LabelEntry {
   id: string;
   type: string;
-  quantity: number;
+  quantity: number;       // qty per master carton
+  boxTypeId: string;      // selected box type id
   semiPackageable: boolean;
   comboOpen: boolean;
+  boxComboOpen: boolean;
 }
 
 interface ProductData {
@@ -59,13 +68,14 @@ interface ProductData {
   labels: Array<{
     type: string;
     quantity: number;
+    boxTypeId?: string;
     semiPackageable: boolean;
   }>;
 }
 
 interface EditProductForm {
   name: string;
-  quantity: string; // string so backspace works freely
+  quantity: string;
   unit: 'kg' | 'gm';
   labels: LabelEntry[];
 }
@@ -81,6 +91,7 @@ export default function EditProductPage() {
 
   const [formulation, setFormulation] = useState<Formulation | null>(null);
   const [inventoryLabels, setInventoryLabels] = useState<InventoryLabel[]>([]);
+  const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -91,17 +102,18 @@ export default function EditProductPage() {
     labels: [],
   });
 
-  // ─── Fetch formulation + product + inventory labels ───────────────────────
+  // ─── Fetch formulation + product + inventory labels + box types ───────────
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         setIsLoading(true);
 
-        const [formulationRes, productRes, labelsRes] = await Promise.all([
+        const [formulationRes, productRes, labelsRes, boxTypesRes] = await Promise.all([
           fetch(`/api/formulations/${formulationId}`),
           fetch(`/api/formulations/${formulationId}/products/${productId}`),
           fetch('/api/labels'),
+          fetch('/api/box-inventory'),
         ]);
 
         if (!formulationRes.ok) throw new Error('Failed to fetch formulation');
@@ -117,6 +129,11 @@ export default function EditProductPage() {
           setInventoryLabels(labelsData.filter((l) => l.status === 'active'));
         }
 
+        if (boxTypesRes.ok) {
+          const boxTypesData: BoxType[] = await boxTypesRes.json();
+          setBoxTypes(boxTypesData.filter((b) => b.status === 'active'));
+        }
+
         setFormData({
           name: productData.name,
           quantity: productData.quantity > 0 ? productData.quantity.toString() : '',
@@ -125,8 +142,10 @@ export default function EditProductPage() {
             id: `label-${index}`,
             type: label.type,
             quantity: label.quantity,
+            boxTypeId: label.boxTypeId || '',
             semiPackageable: label.semiPackageable || false,
             comboOpen: false,
+            boxComboOpen: false,
           })),
         });
       } catch (error) {
@@ -152,7 +171,15 @@ export default function EditProductPage() {
       ...prev,
       labels: [
         ...prev.labels,
-        { id: `label-${Date.now()}`, type: '', quantity: 0, semiPackageable: false, comboOpen: false },
+        {
+          id: `label-${Date.now()}`,
+          type: '',
+          quantity: 0,
+          boxTypeId: '',
+          semiPackageable: false,
+          comboOpen: false,
+          boxComboOpen: false,
+        },
       ],
     }));
   };
@@ -166,7 +193,7 @@ export default function EditProductPage() {
 
   const updateLabel = (
     id: string,
-    field: 'type' | 'quantity' | 'semiPackageable' | 'comboOpen',
+    field: keyof Omit<LabelEntry, 'id'>,
     value: string | number | boolean
   ) => {
     setFormData((prev) => ({
@@ -220,6 +247,7 @@ export default function EditProductPage() {
           labels: formData.labels.map((l) => ({
             type: l.type,
             quantity: l.quantity,
+            boxTypeId: l.boxTypeId || null,
             semiPackageable: l.semiPackageable,
           })),
         }),
@@ -338,7 +366,7 @@ export default function EditProductPage() {
                   />
                 </div>
 
-                {/* Quantity — string so backspace works */}
+                {/* Quantity */}
                 <div className="space-y-2">
                   <Label htmlFor="quantity">Quantity *</Label>
                   <Input
@@ -390,7 +418,7 @@ export default function EditProductPage() {
                 </Button>
               </div>
               <p className="text-sm text-muted-foreground">
-                Select labels from inventory and define how many fit per courier box.
+                Select labels from inventory, define qty per master carton, and choose a box type.
               </p>
             </CardHeader>
 
@@ -406,13 +434,11 @@ export default function EditProductPage() {
                   {formData.labels.map((label, index) => (
                     <div
                       key={label.id}
-                      className="flex items-end gap-3 p-4 border rounded-lg bg-muted/30"
+                      className="flex items-end gap-3 p-4 border rounded-lg bg-muted/30 flex-wrap"
                     >
                       {/* Label type — searchable dropdown from inventory */}
-                      <div className="flex-1 space-y-2">
-                        <Label htmlFor={`label-type-${label.id}`}>
-                          Label Type {index + 1}
-                        </Label>
+                      <div className="flex-1 min-w-[160px] space-y-2">
+                        <Label>Label Type {index + 1}</Label>
                         <Popover
                           open={label.comboOpen}
                           onOpenChange={(open) => updateLabel(label.id, 'comboOpen', open)}
@@ -426,7 +452,7 @@ export default function EditProductPage() {
                                 !label.type && 'text-muted-foreground'
                               )}
                             >
-                              {label.type || 'Select label from inventory'}
+                              {label.type || 'Select label'}
                               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                             </Button>
                           </PopoverTrigger>
@@ -474,35 +500,84 @@ export default function EditProductPage() {
                         </Popover>
                       </div>
 
-                      {/* Qty per courier box */}
-                      <div className="w-48 space-y-2">
-                        <Label htmlFor={`label-quantity-${label.id}`}>
-                          Qty per Courier Box
-                        </Label>
+                      {/* Qty per master carton */}
+                      <div className="w-44 space-y-2">
+                        <Label>Qty per Master Carton</Label>
                         <div className="relative">
                           <Input
-                            id={`label-quantity-${label.id}`}
                             type="number"
                             min="1"
                             value={label.quantity || ''}
                             onChange={(e) => updateLabel(label.id, 'quantity', e.target.value)}
                             placeholder="e.g., 10"
-                            className="pr-14"
+                            className="pr-10"
                           />
                           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                            pcs/box
+                            pcs
                           </span>
                         </div>
                       </div>
 
+                      {/* Box Type — searchable dropdown from box inventory */}
+                      <div className="w-44 space-y-2">
+                        <Label>Box Type</Label>
+                        <Popover
+                          open={label.boxComboOpen}
+                          onOpenChange={(open) => updateLabel(label.id, 'boxComboOpen', open)}
+                        >
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              className={cn(
+                                'w-full justify-between font-normal',
+                                !label.boxTypeId && 'text-muted-foreground'
+                              )}
+                            >
+                              {label.boxTypeId
+                                ? boxTypes.find((b) => b.id === label.boxTypeId)?.name ?? 'Select box'
+                                : 'Select box'}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-56 p-0" align="start">
+                            <Command>
+                              <div className="border-b p-2">
+                                <CommandInput placeholder="Search box types..." />
+                              </div>
+                              <CommandGroup className="max-h-[220px] overflow-y-auto">
+                                {boxTypes.map((box) => (
+                                  <CommandItem
+                                    key={box.id}
+                                    value={box.name}
+                                    onSelect={() => {
+                                      updateLabel(label.id, 'boxTypeId', box.id);
+                                      updateLabel(label.id, 'boxComboOpen', false);
+                                    }}
+                                  >
+                                    <div className="flex justify-between w-full">
+                                      <span>{box.name}</span>
+                                      <span className="text-xs text-muted-foreground ml-2">
+                                        {box.availableStock.toLocaleString('en-IN')} in stock
+                                      </span>
+                                    </div>
+                                    {label.boxTypeId === box.id && (
+                                      <Check className="ml-2 h-4 w-4 shrink-0" />
+                                    )}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                              <CommandEmpty>No box types found.</CommandEmpty>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+
                       {/* Semi-packageable checkbox */}
-                      <div className="w-36 space-y-2">
-                        <Label htmlFor={`label-semi-${label.id}`}>
-                          Semi-packageable
-                        </Label>
+                      <div className="w-32 space-y-2">
+                        <Label>Semi-packageable</Label>
                         <div className="flex items-center justify-center h-10">
                           <Checkbox
-                            id={`label-semi-${label.id}`}
                             checked={label.semiPackageable}
                             onCheckedChange={(checked) =>
                               updateLabel(label.id, 'semiPackageable', !!checked)

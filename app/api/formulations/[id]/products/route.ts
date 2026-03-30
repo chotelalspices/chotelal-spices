@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
 /**
- * GET: Fetch all products for a formulation (with labels and quantities)
+ * GET: Fetch all products for a formulation (with labels, quantities, and box types)
  */
 export async function GET(
   request: NextRequest,
@@ -12,29 +12,28 @@ export async function GET(
     const { id: formulationId } = await params;
 
     const products = await prisma.finishedProduct.findMany({
-      where: {
-        formulationId,
-      },
+      where: { formulationId },
       include: {
         productLabels: {
           include: {
             label: true,
+            boxType: { select: { id: true, name: true } },
           },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
     });
 
-    // Format labels with quantities for frontend
     const formattedProducts = products.map((product) => ({
       ...product,
       labels: product.productLabels.map((pl) => ({
         type: pl.label.name,
         quantity: pl.quantity,
+        semiPackageable: pl.semiPackageable,
+        boxTypeId: pl.boxTypeId ?? null,
+        boxTypeName: pl.boxType?.name ?? null,
       })),
-      productLabels: undefined, // Remove raw relation data
+      productLabels: undefined,
     }));
 
     return NextResponse.json(formattedProducts);
@@ -48,7 +47,7 @@ export async function GET(
 }
 
 /**
- * POST: Create product with labels and quantities
+ * POST: Create product with labels, quantities, semi-packageable flag, and box type
  */
 export async function POST(
   request: NextRequest,
@@ -58,7 +57,6 @@ export async function POST(
     const { id: formulationId } = await params;
     const body = await request.json();
 
-    // Validate required fields
     if (!body.name || !body.quantity || !body.unit) {
       return NextResponse.json(
         { error: 'Missing required fields: name, quantity, unit' },
@@ -66,10 +64,13 @@ export async function POST(
       );
     }
 
-    // Parse labels array
-    const labels: Array<{ type: string; quantity: number }> = body.labels || [];
+    const labels: Array<{
+      type: string;
+      quantity: number;
+      boxTypeId?: string | null;
+      semiPackageable?: boolean;
+    }> = body.labels || [];
 
-    // Validate label quantities
     const invalidLabels = labels.filter(
       (label) => !label.type || label.quantity <= 0
     );
@@ -80,17 +81,40 @@ export async function POST(
       );
     }
 
-    // Create product with labels
+    // Validate boxTypeIds if provided
+    const boxTypeIds = labels
+      .map((l) => l.boxTypeId)
+      .filter((id): id is string => !!id);
+
+    if (boxTypeIds.length > 0) {
+      const foundBoxTypes = await (prisma as any).boxType.findMany({
+        where: { id: { in: boxTypeIds } },
+        select: { id: true },
+      });
+      const foundIds = new Set(foundBoxTypes.map((b: any) => b.id));
+      const missingId = boxTypeIds.find((id) => !foundIds.has(id));
+      if (missingId) {
+        return NextResponse.json(
+          { error: `Box type with ID "${missingId}" not found.` },
+          { status: 404 }
+        );
+      }
+    }
+
     const product = await prisma.finishedProduct.create({
       data: {
         name: body.name,
         quantity: body.quantity,
         unit: body.unit,
         formulationId,
-
         productLabels: {
           create: labels.map((label) => ({
             quantity: label.quantity,
+            semiPackageable: label.semiPackageable ?? false,
+            // Connect boxType if provided
+            ...(label.boxTypeId
+              ? { boxType: { connect: { id: label.boxTypeId } } }
+              : {}),
             label: {
               connectOrCreate: {
                 where: { name: label.type.toLowerCase().trim() },
@@ -104,6 +128,7 @@ export async function POST(
         productLabels: {
           include: {
             label: true,
+            boxType: { select: { id: true, name: true } },
           },
         },
       },
@@ -115,6 +140,9 @@ export async function POST(
         labels: product.productLabels.map((pl) => ({
           type: pl.label.name,
           quantity: pl.quantity,
+          semiPackageable: pl.semiPackageable,
+          boxTypeId: pl.boxTypeId ?? null,
+          boxTypeName: pl.boxType?.name ?? null,
         })),
         productLabels: undefined,
       },

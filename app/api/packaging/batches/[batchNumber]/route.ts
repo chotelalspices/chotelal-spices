@@ -12,7 +12,10 @@ export async function GET(
   try {
     const session = await getServerSession(authOptions);
     if (!session || !session.user) {
-      return NextResponse.json({ error: "Unauthorized. Please log in to perform this action." }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized. Please log in to perform this action." },
+        { status: 401 }
+      );
     }
     const authenticatedUserId = (session.user as any).id as string;
     if (!authenticatedUserId) {
@@ -23,10 +26,13 @@ export async function GET(
       return NextResponse.json({ error: "User not found in database." }, { status: 401 });
     }
     if (user.status !== "active") {
-      return NextResponse.json({ error: "Your account is not active. Please contact an administrator." }, { status: 403 });
+      return NextResponse.json(
+        { error: "Your account is not active. Please contact an administrator." },
+        { status: 403 }
+      );
     }
 
-    const { batchNumber } = await params as { batchNumber: string };
+    const { batchNumber } = (await params) as { batchNumber: string };
     const identifier = decodeURIComponent(batchNumber);
 
     const packagingSessionsInclude = {
@@ -34,7 +40,12 @@ export async function GET(
         items: { include: { container: true } },
         performedBy: { select: { fullName: true } },
         courierBoxes: true,
-        sessionLabels: true,
+        // include boxType name so we can return it without extra queries
+        sessionLabels: {
+          include: {
+            boxType: { select: { id: true, name: true } },
+          },
+        },
       },
       orderBy: { date: "desc" as const },
     };
@@ -55,16 +66,16 @@ export async function GET(
       return NextResponse.json({ error: "Batch not found" }, { status: 404 });
     }
 
-    const totalPackagedWeight = batch.packagingSessions.reduce((sum, session) => {
-      if (session.remarks && session.remarks.includes("Total:")) {
-        const match = session.remarks.match(/Total:\s*([\d.]+)kg/);
+    const totalPackagedWeight = batch.packagingSessions.reduce((sum, s) => {
+      if (s.remarks && s.remarks.includes("Total:")) {
+        const match = s.remarks.match(/Total:\s*([\d.]+)kg/);
         if (match) return sum + parseFloat(match[1]);
       }
       return sum;
     }, 0);
 
     const totalLoss = batch.packagingSessions.reduce(
-      (sum, session) => sum + session.packagingLoss,
+      (sum, s) => sum + s.packagingLoss,
       0
     );
 
@@ -88,18 +99,19 @@ export async function GET(
       status = "Partial";
     }
 
+    // ── Build semiPackagedLabels map ────────────────────────────────────────
     const semiPackagedLabelMap: Record<string, number> = {};
-    for (const session of batch.packagingSessions) {
-      for (const sl of session.sessionLabels) {
+    for (const s of batch.packagingSessions) {
+      for (const sl of s.sessionLabels) {
         if (sl.semiPackaged) {
           semiPackagedLabelMap[sl.type] = (semiPackagedLabelMap[sl.type] || 0) + sl.quantity;
         }
       }
     }
-    for (const session of batch.packagingSessions) {
-      for (const sl of session.sessionLabels) {
+    for (const s of batch.packagingSessions) {
+      for (const sl of s.sessionLabels) {
         if (!sl.semiPackaged && semiPackagedLabelMap[sl.type] !== undefined) {
-          if (session.remarks && session.remarks.includes("(conversion)")) {
+          if (s.remarks && s.remarks.includes("(conversion)")) {
             semiPackagedLabelMap[sl.type] = Math.max(
               0,
               (semiPackagedLabelMap[sl.type] || 0) - sl.quantity
@@ -109,34 +121,63 @@ export async function GET(
       }
     }
 
-    const semiPackagedLabels: Array<{ type: string; quantity: number }> = Object.entries(
-      semiPackagedLabelMap
-    )
+    const semiPackagedLabels = Object.entries(semiPackagedLabelMap)
       .filter(([, qty]) => qty > 0)
       .map(([type, quantity]) => ({ type, quantity }));
 
-    const sessions = batch.packagingSessions.map((session) => {
+    // ── Build sessions response ─────────────────────────────────────────────
+    const sessions = batch.packagingSessions.map((s) => {
       let sessionWeight = 0;
-      if (session.remarks && session.remarks.includes("Total:")) {
-        const match = session.remarks.match(/Total:\s*([\d.]+)kg/);
+      if (s.remarks && s.remarks.includes("Total:")) {
+        const match = s.remarks.match(/Total:\s*([\d.]+)kg/);
         if (match) sessionWeight = parseFloat(match[1]);
       }
+
+      // Aggregate boxTypeDeductions from sessionLabels (uses the new columns)
+      const boxTypeDeductionMap = new Map<
+        string,
+        { boxTypeName: string; boxesUsed: number }
+      >();
+      for (const sl of s.sessionLabels) {
+        if (sl.semiPackaged) continue;
+        const btId = (sl as any).boxTypeId as string | null;
+        const btUsed = (sl as any).boxesUsed as number | null;
+        if (!btId || !btUsed || btUsed <= 0) continue;
+        const btName =
+          (sl as any).boxType?.name ?? btId;
+        const existing = boxTypeDeductionMap.get(btId);
+        boxTypeDeductionMap.set(btId, {
+          boxTypeName: btName,
+          boxesUsed: (existing?.boxesUsed ?? 0) + btUsed,
+        });
+      }
+      const boxTypeDeductions = Array.from(boxTypeDeductionMap.entries()).map(
+        ([boxTypeId, val]) => ({
+          boxTypeId,
+          boxTypeName: val.boxTypeName,
+          boxesUsed: val.boxesUsed,
+        })
+      );
+
       return {
-        id: session.id,
+        id: s.id,
         batchNumber: batch?.batchNumber,
-        date: session.date.toISOString(),
+        date: s.date.toISOString(),
         items: [],
-        packagingLoss: session.packagingLoss,
+        packagingLoss: s.packagingLoss,
         totalPackagedWeight: sessionWeight,
-        semiPackaged: session.semiPackaged || 0,
-        remarks: session.remarks,
-        performedBy: session.performedBy ? session.performedBy.fullName : null,
-        courierBoxes: session.courierBoxes ?? [],
-        labels: (session.sessionLabels ?? []).map((l) => ({
+        semiPackaged: s.semiPackaged || 0,
+        remarks: s.remarks,
+        performedBy: s.performedBy?.fullName ?? null,
+        courierBoxes: s.courierBoxes ?? [],
+        labels: s.sessionLabels.map((l) => ({
           type: l.type,
           quantity: l.quantity,
           semiPackaged: l.semiPackaged,
+          boxTypeId: (l as any).boxTypeId ?? null,
+          boxesUsed: (l as any).boxesUsed ?? 0,
         })),
+        boxTypeDeductions,
       };
     });
 
@@ -158,7 +199,10 @@ export async function GET(
     );
   } catch (error) {
     console.error("Error fetching packaging batch:", error);
-    return NextResponse.json({ error: "Failed to fetch packaging batch" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to fetch packaging batch" },
+      { status: 500 }
+    );
   }
 }
 
@@ -169,7 +213,10 @@ export async function PATCH(
   try {
     const session = await getServerSession(authOptions);
     if (!session || !session.user) {
-      return NextResponse.json({ error: "Unauthorized. Please log in to perform this action." }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized. Please log in to perform this action." },
+        { status: 401 }
+      );
     }
     const authenticatedUserId = (session.user as any).id as string;
     if (!authenticatedUserId) {
@@ -180,13 +227,24 @@ export async function PATCH(
       return NextResponse.json({ error: "User not found in database." }, { status: 401 });
     }
     if (user.status !== "active") {
-      return NextResponse.json({ error: "Your account is not active. Please contact an administrator." }, { status: 403 });
+      return NextResponse.json(
+        { error: "Your account is not active. Please contact an administrator." },
+        { status: 403 }
+      );
     }
 
-    const { batchNumber } = await params as { batchNumber: string };
+    const { batchNumber } = (await params) as { batchNumber: string };
     const identifier = decodeURIComponent(batchNumber);
     const body = await request.json();
-    const { items, remarks, labels, packagingLoss, courierBox, totalBoxes } = body;
+    const {
+      items,
+      remarks,
+      labels,
+      packagingLoss,
+      courierBox,
+      totalBoxes,
+      boxTypeDeductions,
+    } = body;
 
     let batch = await prisma.productionBatch.findUnique({
       where: { batchNumber: identifier },
@@ -248,12 +306,15 @@ export async function PATCH(
     const labelEntries: Array<{
       type: string;
       quantity: number;
+      boxTypeId?: string | null;
+      boxesUsed?: number;
       semiPackaged?: boolean;
       isConversion?: boolean;
     }> = Array.isArray(labels)
       ? labels.filter((l: any) => l.type?.trim() && l.quantity > 0)
       : [];
 
+    // ── Pre-fetch and validate label stock ──────────────────────────────────
     let labelRecordsForTx: Array<{ id: string; name: string }> = [];
 
     if (labelEntries.length > 0) {
@@ -294,6 +355,46 @@ export async function PATCH(
       });
     }
 
+    // ── Build and validate box type deductions ──────────────────────────────
+    const deductionsArray: Array<{ boxTypeId: string; boxesUsed: number }> =
+      Array.isArray(boxTypeDeductions) && boxTypeDeductions.length > 0
+        ? boxTypeDeductions.filter(
+            (d: any) =>
+              d.boxTypeId &&
+              typeof d.boxesUsed === "number" &&
+              d.boxesUsed > 0
+          )
+        : (() => {
+            const totalBoxesNum = parseInt(totalBoxes) || 0;
+            return totalBoxesNum > 0
+              ? [{ boxTypeId: "fixed-boxes-item", boxesUsed: totalBoxesNum }]
+              : [];
+          })();
+
+    for (const { boxTypeId, boxesUsed } of deductionsArray) {
+      const boxType = await (prisma as any).boxType.findUnique({
+        where: { id: boxTypeId },
+      });
+      if (!boxType) {
+        if (boxTypeId !== "fixed-boxes-item") {
+          return NextResponse.json(
+            { error: `Box type not found for ID "${boxTypeId}".` },
+            { status: 404 }
+          );
+        }
+        continue;
+      }
+      if (boxType.availableStock < boxesUsed) {
+        return NextResponse.json(
+          {
+            error: `Insufficient stock for box type "${boxType.name}". Available: ${boxType.availableStock}, Required: ${boxesUsed}.`,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // ── Transaction ─────────────────────────────────────────────────────────
     await prisma.$transaction(
       async (tx) => {
         const itemsWeight = itemsArray.reduce(
@@ -347,6 +448,7 @@ export async function PATCH(
           }
         }
 
+        // Create session labels with boxTypeId and boxesUsed
         if (labelEntries.length > 0) {
           await Promise.all(
             labelEntries.map((l) =>
@@ -356,6 +458,8 @@ export async function PATCH(
                   type: l.type.trim(),
                   quantity: l.quantity,
                   semiPackaged: l.semiPackaged || false,
+                  boxTypeId: l.semiPackaged ? null : (l.boxTypeId ?? null),
+                  boxesUsed: l.semiPackaged ? 0 : (l.boxesUsed ?? 0),
                 },
               })
             )
@@ -378,6 +482,7 @@ export async function PATCH(
           });
         }
 
+        // Deduct label stock
         for (const entry of labelEntries) {
           if (entry.semiPackaged) continue;
           const labelRecord = labelRecordsForTx.find(
@@ -405,7 +510,10 @@ export async function PATCH(
             await tx.productionBatch.update({
               where: { id: batch!.id },
               data: {
-                semiPackaged: Math.max(0, (batch!.semiPackaged || 0) - conversionWeight),
+                semiPackaged: Math.max(
+                  0,
+                  (batch!.semiPackaged || 0) - conversionWeight
+                ),
               },
             });
           }
@@ -414,33 +522,38 @@ export async function PATCH(
       { timeout: 30000 }
     );
 
-    // ── Box inventory deduction (non-fatal, outside transaction) ─────────────
-    const totalBoxesNum = parseInt(totalBoxes) || 0;
-    if (totalBoxesNum > 0) {
+    // ── Per-box-type stock deduction (non-fatal, outside transaction) ────────
+    for (const { boxTypeId, boxesUsed } of deductionsArray) {
       try {
-        const boxItem = await (prisma as any).boxInventory.findUnique({
-          where: { id: "fixed-boxes-item" },
+        const boxType = await (prisma as any).boxType.findUnique({
+          where: { id: boxTypeId },
         });
-        if (boxItem) {
-          await Promise.all([
-            (prisma as any).boxInventory.update({
-              where: { id: "fixed-boxes-item" },
-              data: { availableStock: boxItem.availableStock - totalBoxesNum },
-            }),
-            (prisma as any).boxMovement.create({
-              data: {
-                action: "reduce",
-                quantity: totalBoxesNum,
-                reason: "packaging",
-                reference: identifier,
-                remarks: `Auto-deducted for batch ${identifier}`,
-                performedById: authenticatedUserId,
-              },
-            }),
-          ]);
+        if (!boxType) {
+          console.warn(`Box type ${boxTypeId} not found — skipping deduction`);
+          continue;
         }
+        await Promise.all([
+          (prisma as any).boxType.update({
+            where: { id: boxTypeId },
+            data: { availableStock: boxType.availableStock - boxesUsed },
+          }),
+          (prisma as any).boxMovement.create({
+            data: {
+              boxTypeId,
+              action: "reduce",
+              quantity: boxesUsed,
+              reason: "packaging",
+              reference: identifier,
+              remarks: `Auto-deducted for batch ${identifier}`,
+              performedById: authenticatedUserId,
+            },
+          }),
+        ]);
       } catch (boxErr) {
-        console.error("Box deduction failed (non-fatal):", boxErr);
+        console.error(
+          `Box deduction failed for boxTypeId ${boxTypeId} (non-fatal):`,
+          boxErr
+        );
       }
     }
 
@@ -450,12 +563,15 @@ export async function PATCH(
         remainingQuantity,
         lossRecorded: remainingQuantity,
         labelsDeducted: labelEntries.filter((l) => !l.semiPackaged).length,
-        boxesDeducted: totalBoxesNum,
+        boxesDeducted: deductionsArray.reduce((sum, d) => sum + d.boxesUsed, 0),
       },
       { status: 200 }
     );
   } catch (error) {
     console.error("Error finishing batch:", error);
-    return NextResponse.json({ error: "Failed to finish batch" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to finish batch" },
+      { status: 500 }
+    );
   }
 }

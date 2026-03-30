@@ -9,19 +9,16 @@ export async function GET(
     const { id: formulationId } = await params;
 
     const products = await prisma.finishedProduct.findMany({
-      where: {
-        formulationId: formulationId,
-      },
+      where: { formulationId },
       include: {
         productLabels: {
           include: {
             label: true,
+            boxType: { select: { id: true, name: true } },
           },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
     });
 
     const transformedProducts = products.map((product) => {
@@ -48,8 +45,10 @@ export async function GET(
         createdAt: product.createdAt,
         labels: product.productLabels.map((pl) => ({
           type: pl.label.name,
-          quantity: pl.quantity, // qty per courier box
+          quantity: pl.quantity,
           semiPackageable: pl.semiPackageable,
+          boxTypeId: pl.boxTypeId ?? null,       // ← now returned to packaging entry
+          boxTypeName: pl.boxType?.name ?? null, // ← for display convenience
         })),
       };
     });
