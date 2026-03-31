@@ -347,6 +347,7 @@ export default function ProductionList() {
                   <TableHead className="text-right">Planned Qty / Lot</TableHead>
                   <TableHead className="text-right">Final Output</TableHead>
                   <TableHead className="text-right">Cost/kg</TableHead>
+                  <TableHead className="text-right">Total Cost</TableHead>
                   <TableHead>Production Date</TableHead>
                   <TableHead>Confirmed By</TableHead>
                   <TableHead>Confirmed At</TableHead>
@@ -362,6 +363,9 @@ export default function ProductionList() {
                     <TableCell className="text-right">{batch.plannedQuantity} {batch.unit}</TableCell>
                     <TableCell className="text-right">{batch.finalOutputQuantity.toFixed(2)} {batch.unit}</TableCell>
                     <TableCell className="text-right">{formatCurrency(batch.costPerKg)}</TableCell>
+                    <TableCell className="text-right">
+                      {formatCurrency(batch.finalOutputQuantity * batch.costPerKg)}
+                    </TableCell>
                     <TableCell>{formatDate(batch.productionDate)}</TableCell>
                     <TableCell>{batch.status === 'confirmed' ? batch.confirmedBy : '—'}</TableCell>
                     <TableCell>
