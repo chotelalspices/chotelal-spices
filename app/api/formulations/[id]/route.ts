@@ -16,9 +16,7 @@ export async function GET(
     const formulation = await prisma.formulation.findUnique({
       where: { id },
       include: {
-        ingredients: {
-          include: { rawMaterial: true },
-        },
+        ingredients: { include: { rawMaterial: true } },
         ...(includeAudit && {
           auditLogs: {
             orderBy: { changedAt: "desc" },
@@ -29,47 +27,37 @@ export async function GET(
     });
 
     if (!formulation) {
-      return NextResponse.json(
-        { error: "Formulation not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Formulation not found" }, { status: 404 });
     }
 
-    return NextResponse.json(
-      {
-        id: formulation.id,
-        name: formulation.name,
-        baseQuantity: formulation.baseQuantity,
-        baseUnit: formulation.baseUnit.toLowerCase() as "kg" | "gm",
-        defaultQuantity: formulation.defaultQuantity,
-        status: formulation.status.toLowerCase() as "active" | "inactive",
-        ingredients: formulation.ingredients.map((ing) => ({
-          rawMaterialId: ing.rawMaterialId,
-          rawMaterialName: ing.rawMaterial.name,
-          rawMaterialUnit: ing.rawMaterial.unit.toLowerCase() as "kg" | "gm",
-          rawMaterialCostPerUnit: ing.rawMaterial.costPerUnit,
-          percentage: ing.percentage,
+    return NextResponse.json({
+      id: formulation.id,
+      name: formulation.name,
+      baseQuantity: formulation.baseQuantity,
+      baseUnit: formulation.baseUnit.toLowerCase() as "kg" | "gm",
+      defaultQuantity: formulation.defaultQuantity,
+      status: formulation.status.toLowerCase() as "active" | "inactive",
+      ingredients: formulation.ingredients.map((ing) => ({
+        rawMaterialId: ing.rawMaterialId,
+        rawMaterialName: ing.rawMaterial.name,
+        rawMaterialUnit: ing.rawMaterial.unit.toLowerCase() as "kg" | "gm",
+        rawMaterialCostPerUnit: ing.rawMaterial.costPerUnit,
+        percentage: ing.percentage,
+      })),
+      createdAt: formulation.createdAt.toISOString(),
+      updatedAt: formulation.updatedAt.toISOString(),
+      ...(includeAudit && {
+        auditLogs: (formulation as any).auditLogs?.map((log: any) => ({
+          id: log.id,
+          changedAt: log.changedAt.toISOString(),
+          changedBy: log.changedBy ?? null,
+          changes: log.changes,
         })),
-        createdAt: formulation.createdAt.toISOString(),
-        updatedAt: formulation.updatedAt.toISOString(),
-        // Only included when ?audit=true
-        ...(includeAudit && {
-          auditLogs: (formulation as any).auditLogs?.map((log: any) => ({
-            id: log.id,
-            changedAt: log.changedAt.toISOString(),
-            changedBy: log.changedBy ?? null,
-            changes: log.changes, // full snapshot JSON
-          })),
-        }),
-      },
-      { status: 200 }
-    );
+      }),
+    }, { status: 200 });
   } catch (error) {
     console.error("Error fetching formulation:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch formulation" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch formulation" }, { status: 500 });
   }
 }
 
@@ -80,10 +68,7 @@ export async function PUT(
   try {
     const session = await getServerSession(authOptions);
     if (!session || !session.user) {
-      return NextResponse.json(
-        { error: "Unauthorized. Please log in to perform this action." },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
     }
 
     const authenticatedUserId = (session.user as any).id as string;
@@ -91,89 +76,42 @@ export async function PUT(
     const body = await request.json();
     const { name, baseQuantity, baseUnit, defaultQuantity, status, ingredients } = body;
 
-    // ── Validation ──────────────────────────────────────────────────────────
-
-    if (
-      !name ||
-      baseQuantity === undefined ||
-      !baseUnit ||
-      defaultQuantity === undefined ||
-      !status ||
-      !ingredients ||
-      !Array.isArray(ingredients)
-    ) {
-      return NextResponse.json(
-        { error: "Missing required fields: name, baseQuantity, baseUnit, defaultQuantity, status, and ingredients are required" },
-        { status: 400 }
-      );
+    if (!name || baseQuantity === undefined || !baseUnit || defaultQuantity === undefined || !status || !ingredients || !Array.isArray(ingredients)) {
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
-
     if (!["kg", "gm"].includes(baseUnit.toLowerCase())) {
-      return NextResponse.json(
-        { error: 'Invalid unit. Must be "kg" or "gm"' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid unit. Must be "kg" or "gm"' }, { status: 400 });
     }
-
     if (!["active", "inactive"].includes(status.toLowerCase())) {
-      return NextResponse.json(
-        { error: 'Invalid status. Must be "active" or "inactive"' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid status. Must be "active" or "inactive"' }, { status: 400 });
     }
-
     if (ingredients.length === 0) {
-      return NextResponse.json(
-        { error: "At least one ingredient is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "At least one ingredient is required" }, { status: 400 });
     }
 
-    const totalPercentage = ingredients.reduce(
-      (sum: number, ing: any) => sum + (parseFloat(ing.percentage) || 0),
-      0
-    );
+    const totalPercentage = ingredients.reduce((sum: number, ing: any) => sum + (parseFloat(ing.percentage) || 0), 0);
     if (Math.abs(totalPercentage - 100) > 0.01) {
-      return NextResponse.json(
-        { error: "Total percentage must be exactly 100%" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Total percentage must be exactly 100%" }, { status: 400 });
     }
 
     for (const ingredient of ingredients) {
       if (!ingredient.rawMaterialId || ingredient.percentage === undefined) {
-        return NextResponse.json(
-          { error: "Each ingredient must have rawMaterialId and percentage" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Each ingredient must have rawMaterialId and percentage" }, { status: 400 });
       }
-      const rawMaterial = await prisma.rawMaterial.findUnique({
-        where: { id: ingredient.rawMaterialId },
-      });
+      const rawMaterial = await prisma.rawMaterial.findUnique({ where: { id: ingredient.rawMaterialId } });
       if (!rawMaterial) {
-        return NextResponse.json(
-          { error: `Raw material with id ${ingredient.rawMaterialId} not found` },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: `Raw material with id ${ingredient.rawMaterialId} not found` }, { status: 400 });
       }
     }
 
-    // ── Capture full snapshot BEFORE update ─────────────────────────────────
-
+    // Snapshot before update for audit log
     const currentFormulation = await prisma.formulation.findUnique({
       where: { id },
-      include: {
-        ingredients: {
-          include: { rawMaterial: true },
-        },
-      },
+      include: { ingredients: { include: { rawMaterial: true } } },
     });
 
     if (!currentFormulation) {
-      return NextResponse.json(
-        { error: "Formulation not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Formulation not found" }, { status: 404 });
     }
 
     const snapshot = {
@@ -190,10 +128,7 @@ export async function PUT(
       })),
     };
 
-    // ── Transaction: update formulation + save audit snapshot ───────────────
-
     await prisma.$transaction(async (tx) => {
-      // 1. Update formulation fields
       await tx.formulation.update({
         where: { id },
         data: {
@@ -204,11 +139,7 @@ export async function PUT(
           status: status.toLowerCase() as "active" | "inactive",
         },
       });
-
-      // 2. Replace ingredients
-      await tx.formulationIngredient.deleteMany({
-        where: { formulationId: id },
-      });
+      await tx.formulationIngredient.deleteMany({ where: { formulationId: id } });
       await tx.formulationIngredient.createMany({
         data: ingredients.map((ing: any) => ({
           formulationId: id,
@@ -216,60 +147,99 @@ export async function PUT(
           percentage: parseFloat(ing.percentage),
         })),
       });
-
-      // 3. Save the "before" snapshot as an audit log entry
       await tx.formulationAudit.create({
-        data: {
-          formulationId: id,
-          changedById: authenticatedUserId,
-          changes: snapshot,
-        },
+        data: { formulationId: id, changedById: authenticatedUserId, changes: snapshot },
       });
     });
 
-    // ── Return updated formulation ───────────────────────────────────────────
-
     const updatedFormulation = await prisma.formulation.findUnique({
       where: { id },
-      include: {
-        ingredients: {
-          include: { rawMaterial: true },
-        },
-      },
+      include: { ingredients: { include: { rawMaterial: true } } },
     });
 
-    if (!updatedFormulation) {
-      throw new Error("Failed to fetch updated formulation");
-    }
+    if (!updatedFormulation) throw new Error("Failed to fetch updated formulation");
 
-    return NextResponse.json(
-      {
-        id: updatedFormulation.id,
-        name: updatedFormulation.name,
-        baseQuantity: updatedFormulation.baseQuantity,
-        baseUnit: updatedFormulation.baseUnit.toLowerCase() as "kg" | "gm",
-        defaultQuantity: updatedFormulation.defaultQuantity,
-        status: updatedFormulation.status.toLowerCase() as "active" | "inactive",
-        ingredients: updatedFormulation.ingredients.map((ing) => ({
-          rawMaterialId: ing.rawMaterialId,
-          percentage: ing.percentage,
-        })),
-        createdAt: updatedFormulation.createdAt.toISOString(),
-        updatedAt: updatedFormulation.updatedAt.toISOString(),
-      },
-      { status: 200 }
-    );
+    return NextResponse.json({
+      id: updatedFormulation.id,
+      name: updatedFormulation.name,
+      baseQuantity: updatedFormulation.baseQuantity,
+      baseUnit: updatedFormulation.baseUnit.toLowerCase() as "kg" | "gm",
+      defaultQuantity: updatedFormulation.defaultQuantity,
+      status: updatedFormulation.status.toLowerCase() as "active" | "inactive",
+      ingredients: updatedFormulation.ingredients.map((ing) => ({
+        rawMaterialId: ing.rawMaterialId,
+        percentage: ing.percentage,
+      })),
+      createdAt: updatedFormulation.createdAt.toISOString(),
+      updatedAt: updatedFormulation.updatedAt.toISOString(),
+    }, { status: 200 });
   } catch (error) {
     console.error("Error updating formulation:", error);
     if (error instanceof Error && error.message.includes("Unique constraint")) {
+      return NextResponse.json({ error: "A formulation with this name already exists" }, { status: 409 });
+    }
+    return NextResponse.json({ error: "Failed to update formulation" }, { status: 500 });
+  }
+}
+
+// ─── DELETE ───────────────────────────────────────────────────────────────────
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session || !session.user) {
+      return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: (session.user as any).email || "" },
+      include: { userRoles: { select: { role: true } } },
+    });
+
+    if (!user || user.status !== "active") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (!user.userRoles.some((r) => r.role === "admin")) {
+      return NextResponse.json({ error: "Admin only" }, { status: 403 });
+    }
+
+    const { id } = await params;
+
+    const formulation = await prisma.formulation.findUnique({
+      where: { id },
+      include: {
+        productionBatches: { select: { id: true }, take: 1 },
+        finishedProducts: { select: { id: true }, take: 1 },
+      },
+    });
+
+    if (!formulation) {
+      return NextResponse.json({ error: "Formulation not found" }, { status: 404 });
+    }
+
+    // Block deletion if there are production batches or finished products linked
+    if (formulation.productionBatches.length > 0) {
       return NextResponse.json(
-        { error: "A formulation with this name already exists" },
-        { status: 409 }
+        { error: "Cannot delete this formulation — it has production batches linked to it." },
+        { status: 400 }
       );
     }
-    return NextResponse.json(
-      { error: "Failed to update formulation" },
-      { status: 500 }
-    );
+    if (formulation.finishedProducts.length > 0) {
+      return NextResponse.json(
+        { error: "Cannot delete this formulation — it has finished products linked to it. Delete the products first." },
+        { status: 400 }
+      );
+    }
+
+    // Safe to delete — cascade will remove ingredients and audit logs
+    await prisma.formulation.delete({ where: { id } });
+
+    return NextResponse.json({ message: "Formulation deleted successfully" }, { status: 200 });
+  } catch (error) {
+    console.error("Error deleting formulation:", error);
+    return NextResponse.json({ error: "Failed to delete formulation" }, { status: 500 });
   }
 }
