@@ -133,12 +133,6 @@ export function FormulationTable({
                               : <><ToggleRight className="h-4 w-4 text-green-600" /><span className="text-green-600">Set Active</span></>}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="flex items-center gap-2 text-destructive focus:text-destructive"
-                            onClick={() => setDeleteTarget(formulation)}
-                          >
-                            <Trash2 className="h-4 w-4" />Delete
-                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}
@@ -149,28 +143,6 @@ export function FormulationTable({
           </TableBody>
         </Table>
       </div>
-
-      {/* Delete confirmation dialog */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Formulation?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete <strong>{deleteTarget?.name}</strong>?
-              This cannot be undone and will also remove all associated products and ingredients.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   );
 }

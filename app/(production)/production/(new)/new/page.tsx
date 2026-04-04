@@ -3,8 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, ArrowRight, Factory, Calendar, Loader2 } from 'lucide-react';
-
+import { Check, ChevronsUpDown } from 'lucide-react';
+import { cn } from '@/libs/utils';
+import { ArrowLeft, ArrowRight, Factory, Calendar } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -22,6 +24,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+} from '@/components/ui/command';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Formulation } from '@/data/formulationData';
@@ -38,7 +47,7 @@ export default function ProductionEntry() {
       try {
         setIsLoading(true);
         const response = await fetch('/api/formulations');
-        
+
         if (!response.ok) {
           throw new Error('Failed to fetch formulations');
         }
@@ -184,36 +193,60 @@ export default function ProductionEntry() {
               <Label htmlFor="formulation">
                 Masala / Product Name *
               </Label>
-              <Select
-                value={formData.formulationId}
-                onValueChange={value => {
-                  const formulation = activeFormulations.find(f => f.id === value);
-                  setFormData({ 
-                    ...formData, 
-                    formulationId: value,
-                    plannedQuantity: formulation?.defaultQuantity?.toString() || ''
-                  });
-                }}
-                disabled={isLoading}
-              >
-                <SelectTrigger id="formulation">
-                  <SelectValue placeholder={isLoading ? "Loading..." : "Select a masala..."} />
-                </SelectTrigger>
-                <SelectContent>
-                  {activeFormulations.map(f => (
-                    <SelectItem key={f.id} value={f.id}>
-                      {f.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
 
-              {selectedFormulation && (
-                <p className="text-sm text-muted-foreground">
-                  Base formulation: {selectedFormulation.baseQuantity}{' '}
-                  {selectedFormulation.baseUnit}
-                </p>
-              )}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    className="w-full justify-between"
+                    disabled={isLoading}
+                  >
+                    {formData.formulationId
+                      ? activeFormulations.find(
+                        f => f.id === formData.formulationId
+                      )?.name
+                      : isLoading
+                        ? 'Loading...'
+                        : 'Select a masala...'}
+
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+
+                <PopoverContent className="w-full p-0">
+                  <Command>
+                    <CommandInput placeholder="Search masala..." />
+                    <CommandEmpty>No masala found.</CommandEmpty>
+
+                    <CommandGroup className="max-h-60 overflow-y-auto">
+                      {activeFormulations.map(f => (
+                        <CommandItem
+                          key={f.id}
+                          value={f.name}
+                          onSelect={() => {
+                            setFormData({
+                              ...formData,
+                              formulationId: f.id,
+                              plannedQuantity: f.defaultQuantity?.toString() || '',
+                            });
+                          }}
+                        >
+                          <Check
+                            className={cn(
+                              'mr-2 h-4 w-4',
+                              formData.formulationId === f.id
+                                ? 'opacity-100'
+                                : 'opacity-0'
+                            )}
+                          />
+                          {f.name}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
 
             {/* Quantity */}

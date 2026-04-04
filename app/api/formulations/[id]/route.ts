@@ -26,35 +26,58 @@ export async function GET(
       },
     });
 
+    const previousProductions = await prisma.productionBatch.findMany({
+      where: {
+        formulationId: id,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
     if (!formulation) {
       return NextResponse.json({ error: "Formulation not found" }, { status: 404 });
     }
 
     return NextResponse.json({
-      id: formulation.id,
-      name: formulation.name,
-      baseQuantity: formulation.baseQuantity,
-      baseUnit: formulation.baseUnit.toLowerCase() as "kg" | "gm",
-      defaultQuantity: formulation.defaultQuantity,
-      status: formulation.status.toLowerCase() as "active" | "inactive",
-      ingredients: formulation.ingredients.map((ing) => ({
-        rawMaterialId: ing.rawMaterialId,
-        rawMaterialName: ing.rawMaterial.name,
-        rawMaterialUnit: ing.rawMaterial.unit.toLowerCase() as "kg" | "gm",
-        rawMaterialCostPerUnit: ing.rawMaterial.costPerUnit,
-        percentage: ing.percentage,
-      })),
-      createdAt: formulation.createdAt.toISOString(),
-      updatedAt: formulation.updatedAt.toISOString(),
-      ...(includeAudit && {
-        auditLogs: (formulation as any).auditLogs?.map((log: any) => ({
-          id: log.id,
-          changedAt: log.changedAt.toISOString(),
-          changedBy: log.changedBy ?? null,
-          changes: log.changes,
-        })),
-      }),
-    }, { status: 200 });
+  id: formulation.id,
+  name: formulation.name,
+  baseQuantity: formulation.baseQuantity,
+  baseUnit: formulation.baseUnit.toLowerCase() as "kg" | "gm",
+  defaultQuantity: formulation.defaultQuantity,
+  status: formulation.status.toLowerCase() as "active" | "inactive",
+
+  ingredients: formulation.ingredients.map((ing) => ({
+    rawMaterialId: ing.rawMaterialId,
+    rawMaterialName: ing.rawMaterial.name,
+    rawMaterialUnit: ing.rawMaterial.unit.toLowerCase() as "kg" | "gm",
+    rawMaterialCostPerUnit: ing.rawMaterial.costPerUnit,
+    percentage: ing.percentage,
+  })),
+
+  previousProductions: previousProductions.map((batch) => ({
+  id: batch.id,
+  batchNumber: batch.batchNumber,
+  plannedQuantity: batch.plannedQuantity,
+  availableQuantity: batch.availableQuantity,
+  status: batch.status,
+  unit: batch.unit?.toLowerCase?.() ?? null,
+  createdAt: batch.createdAt.toISOString(),
+  semiPackaged: batch.semiPackaged,
+})),
+
+  createdAt: formulation.createdAt.toISOString(),
+  updatedAt: formulation.updatedAt.toISOString(),
+
+  ...(includeAudit && {
+    auditLogs: (formulation as any).auditLogs?.map((log: any) => ({
+      id: log.id,
+      changedAt: log.changedAt.toISOString(),
+      changedBy: log.changedBy ?? null,
+      changes: log.changes,
+    })),
+  }),
+}, { status: 200 });
   } catch (error) {
     console.error("Error fetching formulation:", error);
     return NextResponse.json({ error: "Failed to fetch formulation" }, { status: 500 });
@@ -179,67 +202,5 @@ export async function PUT(
       return NextResponse.json({ error: "A formulation with this name already exists" }, { status: 409 });
     }
     return NextResponse.json({ error: "Failed to update formulation" }, { status: 500 });
-  }
-}
-
-// ─── DELETE ───────────────────────────────────────────────────────────────────
-
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
-      return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: (session.user as any).email || "" },
-      include: { userRoles: { select: { role: true } } },
-    });
-
-    if (!user || user.status !== "active") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (!user.userRoles.some((r) => r.role === "admin")) {
-      return NextResponse.json({ error: "Admin only" }, { status: 403 });
-    }
-
-    const { id } = await params;
-
-    const formulation = await prisma.formulation.findUnique({
-      where: { id },
-      include: {
-        productionBatches: { select: { id: true }, take: 1 },
-        finishedProducts: { select: { id: true }, take: 1 },
-      },
-    });
-
-    if (!formulation) {
-      return NextResponse.json({ error: "Formulation not found" }, { status: 404 });
-    }
-
-    // Block deletion if there are production batches or finished products linked
-    if (formulation.productionBatches.length > 0) {
-      return NextResponse.json(
-        { error: "Cannot delete this formulation — it has production batches linked to it." },
-        { status: 400 }
-      );
-    }
-    if (formulation.finishedProducts.length > 0) {
-      return NextResponse.json(
-        { error: "Cannot delete this formulation — it has finished products linked to it. Delete the products first." },
-        { status: 400 }
-      );
-    }
-
-    // Safe to delete — cascade will remove ingredients and audit logs
-    await prisma.formulation.delete({ where: { id } });
-
-    return NextResponse.json({ message: "Formulation deleted successfully" }, { status: 200 });
-  } catch (error) {
-    console.error("Error deleting formulation:", error);
-    return NextResponse.json({ error: "Failed to delete formulation" }, { status: 500 });
   }
 }
