@@ -130,21 +130,34 @@ const PackagingList = () => {
   const handleViewSummary  = (batchNumber: string) => router.push(`/packaging/${batchNumber}/summary`);
 
   const getActionButton = (batch: PackagingBatch) => {
-  if (batch.status === "Completed") {
+    if (batch.status === "Completed") {
+      return (
+        <Button variant="outline" size="sm" className="min-w-[120px] justify-center"
+          onClick={() => handleViewSummary(batch.batchNumber)}>
+          View Summary
+        </Button>
+      );
+    } else if (batch.status === "Partial" || batch.status === "Semi Packaged") {
+      return (
+        <div className="flex gap-2">
+          <Button size="sm" className="min-w-[120px] justify-center"
+            onClick={() => handlePackaging(batch.batchNumber)}>
+            Continue
+          </Button>
+          <Button variant="outline" size="sm" className="min-w-[120px] justify-center"
+            onClick={() => handleViewSummary(batch.batchNumber)}>
+            View Summary
+          </Button>
+        </div>
+      );
+    }
     return (
-      <Button variant="outline" size="sm" className="min-w-[120px] justify-center"
-        onClick={() => handleViewSummary(batch.batchNumber)}>
-        View Summary
+      <Button size="sm" className="min-w-[120px] justify-center"
+        onClick={() => handlePackaging(batch.batchNumber)}>
+        {batch.status === "Not Started" ? "Start" : "Continue"}
       </Button>
     );
-  }
-  return (
-    <Button size="sm" className="min-w-[120px] justify-center"
-      onClick={() => handlePackaging(batch.batchNumber)}>
-      {batch.status === "Not Started" ? "Start" : "Continue"}
-    </Button>
-  );
-};
+  };
 
   // ─── Loading / Error ──────────────────────────────────────────────────────
 
