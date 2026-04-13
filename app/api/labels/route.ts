@@ -52,10 +52,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    const trimmedName = name.trim();
+
+    // Check if label already exists (case-insensitive)
+    const existingLabel = await prisma.label.findFirst({
+      where: {
+        name: {
+          equals: trimmedName,
+          mode: 'insensitive'
+        }
+      }
+    });
+
+    if (existingLabel) {
+      return NextResponse.json({ error: 'A label with this name already exists' }, { status: 409 });
+    }
+
     const result = await prisma.$transaction(async (tx) => {
       const label = await tx.label.create({
         data: {
-          name: name.trim(),
+          name: trimmedName, // Preserve original case
           minimumStock: parseInt(minimumStock),
           costPerUnit: parseFloat(costPerUnit) || 0,
           status: status.toLowerCase() as 'active' | 'inactive',

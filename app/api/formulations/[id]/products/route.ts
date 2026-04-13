@@ -108,19 +108,32 @@ export async function POST(
         unit: body.unit,
         formulationId,
         productLabels: {
-          create: labels.map((label) => ({
-            quantity: label.quantity,
-            semiPackageable: label.semiPackageable ?? false,
-            // Connect boxType if provided
-            ...(label.boxTypeId
-              ? { boxType: { connect: { id: label.boxTypeId } } }
-              : {}),
-            label: {
-              connectOrCreate: {
-                where: { name: label.type.toLowerCase().trim() },
-                create: { name: label.type.toLowerCase().trim() },
-              },
-            },
+          create: await Promise.all(labels.map(async (label) => {
+            const trimmedLabelType = label.type.trim();
+            
+            // First, try to find existing label with case-insensitive search
+            const existingLabel = await prisma.label.findFirst({
+              where: {
+                name: {
+                  equals: trimmedLabelType,
+                  mode: 'insensitive'
+                }
+              }
+            });
+
+            return {
+              quantity: label.quantity,
+              semiPackageable: label.semiPackageable ?? false,
+              // Connect boxType if provided
+              ...(label.boxTypeId
+                ? { boxType: { connect: { id: label.boxTypeId } } }
+                : {}),
+              label: existingLabel ? {
+                connect: { id: existingLabel.id }
+              } : {
+                create: { name: trimmedLabelType } // Preserve original case
+              }
+            };
           })),
         },
       },

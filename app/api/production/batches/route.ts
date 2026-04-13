@@ -66,6 +66,11 @@ function formatBatch(batch: any) {
     displayStatus = "confirmed";
   }
 
+  // Check if batch has packaging data
+  const hasPackagingSessions = batch.packagingSessions && batch.packagingSessions.length > 0;
+  const hasPackagedItems = hasPackagingSessions && 
+    batch.packagingSessions.some((session: any) => session.items && session.items.length > 0);
+
   return {
     id: batch.id,
     batchNumber: batch.batchNumber,
@@ -85,12 +90,18 @@ function formatBatch(batch: any) {
     confirmedBy: batch.confirmedBy?.fullName,
     confirmedAt: batch.confirmedAt?.toISOString(),
     createdAt: batch.createdAt.toISOString(),
+    hasPackagingData: hasPackagedItems, // New field for frontend
   };
 }
 
 const BATCH_INCLUDE = {
   formulation: true,
   materialUsages: { include: { rawMaterial: true } },
+  packagingSessions: {
+    include: {
+      items: true,
+    },
+  },
   confirmedBy: { select: { fullName: true } },
 } as const;
 

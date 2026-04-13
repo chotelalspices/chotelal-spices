@@ -64,6 +64,7 @@ export interface ProductionBatch {
   confirmedBy?: string;
   confirmedAt?: string;
   createdAt: string;
+  hasPackagingData?: boolean; // New field to track packaging status
 }
 
 // Sample production batches

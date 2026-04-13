@@ -11,6 +11,7 @@ import {
   Loader2,
   AlertCircle,
   PlayCircle,
+  Trash2,
 } from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -91,7 +92,7 @@ export default function ProductionList() {
   const totalCost = filteredBatches.filter(b => b.status === 'confirmed').reduce((sum, b) => sum + b.totalProductionCost, 0);
 
   const handleContinueDraft = (batch: ProductionBatch) => {
-    // Restore entry data and material requirements from the draft batch into sessionStorage
+    // Restore entry data and material requirements from draft batch into sessionStorage
     const entryData = {
       formulationId: batch.formulationId,
       formulationName: batch.formulationName,
@@ -107,12 +108,56 @@ export default function ProductionList() {
 
     sessionStorage.setItem('productionEntry', JSON.stringify(entryData));
 
-    // If the draft has saved material requirements, restore them too
+    // If draft has saved material requirements, restore them too
     if (batch.materialRequirements) {
       sessionStorage.setItem('materialRequirements', JSON.stringify(batch.materialRequirements));
     }
 
     router.push('/production/stock-check');
+  };
+
+  const handleDeleteBatch = async (batch: ProductionBatch) => {
+    // Allow deletion of draft batches and confirmed batches without packaging data
+    if (batch.hasPackagingData) {
+      toast({
+        title: 'Cannot Delete',
+        description: 'Cannot delete production batch that has packaging data. Only batches without packaging can be deleted.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete batch "${batch.batchNumber}"? This action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(`/api/production/batches/${batch.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete batch');
+      }
+
+      // Remove the deleted batch from the local state
+      setBatches(prevBatches => prevBatches.filter(b => b.id !== batch.id));
+
+      toast({
+        title: 'Success',
+        description: `Batch "${batch.batchNumber}" has been deleted successfully.`,
+      });
+    } catch (error) {
+      console.error('Error deleting batch:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to delete batch',
+        variant: 'destructive',
+      });
+    }
   };
 
   if (isLoading) {
@@ -320,17 +365,30 @@ export default function ProductionList() {
                     )}
                   </div>
 
-                  {/* Continue button for draft batches */}
-                  {batch.status === 'draft' && (
+                  {/* Action buttons for draft batches and confirmed batches without packaging */}
+                  {(batch.status === 'draft' || !batch.hasPackagingData) && (
                     <div className="mt-4 pt-3 border-t border-amber-100">
-                      <Button
-                        size="sm"
-                        className="w-full gap-2 bg-amber-600 hover:bg-amber-700 text-white"
-                        onClick={() => handleContinueDraft(batch)}
-                      >
-                        <PlayCircle className="h-4 w-4" />
-                        Continue Production
-                      </Button>
+                      <div className="flex gap-2">
+                        {batch.status === 'draft' && (
+                          <Button
+                            size="sm"
+                            className="flex-1 gap-2 bg-amber-600 hover:bg-amber-700 text-white"
+                            onClick={() => handleContinueDraft(batch)}
+                          >
+                            <PlayCircle className="h-4 w-4" />
+                            Continue
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-2 border-red-200 text-red-600 hover:bg-red-50"
+                          onClick={() => handleDeleteBatch(batch)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </CardContent>
@@ -383,16 +441,29 @@ export default function ProductionList() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-center">
-                      {batch.status === 'draft' ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="gap-1.5 border-amber-400 text-amber-700 hover:bg-amber-50"
-                          onClick={() => handleContinueDraft(batch)}
-                        >
-                          <PlayCircle className="h-3.5 w-3.5" />
-                          Continue
-                        </Button>
+                      {batch.status === 'draft' || !batch.hasPackagingData ? (
+                        <div className="flex justify-center gap-2">
+                          {batch.status === 'draft' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1.5 border-amber-400 text-amber-700 hover:bg-amber-50"
+                              onClick={() => handleContinueDraft(batch)}
+                            >
+                              <PlayCircle className="h-3.5 w-3.5" />
+                              Continue
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                            onClick={() => handleDeleteBatch(batch)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
+                          </Button>
+                        </div>
                       ) : (
                         <span className="text-muted-foreground text-sm">—</span>
                       )}
