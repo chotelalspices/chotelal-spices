@@ -176,8 +176,9 @@ async function parseExcelFile(
     ) continue;
 
     // ── Product row
-    const pricePerUnit = Number(colC);
-    const numberOfPackets = Number(colD);
+    // Excel format: Column C = packets (e.g., "100.00 PCS"), Column D = price per packet (e.g., "40.00/PCS")
+    const numberOfPackets = Number(colC);  // Column C - packets/quantity
+    const pricePerUnit = Number(colD);     // Column D - price per packet
     const totalPrice = Number(colE);
 
     if (

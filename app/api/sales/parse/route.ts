@@ -69,12 +69,15 @@ function extractSalesData(workbook: any) {
                 currentSales = [];
             } 
             // Check if this is a product row (has product name and quantity)
+            // Excel format: Column C = packets (e.g., "100.00 PCS"), Column D = price per packet (e.g., "40.00/PCS")
             else if (row[1] && typeof row[2] === 'number' && typeof row[3] === 'number') {
+                const pieces = row[2];         // Column C - packets/quantity
+                const pricePerPiece = row[3];  // Column D - price per piece
                 const product = {
                     product: row[1],
-                    pieces: row[2],
-                    pricePerPiece: row[3],
-                    totalPrice: row[4] || (row[2] * row[3])
+                    pieces: pieces,
+                    pricePerPiece: pricePerPiece,
+                    totalPrice: row[4] || (pricePerPiece * pieces)
                 };
                 currentSales.push(product);
             }
