@@ -119,8 +119,8 @@ const PackagingList = () => {
     const query = searchQuery.toLowerCase().trim();
     const matchesSearch =
       !query ||
-      batch.batchNumber.toLowerCase().startsWith(query) ||
-      batch.productName.toLowerCase().startsWith(query);
+      batch.batchNumber.toLowerCase().includes(query) ||
+      batch.productName.toLowerCase().includes(query);
     const matchesStatus =
       selectedStatuses.length === 0 || selectedStatuses.includes(batch.status as StatusType);
     return matchesSearch && matchesStatus;
