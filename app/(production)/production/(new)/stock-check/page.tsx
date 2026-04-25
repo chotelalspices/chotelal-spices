@@ -57,7 +57,9 @@ interface ProductionEntryData {
   formulationName: string;
   plannedQuantity: number;
   availableQuantity: number;
+  productionLoss: number;
   producedQuantity: number;
+  netProductionQuantity: number;
   numberOfLots: number;
   finalQuantity: number;
   unit: 'kg' | 'gm';
@@ -90,8 +92,10 @@ export default function ProductionStockCheck() {
 
       try {
         setIsLoading(true);
+        // Use netProductionQuantity (after loss) for material calculations
+        const materialCalcQuantity = data.netProductionQuantity || data.producedQuantity;
         const response = await fetch(
-          `/api/production/materials?formulationId=${data.formulationId}&plannedQuantity=${data.producedQuantity}`
+          `/api/production/materials?formulationId=${data.formulationId}&plannedQuantity=${materialCalcQuantity}`
         );
 
         if (!response.ok) throw new Error('Failed to fetch material requirements');
@@ -312,8 +316,20 @@ export default function ProductionStockCheck() {
                   <p className="font-semibold">{entryData.availableQuantity} {entryData.unit}</p>
                 </div>
               )}
+              {entryData.productionLoss > 0 && (
+                <div>
+                  <p className="text-muted-foreground text-red-600">Production Loss</p>
+                  <p className="font-semibold text-red-600">−{entryData.productionLoss} {entryData.unit}</p>
+                </div>
+              )}
               <div>
-                <p className="text-muted-foreground">Final Total</p>
+                <p className="text-muted-foreground">Net Production (Material Basis)</p>
+                <p className="font-semibold text-green-600">
+                  {entryData.netProductionQuantity || entryData.finalQuantity} {entryData.unit}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Final Total Output</p>
                 <p className="font-semibold">{entryData.finalQuantity} {entryData.unit}</p>
               </div>
               <div>
