@@ -5,6 +5,25 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../auth/[...nextauth]/route";
 
+function getSessionPackagedQuantity(session: {
+  remarks: string | null;
+  semiPackaged: number;
+  items: Array<{ totalWeight: number }>;
+}) {
+  const itemsWeight = session.items.reduce((sum, item) => sum + item.totalWeight, 0);
+  if (itemsWeight > 0) return itemsWeight;
+
+  if (session.remarks?.includes("Total:")) {
+    const match = session.remarks.match(/Total:\s*([\d.]+)kg/);
+    if (match) {
+      const parsed = parseFloat(match[1]);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+  }
+
+  return session.semiPackaged || 0;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -101,8 +120,7 @@ export async function GET(request: NextRequest) {
 
     const todayPackaging = {
       quantity: todayPackagingSessions.reduce(
-        (sum, session) =>
-          sum + session.items.reduce((itemSum, item) => itemSum + item.totalWeight, 0),
+        (sum, session) => sum + getSessionPackagedQuantity(session),
         0
       ),
       sessions: todayPackagingSessions.length,
@@ -169,7 +187,7 @@ export async function GET(request: NextRequest) {
     const recentPackaging = recentPackagingSessions.map((session) => ({
       batchNumber: session.batch.batchNumber,
       productName: session.batch.formulation.name,
-      quantity: session.items.reduce((sum, item) => sum + item.totalWeight, 0),
+      quantity: getSessionPackagedQuantity(session),
       loss: session.packagingLoss,
       date: session.date.toISOString().split("T")[0],
     }));

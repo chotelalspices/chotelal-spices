@@ -101,6 +101,7 @@ export async function GET(request: NextRequest) {
       return {
         batchNumber: batch.batchNumber,
         productName: batch.formulation.name,
+        date: batch.productionDate.toISOString().split("T")[0],
         producedQuantity: finalOutputKg,
         alreadyPackaged: totalPackagedWeight,
         totalLoss,

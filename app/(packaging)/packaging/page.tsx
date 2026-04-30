@@ -20,11 +20,11 @@ import {
 import { cn } from "@/libs/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
-import { getStatusColor } from "@/data/packagingData";
 
 interface PackagingBatch {
   batchNumber: string;
   productName: string;
+  date: string;
   producedQuantity: number;
   alreadyPackaged: number;
   totalLoss: number;
@@ -36,6 +36,12 @@ interface PackagingBatch {
 
 const ALL_STATUSES = ["Not Started", "Semi Packaged", "Partial", "Completed"] as const;
 type StatusType = typeof ALL_STATUSES[number];
+
+const formatDisplayDate = (dateString: string) => {
+  const parsed = new Date(dateString);
+  if (Number.isNaN(parsed.getTime())) return dateString;
+  return parsed.toLocaleDateString("en-GB");
+};
 
 // ─── Status color helper (extended) ──────────────────────────────────────────
 
@@ -329,6 +335,7 @@ const PackagingList = () => {
                 <TableRow>
                   <TableHead>Batch Number</TableHead>
                   <TableHead>Product Name</TableHead>
+                  <TableHead>Date</TableHead>
                   <TableHead className="text-right">Produced (kg)</TableHead>
                   <TableHead className="text-right">Packaged (kg)</TableHead>
                   <TableHead className="text-right">Remaining (kg)</TableHead>
@@ -341,6 +348,7 @@ const PackagingList = () => {
                   <TableRow key={batch.batchNumber}>
                     <TableCell className="font-medium">{batch.batchNumber}</TableCell>
                     <TableCell>{batch.productName}</TableCell>
+                    <TableCell>{formatDisplayDate(batch.date)}</TableCell>
                     <TableCell className="text-right">{batch.producedQuantity.toFixed(2)}</TableCell>
                     <TableCell className="text-right">{batch.alreadyPackaged.toFixed(2)}</TableCell>
                     <TableCell className="text-right font-semibold text-primary">

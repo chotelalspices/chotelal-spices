@@ -170,12 +170,25 @@ export default function ResearchEntry() {
     [extendedRows],
   );
 
+  const extendedTotalCost = useMemo(
+    () =>
+      extendedRows.reduce((sum, row) => {
+        if (!row.extendedItemId) return sum;
+        const selectedItem = extendedItems.find((item) => item.id === row.extendedItemId);
+        if (!selectedItem) return sum;
+        const qtyKg = parseFloat(row.quantity) || 0;
+        return sum + qtyKg * (selectedItem.price || 0);
+      }, 0),
+    [extendedRows, extendedItems],
+  );
+
   const combinedTotalQtyKg = rmTotalQtyKg + extendedTotalQtyKg;
 
   const getPct = (qtyKg: number) =>
     combinedTotalQtyKg > 0 ? (qtyKg / combinedTotalQtyKg) * 100 : 0;
 
-  const combinedCostPerKg = combinedTotalQtyKg > 0 ? rmTotalCost / combinedTotalQtyKg : 0;
+  const combinedTotalCost = rmTotalCost + extendedTotalCost;
+  const combinedCostPerKg = combinedTotalQtyKg > 0 ? combinedTotalCost / combinedTotalQtyKg : 0;
 
   // ── Build ingredient payload — percentages guaranteed to sum to 100 ────────
   // We compute raw percentages first, then adjust the last row so the sum is
@@ -593,7 +606,7 @@ export default function ResearchEntry() {
                 <div className="p-4 bg-primary/5">
                   <div className="text-xs text-muted-foreground mb-0.5">Cost per kg</div>
                   <div className="font-semibold text-base">{combinedCostPerKg > 0 ? fmt(combinedCostPerKg) : '—'}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">based on raw materials</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">based on raw materials + extended inventory</div>
                 </div>
               </div>
             )}
