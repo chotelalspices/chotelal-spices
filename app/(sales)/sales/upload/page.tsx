@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -217,13 +217,11 @@ async function parseExcelFile(
 
 function enrichRows(
   rows: ParsedSaleRow[],
-  products: FinishedProduct[]
+  productMap: Map<string, FinishedProduct>
 ): ParsedSaleRow[] {
   return rows.map((row) => {
     const errors: string[] = [];
-    const product = products.find(
-      (p) => p.name.trim().toLowerCase() === row.productName.trim().toLowerCase()
-    );
+    const product = productMap.get(row.productName.trim().toLowerCase());
     const qty = row.numberOfPackets;
     const price = row.sellingPricePerPacket;
     const discount = row.discount;
@@ -256,11 +254,11 @@ function enrichRows(
 // Re-apply enrichment into sessions structure
 function enrichSessions(
   sessions: ClientSession[],
-  products: FinishedProduct[]
+  productMap: Map<string, FinishedProduct>
 ): ClientSession[] {
   return sessions.map((s) => ({
     ...s,
-    products: enrichRows(s.products, products),
+    products: enrichRows(s.products, productMap),
   }));
 }
 
@@ -278,6 +276,7 @@ export default function SalesUpload() {
   const [products, setProducts] = useState<FinishedProduct[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [maxVisibleRows, setMaxVisibleRows] = useState<number>(150);
 
   useEffect(() => {
     fetch('/api/sales/products')
@@ -291,6 +290,34 @@ export default function SalesUpload() {
   const validRows = allRows.filter((r) => r.status === 'valid');
   const invalidRows = allRows.filter((r) => r.status === 'invalid');
   const totalAmount = validRows.reduce((s, r) => s + r.finalAmount, 0);
+
+  const productMap = useMemo(
+    () =>
+      new Map(
+        products.map((p) => [p.name.trim().toLowerCase(), p] as const)
+      ),
+    [products]
+  );
+
+  const visibleSessions = useMemo(() => {
+    if (maxVisibleRows <= 0 || allRows.length <= maxVisibleRows) return sessions;
+
+    let remaining = maxVisibleRows;
+    const sliced: ClientSession[] = [];
+    for (const session of sessions) {
+      if (remaining <= 0) break;
+      const visibleProducts = session.products.slice(0, remaining);
+      if (visibleProducts.length === 0) continue;
+      sliced.push({ ...session, products: visibleProducts });
+      remaining -= visibleProducts.length;
+    }
+    return sliced;
+  }, [sessions, allRows.length, maxVisibleRows]);
+
+  const visibleRowCount = useMemo(
+    () => visibleSessions.reduce((sum, s) => sum + s.products.length, 0),
+    [visibleSessions]
+  );
 
   /* ── drag & drop ── */
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
@@ -312,8 +339,10 @@ export default function SalesUpload() {
     }
     setIsUploading(true);
     try {
+      // Let loader paint before CPU-heavy parse starts.
+      await new Promise((resolve) => setTimeout(resolve, 0));
       const { sessions: parsed } = await parseExcelFile(file);
-      const enriched = enrichSessions(parsed, products);
+      const enriched = enrichSessions(parsed, productMap);
       setUploadedFile(file);
       setSessions(enriched);
       const total = enriched.flatMap((s) => s.products).length;
@@ -341,12 +370,12 @@ export default function SalesUpload() {
             r.rowNumber === rowNumber ? { ...r, [field]: value } : r
           ),
         })),
-        products
+        productMap
       )
     );
   };
 
-  const handleClearUpload = () => { setUploadedFile(null); setSessions([]); };
+  const handleClearUpload = () => { setUploadedFile(null); setSessions([]); setMaxVisibleRows(150); };
 
   /* ── import ── */
   const handleConfirmImport = async () => {
@@ -496,6 +525,21 @@ export default function SalesUpload() {
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">
+                    <Select
+                      value={maxVisibleRows === -1 ? 'all' : String(maxVisibleRows)}
+                      onValueChange={(value) => setMaxVisibleRows(value === 'all' ? -1 : Number(value))}
+                    >
+                      <SelectTrigger className="w-44">
+                        <SelectValue placeholder="Preview rows" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="100">Show 100 rows</SelectItem>
+                        <SelectItem value="150">Show 150 rows</SelectItem>
+                        <SelectItem value="300">Show 300 rows</SelectItem>
+                        <SelectItem value="500">Show 500 rows</SelectItem>
+                        <SelectItem value="all">Show all rows</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Button variant="outline" onClick={handleClearUpload} disabled={isImporting}>
                       <Trash2 className="h-4 w-4 mr-2" />
                       Clear
@@ -514,6 +558,11 @@ export default function SalesUpload() {
               </CardHeader>
 
               <CardContent className="p-0">
+                {visibleRowCount < allRows.length && (
+                  <div className="px-4 py-2 text-sm text-amber-700 bg-amber-50 border-y">
+                    Showing {visibleRowCount} of {allRows.length} rows for smooth preview. Increase preview rows if needed.
+                  </div>
+                )}
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
@@ -533,7 +582,7 @@ export default function SalesUpload() {
                     </TableHeader>
 
                     <TableBody>
-                      {sessions.map((session) => {
+                      {visibleSessions.map((session) => {
                         const sessionValid = session.products.filter((p) => p.status === 'valid');
                         const sessionInvalid = session.products.filter((p) => p.status === 'invalid');
                         const sessionTotal = session.products.reduce((s, p) => s + p.finalAmount, 0);

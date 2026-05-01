@@ -5,6 +5,32 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
 
+const CHUNK_SIZE = 100;
+
+function parseSaleDate(input: unknown): Date {
+  if (!input) return new Date();
+  const value = String(input).trim();
+  if (!value) return new Date();
+
+  const direct = new Date(value);
+  if (!Number.isNaN(direct.getTime())) return direct;
+
+  const normalized = value.replace(/,/g, "");
+  const parts = normalized.split(/[\s/-]+/).filter(Boolean);
+  if (parts.length === 3) {
+    const [dayPart, monthPart, yearPart] = parts;
+    const day = Number(dayPart);
+    const month = new Date(`${monthPart} 1, 2000`).getMonth();
+    const year = Number(yearPart.length === 2 ? `20${yearPart}` : yearPart);
+    if (!Number.isNaN(day) && !Number.isNaN(month) && !Number.isNaN(year)) {
+      const parsed = new Date(year, month, day);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+  }
+
+  return new Date();
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -35,189 +61,158 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const validatedSales: any[] = [];
-    const errors: any[] = [];
+    const errors: Array<{ row: number; error: string }> = [];
+    const productIds = [...new Set(sales.map((s: any) => s.productId).filter(Boolean))];
+    const products = await prisma.finishedProduct.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, name: true, availableInventory: true },
+    });
+    const productMap = new Map(products.map((p) => [p.id, p]));
+    const remainingStock = new Map(products.map((p) => [p.id, p.availableInventory || 0]));
+
+    const validatedSales: Array<{
+      productId: string;
+      clientName: string | null;
+      voucherNo: string | null;
+      voucherType: string | null;
+      quantitySold: number;
+      sellingPrice: number;
+      discount: number;
+      productionCost: number;
+      profit: number;
+      remarks: string | null;
+      saleDate: Date;
+    }> = [];
 
     for (let i = 0; i < sales.length; i++) {
       const sale = sales[i];
 
+      if (!sale.productId || !sale.numberOfPackets) {
+        errors.push({ row: i + 1, error: "Missing required fields: productId, numberOfPackets" });
+        continue;
+      }
+
+      const parsedQuantity = parseInt(String(sale.numberOfPackets), 10);
+      const parsedPrice = sale.sellingPricePerPacket ? parseFloat(String(sale.sellingPricePerPacket)) : 0;
+      const parsedDiscount = sale.discount ? parseFloat(String(sale.discount)) : 0;
+
+      if (Number.isNaN(parsedQuantity) || parsedQuantity <= 0 || !Number.isInteger(parsedQuantity)) {
+        errors.push({ row: i + 1, error: "Invalid quantity" });
+        continue;
+      }
+      if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
+        errors.push({ row: i + 1, error: "Invalid selling price (cannot be negative)" });
+        continue;
+      }
+      if (Number.isNaN(parsedDiscount) || parsedDiscount < 0 || parsedDiscount > 100) {
+        errors.push({ row: i + 1, error: "Invalid discount (0-100)" });
+        continue;
+      }
+
+      const product = productMap.get(sale.productId);
+      if (!product) {
+        errors.push({ row: i + 1, error: "Product not found" });
+        continue;
+      }
+
+      const currentRemaining = remainingStock.get(product.id) ?? 0;
+      if (parsedQuantity > currentRemaining) {
+        errors.push({
+          row: i + 1,
+          error: `Insufficient stock. Available: ${currentRemaining}, Requested: ${parsedQuantity}`,
+        });
+        continue;
+      }
+
+      remainingStock.set(product.id, currentRemaining - parsedQuantity);
+
+      const totalAmount = parsedQuantity * parsedPrice;
+      const discountAmount = totalAmount * (parsedDiscount / 100);
+      const finalAmount = totalAmount - discountAmount;
+      const isFree = finalAmount === 0;
+      const providedProductionCost = sale.productionCost ? parseFloat(String(sale.productionCost)) : 0;
+      const productionCost = Number.isNaN(providedProductionCost) ? 0 : providedProductionCost;
+      const profit = isFree ? 0 : finalAmount - productionCost;
+
+      validatedSales.push({
+        productId: sale.productId,
+        clientName: sale.clientName || null,
+        voucherNo: sale.voucherNo || null,
+        voucherType: sale.voucherType || null,
+        quantitySold: parsedQuantity,
+        sellingPrice: parsedPrice,
+        discount: parsedDiscount,
+        productionCost,
+        profit,
+        remarks: sale.remarks || null,
+        saleDate: parseSaleDate(sale.saleDate),
+      });
+    }
+
+    let successCount = 0;
+    const chunkFailures: Array<{ row: number; error: string }> = [];
+
+    for (let start = 0; start < validatedSales.length; start += CHUNK_SIZE) {
+      const chunk = validatedSales.slice(start, start + CHUNK_SIZE);
+      const inventoryUpdates = new Map<string, number>();
+
+      for (const sale of chunk) {
+        inventoryUpdates.set(
+          sale.productId,
+          (inventoryUpdates.get(sale.productId) || 0) + sale.quantitySold
+        );
+      }
+
       try {
-        if (!sale.productId || !sale.numberOfPackets) {
-          errors.push({ row: i + 1, error: "Missing required fields: productId, numberOfPackets" });
-          continue;
-        }
-
-        const parsedQuantity = parseInt(sale.numberOfPackets);
-        const parsedPrice    = sale.sellingPricePerPacket ? parseFloat(sale.sellingPricePerPacket) : 0;
-        const parsedDiscount = sale.discount ? parseFloat(sale.discount) : 0;
-
-        if (isNaN(parsedQuantity) || parsedQuantity <= 0 || !Number.isInteger(parsedQuantity)) {
-          errors.push({ row: i + 1, error: "Invalid quantity" });
-          continue;
-        }
-        if (isNaN(parsedPrice) || parsedPrice < 0) {
-          errors.push({ row: i + 1, error: "Invalid selling price (cannot be negative)" });
-          continue;
-        }
-        if (isNaN(parsedDiscount) || parsedDiscount < 0 || parsedDiscount > 100) {
-          errors.push({ row: i + 1, error: "Invalid discount (0-100)" });
-          continue;
-        }
-
-        const product = await prisma.finishedProduct.findUnique({
-          where: { id: sale.productId },
-          include: {
-            formulation: {
-              include: {
-                productionBatches: { include: { materialUsages: true } },
-              },
-            },
-          },
-        });
-
-        if (!product) {
-          errors.push({ row: i + 1, error: "Product not found" });
-          continue;
-        }
-
-        if (parsedQuantity > (product.availableInventory || 0)) {
-          errors.push({
-            row: i + 1,
-            error: `Insufficient stock. Available: ${product.availableInventory || 0}, Requested: ${parsedQuantity}`,
+        const inserted = await prisma.$transaction(async (tx) => {
+          const createResult = await tx.salesRecord.createMany({
+            data: chunk.map((sale) => ({
+              productId: sale.productId,
+              clientName: sale.clientName,
+              voucherNo: sale.voucherNo,
+              voucherType: sale.voucherType,
+              quantitySold: sale.quantitySold,
+              unit: "kg",
+              sellingPrice: sale.sellingPrice,
+              discount: sale.discount,
+              productionCost: sale.productionCost,
+              profit: sale.profit,
+              remarks: sale.remarks,
+              saleDate: sale.saleDate,
+              createdById: authenticatedUserId,
+            })),
           });
-          continue;
-        }
 
-        // Calculate production cost per packet
-        let productionCostPerPacket = 0;
-        if (product.formulation.productionBatches.length > 0) {
-          const recentBatch = product.formulation.productionBatches[0];
-          if (recentBatch && recentBatch.materialUsages.length > 0) {
-            const totalProductionCost = recentBatch.materialUsages.reduce(
-              (sum: number, usage: any) => sum + usage.cost, 0
-            );
-            const finalOutputKg =
-              recentBatch.unit === "kg"
-                ? (recentBatch.finalOutput ?? recentBatch.plannedQuantity)
-                : (recentBatch.finalOutput ?? recentBatch.plannedQuantity) / 1000;
-
-            if (finalOutputKg > 0) {
-              const productionCostPerKg = totalProductionCost / finalOutputKg;
-              const nameParts = product.name.split(" ");
-              const sizePart  = nameParts[nameParts.length - 1];
-              let weightPerPacketKg = 0;
-              if (sizePart.toLowerCase().includes("kg")) {
-                weightPerPacketKg = parseFloat(sizePart.replace(/[^\d.]/g, "")) || 0;
-              } else if (sizePart.toLowerCase().includes("g")) {
-                weightPerPacketKg = (parseFloat(sizePart.replace(/[^\d.]/g, "")) || 0) / 1000;
-              }
-              productionCostPerPacket = productionCostPerKg * weightPerPacketKg;
-            }
+          for (const [productId, totalDeduction] of inventoryUpdates.entries()) {
+            await tx.finishedProduct.update({
+              where: { id: productId },
+              data: { availableInventory: { decrement: totalDeduction } },
+            });
           }
-        }
 
-        const totalAmount    = parsedQuantity * parsedPrice;
-        const discountAmount = totalAmount * (parsedDiscount / 100);
-        const finalAmount    = totalAmount - discountAmount;
-        const isFree         = finalAmount === 0;
-        const productionCost = sale.productionCost || productionCostPerPacket * parsedQuantity;
-        const profit         = isFree ? 0 : finalAmount - productionCost;
+          return createResult.count;
+        }, { timeout: 45000 });
 
-        // FIX 1: Parse saleDate from payload instead of hardcoding today
-        let saleDateObj = new Date();
-        if (sale.saleDate) {
-          const parsed = new Date(sale.saleDate);
-          if (!isNaN(parsed.getTime())) saleDateObj = parsed;
-        }
-
-        validatedSales.push({
-          productId:    sale.productId,
-          // FIX 2: Capture client fields from the upload payload
-          clientName:   sale.clientName   || null,
-          voucherNo:    sale.voucherNo    || null,
-          voucherType:  sale.voucherType  || null,
-          quantitySold: parsedQuantity,
-          sellingPrice: parsedPrice,
-          discount:     parsedDiscount,
-          productionCost,
-          profit,
-          remarks:      sale.remarks || null,
-          saleDate:     saleDateObj,
-          currentProductQuantity: product.availableInventory || 0,
-        });
+        successCount += inserted;
       } catch (error) {
-        errors.push({ row: i + 1, error: error instanceof Error ? error.message : "Unknown error" });
+        for (let i = 0; i < chunk.length; i++) {
+          chunkFailures.push({
+            row: start + i + 1,
+            error: error instanceof Error ? error.message : "Chunk import failed",
+          });
+        }
       }
     }
 
-    const createdSales = await prisma.$transaction(async (tx) => {
-      const results = [];
-      const inventoryUpdates: Map<string, number> = new Map();
-
-      for (const v of validatedSales) {
-        const salesRecord = await tx.salesRecord.create({
-          data: {
-            productId:    v.productId,
-            // FIX 3: Save client fields to DB
-            clientName:   v.clientName,
-            voucherNo:    v.voucherNo,
-            voucherType:  v.voucherType,
-            quantitySold: v.quantitySold,
-            unit:         "kg",
-            sellingPrice: v.sellingPrice,
-            discount:     v.discount,
-            productionCost: v.productionCost,
-            profit:       v.profit,
-            remarks:      v.remarks,
-            saleDate:     v.saleDate,
-            createdById:  authenticatedUserId,
-          },
-          include: {
-            product: true,
-            createdBy: { select: { fullName: true } },
-          },
-        });
-
-        const cur = inventoryUpdates.get(v.productId) || 0;
-        inventoryUpdates.set(v.productId, cur + v.quantitySold);
-
-        results.push({
-          id:           salesRecord.id,
-          productId:    salesRecord.productId,
-          productName:  salesRecord.product.name,
-          // FIX 4: Return client fields in response
-          clientName:   salesRecord.clientName,
-          voucherNo:    salesRecord.voucherNo,
-          voucherType:  salesRecord.voucherType,
-          quantitySold: salesRecord.quantitySold,
-          sellingPricePerPacket: salesRecord.sellingPrice,
-          discount:     salesRecord.discount,
-          finalAmount:
-            v.quantitySold * v.sellingPrice -
-            v.quantitySold * v.sellingPrice * (v.discount / 100),
-          profit:   salesRecord.profit,
-          saleDate: salesRecord.saleDate.toISOString().split("T")[0],
-        });
-      }
-
-      for (const [productId, totalDeduction] of inventoryUpdates.entries()) {
-        await tx.finishedProduct.update({
-          where: { id: productId },
-          data:  { availableInventory: { decrement: totalDeduction } },
-        });
-      }
-
-      return results;
-    }, { timeout: 30000 });
+    const allErrors = [...errors, ...chunkFailures];
 
     return NextResponse.json({
-      success:        true,
-      message:        `Successfully created ${createdSales.length} sales records`,
-      created:        createdSales,
-      errors,
+      success: successCount > 0,
+      message: `Successfully created ${successCount} sales records`,
+      errors: allErrors,
       totalProcessed: sales.length,
-      successCount:   createdSales.length,
-      errorCount:     errors.length,
+      successCount,
+      errorCount: allErrors.length,
     });
   } catch (error) {
     console.error("Error in bulk sales upload:", error);
