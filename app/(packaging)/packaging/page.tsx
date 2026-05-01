@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -73,6 +74,8 @@ const PackagingList = () => {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const [searchQuery, setSearchQuery]       = useState("");
+  const [startDate, setStartDate]           = useState("");
+  const [endDate, setEndDate]               = useState("");
   const [selectedStatuses, setSelectedStatuses] = useState<StatusType[]>([]);
   const [dropdownOpen, setDropdownOpen]     = useState(false);
   const [batches, setBatches]               = useState<PackagingBatch[]>([]);
@@ -112,6 +115,14 @@ const PackagingList = () => {
     fetchBatches();
   }, [toast]);
 
+  useEffect(() => {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    setStartDate(firstDay.toISOString().split("T")[0]);
+    setEndDate(lastDay.toISOString().split("T")[0]);
+  }, []);
+
   const toggleStatus = (status: StatusType) => {
     setSelectedStatuses((prev) =>
       prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
@@ -129,7 +140,11 @@ const PackagingList = () => {
       batch.productName.toLowerCase().includes(query);
     const matchesStatus =
       selectedStatuses.length === 0 || selectedStatuses.includes(batch.status as StatusType);
-    return matchesSearch && matchesStatus;
+    const batchDate = new Date(batch.date);
+    const matchesStartDate = !startDate || batchDate >= new Date(startDate);
+    const matchesEndDate = !endDate || batchDate <= new Date(`${endDate}T23:59:59`);
+
+    return matchesSearch && matchesStatus && matchesStartDate && matchesEndDate;
   });
 
   const handlePackaging    = (batchNumber: string) => router.push(`/packaging/${batchNumber}/entry`);
@@ -309,6 +324,26 @@ const PackagingList = () => {
             )}
           </div>
 
+          <div className="space-y-1 w-full sm:w-auto">
+            <Label className="text-xs text-muted-foreground">Start Date</Label>
+            <Input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full sm:w-40"
+            />
+          </div>
+
+          <div className="space-y-1 w-full sm:w-auto">
+            <Label className="text-xs text-muted-foreground">End Date</Label>
+            <Input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-full sm:w-40"
+            />
+          </div>
+
           {/* Active filter badges */}
           {selectedStatuses.length > 0 && (
             <div className="flex flex-wrap gap-1">
@@ -324,6 +359,19 @@ const PackagingList = () => {
                 </Badge>
               ))}
             </div>
+          )}
+
+          {(startDate || endDate) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setStartDate("");
+                setEndDate("");
+              }}
+            >
+              Clear Dates
+            </Button>
           )}
         </div>
 

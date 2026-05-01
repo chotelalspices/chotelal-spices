@@ -60,6 +60,30 @@ interface RawMaterial {
   createdAt: string;
 }
 
+function mergeMissingFormulationMaterials(
+  existing: RawMaterial[],
+  formulationIngredients: FormulationData["ingredients"]
+): RawMaterial[] {
+  const byId = new Map(existing.map((material) => [material.id, material]));
+
+  for (const ingredient of formulationIngredients) {
+    if (byId.has(ingredient.rawMaterialId)) continue;
+
+    byId.set(ingredient.rawMaterialId, {
+      id: ingredient.rawMaterialId,
+      name: `${ingredient.rawMaterialName} (inactive)`,
+      unit: ingredient.rawMaterialUnit,
+      costPerUnit: ingredient.rawMaterialCostPerUnit,
+      availableStock: 0,
+      minimumStock: 0,
+      status: "inactive",
+      createdAt: new Date(0).toISOString(),
+    });
+  }
+
+  return Array.from(byId.values());
+}
+
 interface CalculatedIngredient {
   rawMaterialId: string;
   rawMaterialName: string;
@@ -158,6 +182,10 @@ export default function EditFormulationPage() {
 
         // Convert stored percentages back to quantities using baseQuantity
         if (data.ingredients?.length > 0) {
+          setRawMaterials((prev) =>
+            mergeMissingFormulationMaterials(prev, data.ingredients)
+          );
+
           setIngredients(
             data.ingredients.map((ing, index) => ({
               id: String(index + 1),
@@ -206,7 +234,9 @@ export default function EditFormulationPage() {
     // 2. Per-row values
     let totalCost = 0;
     const calculatedIngredients: CalculatedIngredient[] = valid.map((ing) => {
-      const rm  = rawMaterials.find((r) => r.id === ing.rawMaterialId)!;
+      const rm = rawMaterials.find((r) => r.id === ing.rawMaterialId);
+      if (!rm) return null;
+
       const qty = parseFloat(ing.quantity);
 
       const qtyKg        = rm.unit === 'gm' ? qty / 1000 : qty;
@@ -225,7 +255,7 @@ export default function EditFormulationPage() {
         ratePerKg,
         costContribution,
       };
-    });
+    }).filter((ingredient): ingredient is CalculatedIngredient => ingredient !== null);
 
     const costPerKg      = totalQtyKg > 0 ? totalCost / totalQtyKg : 0;
     const totalPercentage = calculatedIngredients.reduce((s, r) => s + r.percentage, 0);

@@ -43,7 +43,7 @@ interface AppLayoutProps {
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, module: 'dashboard' as const },
-  { name: 'Inventory', href: '/inventory', icon: Package, module: 'inventory' as const },
+  { name: 'Raw Material Inventory', href: '/inventory', icon: Package, module: 'inventory' as const },
   { name: 'Labels Inventory', href: '/labels/inventory', icon: Boxes, module: 'labels' as const },
   { name: 'Box Inventory', href: '/box-inventory', icon: Package2, module: 'box_inventory' as const },
   { name: 'Formulations', href: '/formulations', icon: FileText, module: 'formulations' as const },
@@ -57,7 +57,7 @@ const navigation = [
 
 const mobileNav = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, module: null },
-  { name: 'Inventory', href: '/inventory', icon: Package, module: 'inventory' as const },
+  { name: 'Raw Material Inventory', href: '/inventory', icon: Package, module: 'inventory' as const },
   { name: 'Labels Inventory', href: '/labels/inventory', icon: Boxes, module: 'labels' as const },
   { name: 'Box Inventory', href: '/box-inventory', icon: Package2, module: 'box_inventory' as const },
   { name: 'Formulations', href: '/formulations', icon: FileText, module: 'formulations' as const },

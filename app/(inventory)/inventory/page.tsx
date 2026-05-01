@@ -175,7 +175,7 @@ export default function InventoryDashboard() {
         <div className="min-w-[160px] md:min-w-0">
           <div className="min-w-[160px] md:min-w-0">
             <StatCard
-              title="Inventory Value"
+              title="Raw Material Inventory Value"
               value={`₹${stats.totalInventoryValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
               subtitle="Cost × stock across all materials"
               icon={Boxes}
