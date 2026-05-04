@@ -5,6 +5,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
 
+function parsePackagedProducts(remarks: string | null) {
+  if (!remarks) return [];
+  const products: Array<{ name: string; weight: number }> = [];
+  const productMatches = remarks.match(/([^:]+):\s*\d+\s+packets\s+\(([\d.]+)kg\)/g);
+
+  productMatches?.forEach((match) => {
+    const parts = match.match(/([^:]+):\s*\d+\s+packets\s+\(([\d.]+)kg\)/);
+    if (!parts) return;
+    products.push({
+      name: parts[1].replace(/^.*Packaged:\s*/i, "").trim(),
+      weight: parseFloat(parts[2]) || 0,
+    });
+  });
+
+  return products;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -60,6 +77,16 @@ export async function GET(request: NextRequest) {
         (sum, session) => sum + session.packagingLoss,
         0
       );
+      const packagedProductTotals = new Map<string, number>();
+
+      batch.packagingSessions.forEach((session) => {
+        parsePackagedProducts(session.remarks).forEach((product) => {
+          packagedProductTotals.set(
+            product.name,
+            (packagedProductTotals.get(product.name) || 0) + product.weight
+          );
+        });
+      });
 
       const finalOutputKg =
         batch.unit === "kg"
@@ -116,6 +143,10 @@ export async function GET(request: NextRequest) {
         date: latestPackagingSession?.date.toISOString() ?? null,
         producedQuantity: finalOutputKg,
         alreadyPackaged: totalPackagedWeight,
+        packagedProducts: Array.from(packagedProductTotals.entries()).map(([name, totalWeight]) => ({
+          name,
+          totalWeight,
+        })),
         totalLoss,
         remainingQuantity: Math.max(0, remainingQuantity),
         semiPackaged: batchSemiPackagedKg,

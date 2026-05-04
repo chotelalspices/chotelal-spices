@@ -33,6 +33,7 @@ interface PackagingBatch {
   semiPackaged: number;
   status: "Not Started" | "Partial" | "Semi Packaged" | "Completed";
   sessions: any[];
+  packagedProducts?: Array<{ name: string; totalWeight: number }>;
 }
 
 const ALL_STATUSES = ["Not Started", "Semi Packaged", "Partial", "Completed"] as const;
@@ -43,6 +44,17 @@ const formatDisplayDate = (dateString: string | null) => {
   const parsed = new Date(dateString);
   if (Number.isNaN(parsed.getTime())) return dateString;
   return parsed.toLocaleDateString("en-GB");
+};
+
+const getMatchingPackagedWeight = (batch: PackagingBatch, query: string) => {
+  const normalizedQuery = query.toLowerCase().trim();
+  if (!normalizedQuery) return null;
+
+  const total = (batch.packagedProducts || [])
+    .filter((product) => product.name.toLowerCase().includes(normalizedQuery))
+    .reduce((sum, product) => sum + product.totalWeight, 0);
+
+  return total > 0 ? total : null;
 };
 
 // ─── Status color helper (extended) ──────────────────────────────────────────
@@ -138,7 +150,10 @@ const PackagingList = () => {
     const matchesSearch =
       !query ||
       batch.batchNumber.toLowerCase().includes(query) ||
-      batch.productName.toLowerCase().includes(query);
+      batch.productName.toLowerCase().includes(query) ||
+      (batch.packagedProducts || []).some((product) =>
+        product.name.toLowerCase().includes(query)
+      );
     const matchesStatus =
       selectedStatuses.length === 0 || selectedStatuses.includes(batch.status as StatusType);
     const batchDate = batch.date ? new Date(batch.date) : null;
@@ -147,6 +162,9 @@ const PackagingList = () => {
 
     return matchesSearch && matchesStatus && matchesStartDate && matchesEndDate;
   });
+  const searchedPackagedTotal = searchQuery.trim()
+    ? filteredBatches.reduce((sum, batch) => sum + (getMatchingPackagedWeight(batch, searchQuery) || 0), 0)
+    : 0;
 
   const handlePackaging    = (batchNumber: string) => router.push(`/packaging/${batchNumber}/entry`);
   const handleViewSummary  = (batchNumber: string) => router.push(`/packaging/${batchNumber}/summary`);
@@ -376,6 +394,20 @@ const PackagingList = () => {
           )}
         </div>
 
+        {searchQuery.trim() && searchedPackagedTotal > 0 && (
+          <Card>
+            <CardContent className="p-4 flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Total Packaged for Search</p>
+                <p className="text-sm font-medium">{searchQuery.trim()}</p>
+              </div>
+              <p className="text-2xl font-bold text-primary">
+                {searchedPackagedTotal.toFixed(3)} kg
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
         {/* ── Desktop table ── */}
         {!isMobile && (
           <Card>
@@ -399,7 +431,9 @@ const PackagingList = () => {
                     <TableCell>{batch.productName}</TableCell>
                     <TableCell>{formatDisplayDate(batch.date)}</TableCell>
                     <TableCell className="text-right">{batch.producedQuantity.toFixed(2)}</TableCell>
-                    <TableCell className="text-right">{batch.alreadyPackaged.toFixed(2)}</TableCell>
+                    <TableCell className="text-right">
+                      {(getMatchingPackagedWeight(batch, searchQuery) ?? batch.alreadyPackaged).toFixed(2)}
+                    </TableCell>
                     <TableCell className="text-right font-semibold text-primary">
                       {batch.remainingQuantity.toFixed(2)}
                     </TableCell>
@@ -459,7 +493,9 @@ const PackagingList = () => {
                     </div>
                     <div className="bg-muted/50 rounded-lg p-2 text-center">
                       <p className="text-xs text-muted-foreground">Packaged</p>
-                      <p className="font-semibold">{batch.alreadyPackaged} kg</p>
+                      <p className="font-semibold">
+                        {(getMatchingPackagedWeight(batch, searchQuery) ?? batch.alreadyPackaged).toFixed(2)} kg
+                      </p>
                     </div>
                     {batch.semiPackaged > 0 && (
                       <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-2 text-center">
