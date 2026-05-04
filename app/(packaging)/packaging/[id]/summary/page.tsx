@@ -14,6 +14,8 @@ import {
   Check,
   X,
   Pencil,
+  Trash2,
+  Save,
   Tag,
   Box,
   RefreshCw,
@@ -24,6 +26,25 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Table,
   TableBody,
@@ -296,6 +317,14 @@ const PackagingSummary = () => {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editedDate, setEditedDate] = useState("");
   const [isSavingDate, setIsSavingDate] = useState(false);
+  const [editSession, setEditSession] = useState<PackagingSession | null>(null);
+  const [editDate, setEditDate] = useState("");
+  const [editProducts, setEditProducts] = useState<Array<{ name: string; packets: number; weight: number }>>([]);
+  const [editLabels, setEditLabels] = useState<SessionLabel[]>([]);
+  const [editLoss, setEditLoss] = useState("");
+  const [isSavingSession, setIsSavingSession] = useState(false);
+  const [deleteSession, setDeleteSession] = useState<PackagingSession | null>(null);
+  const [isDeletingSession, setIsDeletingSession] = useState(false);
 
   useEffect(() => {
     const fetchBatch = async () => {
@@ -382,6 +411,64 @@ const PackagingSummary = () => {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to update date", variant: "destructive" });
     } finally {
       setIsSavingDate(false);
+    }
+  };
+
+  const startEditingSession = (session: PackagingSession) => {
+    setEditSession(session);
+    setEditDate(new Date(session.date).toISOString().split("T")[0]);
+    setEditProducts(parseProductsFromRemarks(session.remarks));
+    setEditLabels((session.labels || []).map((label) => ({ ...label })));
+    setEditLoss(String(session.packagingLoss ?? 0));
+  };
+
+  const saveSessionEdit = async () => {
+    if (!editSession || !editDate) return;
+    try {
+      setIsSavingSession(true);
+      const response = await fetch(`/api/packaging/sessions/${editSession.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: editDate,
+          products: editProducts,
+          labels: editLabels,
+          packagingLoss: editLoss,
+          remarks: editSession.remarks?.split("Packaged:")[0]?.trim() || "",
+        }),
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Failed to update packaging record");
+      }
+      toast({ title: "Packaging record updated", description: "Inventory adjustments have been applied." });
+      setEditSession(null);
+      window.location.reload();
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to update packaging record", variant: "destructive" });
+    } finally {
+      setIsSavingSession(false);
+    }
+  };
+
+  const confirmDeleteSession = async () => {
+    if (!deleteSession) return;
+    try {
+      setIsDeletingSession(true);
+      const response = await fetch(`/api/packaging/sessions/${deleteSession.id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Failed to delete packaging record");
+      }
+      toast({ title: "Packaging record deleted", description: "No inventory rollback was performed." });
+      setDeleteSession(null);
+      window.location.reload();
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to delete packaging record", variant: "destructive" });
+    } finally {
+      setIsDeletingSession(false);
     }
   };
 
@@ -613,6 +700,17 @@ const PackagingSummary = () => {
 
                         {/* Courier box */}
                         {sessionType !== "semi" && <CourierBoxDisplay courierBoxes={session.courierBoxes} />}
+
+                        <div className="flex gap-2 mt-4">
+                          <Button size="sm" variant="outline" onClick={() => startEditingSession(session)}>
+                            <Pencil className="h-3.5 w-3.5 mr-1" />
+                            Edit
+                          </Button>
+                          <Button size="sm" variant="outline" className="text-destructive" onClick={() => setDeleteSession(session)}>
+                            <Trash2 className="h-3.5 w-3.5 mr-1" />
+                            Delete
+                          </Button>
+                        </div>
                       </CardContent>
                     </Card>
                   );
@@ -631,6 +729,7 @@ const PackagingSummary = () => {
                     <TableHead className="text-right">Weight (kg)</TableHead>
                     <TableHead className="text-right">Loss (kg)</TableHead>
                     <TableHead>Performed By</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -801,6 +900,17 @@ const PackagingSummary = () => {
 
                         {/* Performer */}
                         <TableCell>{session.performedBy}</TableCell>
+
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => startEditingSession(session)}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => setDeleteSession(session)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
                       </TableRow>
                     );
                   })}
@@ -821,6 +931,155 @@ const PackagingSummary = () => {
             </Button>
           )}
         </div>
+
+        <Dialog open={!!editSession} onOpenChange={(open) => !open && setEditSession(null)}>
+          <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Edit Packaging Record</DialogTitle>
+              <DialogDescription>
+                Changes will adjust labels, boxes, finished product stock, and batch remaining quantity.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-5 py-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Date</Label>
+                  <Input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Packaging Loss (kg)</Label>
+                  <Input type="number" min="0" step="0.001" value={editLoss} onChange={(e) => setEditLoss(e.target.value)} />
+                </div>
+              </div>
+
+              {editProducts.length > 0 && (
+                <div className="space-y-3">
+                  <Label>Packaged Products</Label>
+                  {editProducts.map((product, index) => (
+                    <div key={`${product.name}-${index}`} className="grid grid-cols-1 md:grid-cols-[1fr_120px_120px] gap-2 rounded-lg border p-3">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Product</Label>
+                        <Input value={product.name} readOnly className="bg-muted" />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Packets</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={product.packets}
+                          onChange={(e) => {
+                            const packets = parseInt(e.target.value, 10) || 0;
+                            setEditProducts((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, packets } : item
+                              )
+                            );
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Weight (kg)</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.001"
+                          value={product.weight}
+                          onChange={(e) => {
+                            const weight = parseFloat(e.target.value) || 0;
+                            setEditProducts((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, weight } : item
+                              )
+                            );
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {editLabels.length > 0 && (
+                <div className="space-y-3">
+                  <Label>Labels and Boxes</Label>
+                  {editLabels.map((label, index) => (
+                    <div key={`${label.type}-${index}`} className="grid grid-cols-1 md:grid-cols-[1fr_120px_120px] gap-2 rounded-lg border p-3">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Label</Label>
+                        <Input value={`${label.type}${label.semiPackaged ? " (semi)" : ""}`} readOnly className="bg-muted" />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Quantity</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={label.quantity}
+                          onChange={(e) => {
+                            const quantity = parseInt(e.target.value, 10) || 0;
+                            setEditLabels((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, quantity } : item
+                              )
+                            );
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Boxes Used</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={label.boxesUsed || 0}
+                          disabled={label.semiPackaged || !label.boxTypeId}
+                          onChange={(e) => {
+                            const boxesUsed = parseInt(e.target.value, 10) || 0;
+                            setEditLabels((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, boxesUsed } : item
+                              )
+                            );
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditSession(null)} disabled={isSavingSession}>
+                Cancel
+              </Button>
+              <Button onClick={saveSessionEdit} disabled={isSavingSession} className="gap-2">
+                {isSavingSession ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Save Changes
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <AlertDialog open={!!deleteSession} onOpenChange={(open) => !open && setDeleteSession(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete packaging record?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will delete only the packaging entry. Inventory, labels, boxes, raw materials, and other modules will not be reverted.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeletingSession}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmDeleteSession}
+                disabled={isDeletingSession}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {isDeletingSession ? "Deleting..." : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
       </div>
     </AppLayout>

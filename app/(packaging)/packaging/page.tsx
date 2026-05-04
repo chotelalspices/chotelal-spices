@@ -33,7 +33,7 @@ interface PackagingBatch {
   semiPackaged: number;
   status: "Not Started" | "Partial" | "Semi Packaged" | "Completed";
   sessions: any[];
-  packagedProducts?: Array<{ name: string; totalWeight: number }>;
+  packagedProducts?: Array<{ name: string; packets: number; totalWeight: number }>;
 }
 
 const ALL_STATUSES = ["Not Started", "Semi Packaged", "Partial", "Completed"] as const;
@@ -46,15 +46,21 @@ const formatDisplayDate = (dateString: string | null) => {
   return parsed.toLocaleDateString("en-GB");
 };
 
-const getMatchingPackagedWeight = (batch: PackagingBatch, query: string) => {
+const getMatchingPackagedTotal = (batch: PackagingBatch, query: string) => {
   const normalizedQuery = query.toLowerCase().trim();
   if (!normalizedQuery) return null;
 
   const total = (batch.packagedProducts || [])
     .filter((product) => product.name.toLowerCase().includes(normalizedQuery))
-    .reduce((sum, product) => sum + product.totalWeight, 0);
+    .reduce(
+      (sum, product) => ({
+        packets: sum.packets + product.packets,
+        totalWeight: sum.totalWeight + product.totalWeight,
+      }),
+      { packets: 0, totalWeight: 0 }
+    );
 
-  return total > 0 ? total : null;
+  return total.totalWeight > 0 || total.packets > 0 ? total : null;
 };
 
 // ─── Status color helper (extended) ──────────────────────────────────────────
@@ -128,14 +134,6 @@ const PackagingList = () => {
     fetchBatches();
   }, [toast]);
 
-  useEffect(() => {
-    const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    setStartDate(firstDay.toISOString().split("T")[0]);
-    setEndDate(lastDay.toISOString().split("T")[0]);
-  }, []);
-
   const toggleStatus = (status: StatusType) => {
     setSelectedStatuses((prev) =>
       prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]
@@ -163,8 +161,17 @@ const PackagingList = () => {
     return matchesSearch && matchesStatus && matchesStartDate && matchesEndDate;
   });
   const searchedPackagedTotal = searchQuery.trim()
-    ? filteredBatches.reduce((sum, batch) => sum + (getMatchingPackagedWeight(batch, searchQuery) || 0), 0)
-    : 0;
+    ? filteredBatches.reduce(
+      (sum, batch) => {
+        const match = getMatchingPackagedTotal(batch, searchQuery);
+        return {
+          packets: sum.packets + (match?.packets || 0),
+          totalWeight: sum.totalWeight + (match?.totalWeight || 0),
+        };
+      },
+      { packets: 0, totalWeight: 0 }
+    )
+    : { packets: 0, totalWeight: 0 };
 
   const handlePackaging    = (batchNumber: string) => router.push(`/packaging/${batchNumber}/entry`);
   const handleViewSummary  = (batchNumber: string) => router.push(`/packaging/${batchNumber}/summary`);
@@ -394,16 +401,21 @@ const PackagingList = () => {
           )}
         </div>
 
-        {searchQuery.trim() && searchedPackagedTotal > 0 && (
+        {searchQuery.trim() && searchedPackagedTotal.totalWeight > 0 && (
           <Card>
             <CardContent className="p-4 flex items-center justify-between">
               <div>
                 <p className="text-xs text-muted-foreground">Total Packaged for Search</p>
                 <p className="text-sm font-medium">{searchQuery.trim()}</p>
               </div>
-              <p className="text-2xl font-bold text-primary">
-                {searchedPackagedTotal.toFixed(3)} kg
-              </p>
+              <div className="text-right">
+                <p className="text-2xl font-bold text-primary">
+                  {searchedPackagedTotal.totalWeight.toFixed(3)} kg
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {searchedPackagedTotal.packets.toLocaleString("en-IN")} packets
+                </p>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -432,7 +444,19 @@ const PackagingList = () => {
                     <TableCell>{formatDisplayDate(batch.date)}</TableCell>
                     <TableCell className="text-right">{batch.producedQuantity.toFixed(2)}</TableCell>
                     <TableCell className="text-right">
-                      {(getMatchingPackagedWeight(batch, searchQuery) ?? batch.alreadyPackaged).toFixed(2)}
+                      {(() => {
+                        const match = getMatchingPackagedTotal(batch, searchQuery);
+                        return (
+                          <div>
+                            <p>{(match?.totalWeight ?? batch.alreadyPackaged).toFixed(2)}</p>
+                            {match && (
+                              <p className="text-xs text-muted-foreground">
+                                {match.packets.toLocaleString("en-IN")} packets
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="text-right font-semibold text-primary">
                       {batch.remainingQuantity.toFixed(2)}
@@ -493,9 +517,21 @@ const PackagingList = () => {
                     </div>
                     <div className="bg-muted/50 rounded-lg p-2 text-center">
                       <p className="text-xs text-muted-foreground">Packaged</p>
-                      <p className="font-semibold">
-                        {(getMatchingPackagedWeight(batch, searchQuery) ?? batch.alreadyPackaged).toFixed(2)} kg
-                      </p>
+                      {(() => {
+                        const match = getMatchingPackagedTotal(batch, searchQuery);
+                        return (
+                          <>
+                            <p className="font-semibold">
+                              {(match?.totalWeight ?? batch.alreadyPackaged).toFixed(2)} kg
+                            </p>
+                            {match && (
+                              <p className="text-xs text-muted-foreground">
+                                {match.packets.toLocaleString("en-IN")} packets
+                              </p>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                     {batch.semiPackaged > 0 && (
                       <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-2 text-center">

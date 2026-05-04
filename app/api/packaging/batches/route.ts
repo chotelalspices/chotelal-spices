@@ -7,15 +7,16 @@ import { authOptions } from "../../auth/[...nextauth]/route";
 
 function parsePackagedProducts(remarks: string | null) {
   if (!remarks) return [];
-  const products: Array<{ name: string; weight: number }> = [];
+  const products: Array<{ name: string; packets: number; weight: number }> = [];
   const productMatches = remarks.match(/([^:]+):\s*\d+\s+packets\s+\(([\d.]+)kg\)/g);
 
   productMatches?.forEach((match) => {
-    const parts = match.match(/([^:]+):\s*\d+\s+packets\s+\(([\d.]+)kg\)/);
+    const parts = match.match(/([^:]+):\s*(\d+)\s+packets\s+\(([\d.]+)kg\)/);
     if (!parts) return;
     products.push({
       name: parts[1].replace(/^.*Packaged:\s*/i, "").trim(),
-      weight: parseFloat(parts[2]) || 0,
+      packets: parseInt(parts[2], 10) || 0,
+      weight: parseFloat(parts[3]) || 0,
     });
   });
 
@@ -77,14 +78,15 @@ export async function GET(request: NextRequest) {
         (sum, session) => sum + session.packagingLoss,
         0
       );
-      const packagedProductTotals = new Map<string, number>();
+      const packagedProductTotals = new Map<string, { packets: number; totalWeight: number }>();
 
       batch.packagingSessions.forEach((session) => {
         parsePackagedProducts(session.remarks).forEach((product) => {
-          packagedProductTotals.set(
-            product.name,
-            (packagedProductTotals.get(product.name) || 0) + product.weight
-          );
+          const current = packagedProductTotals.get(product.name) || { packets: 0, totalWeight: 0 };
+          packagedProductTotals.set(product.name, {
+            packets: current.packets + product.packets,
+            totalWeight: current.totalWeight + product.weight,
+          });
         });
       });
 
@@ -143,9 +145,10 @@ export async function GET(request: NextRequest) {
         date: latestPackagingSession?.date.toISOString() ?? null,
         producedQuantity: finalOutputKg,
         alreadyPackaged: totalPackagedWeight,
-        packagedProducts: Array.from(packagedProductTotals.entries()).map(([name, totalWeight]) => ({
+        packagedProducts: Array.from(packagedProductTotals.entries()).map(([name, total]) => ({
           name,
-          totalWeight,
+          packets: total.packets,
+          totalWeight: total.totalWeight,
         })),
         totalLoss,
         remainingQuantity: Math.max(0, remainingQuantity),
