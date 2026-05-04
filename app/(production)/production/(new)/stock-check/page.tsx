@@ -57,9 +57,7 @@ interface ProductionEntryData {
   formulationName: string;
   plannedQuantity: number;
   availableQuantity: number;
-  productionLoss: number;
   producedQuantity: number;
-  netProductionQuantity: number;
   numberOfLots: number;
   finalQuantity: number;
   unit: 'kg' | 'gm';
@@ -92,8 +90,7 @@ export default function ProductionStockCheck() {
 
       try {
         setIsLoading(true);
-        // Use netProductionQuantity (after loss) for material calculations
-        const materialCalcQuantity = data.netProductionQuantity || data.producedQuantity;
+        const materialCalcQuantity = data.producedQuantity;
         const response = await fetch(
           `/api/production/materials?formulationId=${data.formulationId}&plannedQuantity=${materialCalcQuantity}`
         );
@@ -201,10 +198,11 @@ export default function ProductionStockCheck() {
   const hasAtLeastOneChecked = checkedCount > 0;
   const allChecked = allSufficientMaterialsChecked(requirements);
   const canProceed = allChecked && !hasInactiveMaterials(requirements);
+  const canSaveDraft = requirements.length > 0 && !hasInactiveMaterials(requirements);
   const canSavePartial = hasAtLeastOneChecked && !canProceed && !hasInactiveMaterials(requirements);
 
   const handleSaveProduction = async () => {
-    if (!entryData || !hasAtLeastOneChecked) return;
+    if (!entryData || !canSaveDraft) return;
     try {
       setIsSaving(true);
       const payload = {
@@ -316,16 +314,10 @@ export default function ProductionStockCheck() {
                   <p className="font-semibold">{entryData.availableQuantity} {entryData.unit}</p>
                 </div>
               )}
-              {entryData.productionLoss > 0 && (
-                <div>
-                  <p className="text-muted-foreground text-red-600">Production Loss</p>
-                  <p className="font-semibold text-red-600">−{entryData.productionLoss} {entryData.unit}</p>
-                </div>
-              )}
               <div>
                 <p className="text-muted-foreground">Net Production (Material Basis)</p>
                 <p className="font-semibold text-green-600">
-                  {entryData.netProductionQuantity || entryData.finalQuantity} {entryData.unit}
+                  {entryData.producedQuantity} {entryData.unit}
                 </p>
               </div>
               <div>
@@ -646,7 +638,7 @@ export default function ProductionStockCheck() {
           </Button>
 
           <div className="flex items-center gap-3">
-            {canSavePartial && (
+            {canSaveDraft && (
               <Button
                 variant="outline"
                 onClick={handleSaveProduction}

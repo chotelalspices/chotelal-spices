@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Plus, Minus, History, Pencil, Save, Loader2, Trash2,
     AlertTriangle, CheckCircle2, X, Package2, ArrowUpRight,
-    ArrowDownRight, ChevronDown, ChevronRight, Search,
+    ArrowDownRight, ChevronDown, ChevronRight, Search, Filter,
 } from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -28,7 +28,7 @@ import {
     Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-    Sheet, SheetContent, SheetHeader, SheetTitle,
+    Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger,
 } from '@/components/ui/sheet';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
@@ -74,6 +74,12 @@ const REASON_LABELS: Record<string, string> = {
 const fmt = (n: number) =>
     new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n);
 
+const stockStatus = (box: BoxType) => {
+    if (box.availableStock <= 0) return 'out';
+    if (box.availableStock <= box.minimumStock) return 'low';
+    return 'ok';
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function BoxInventoryPage() {
@@ -87,6 +93,9 @@ export default function BoxInventoryPage() {
     const [loading, setLoading] = useState(true);
     const [movLoading, setMovLoading] = useState(false);
     const [search, setSearch] = useState('');
+    const [statusFilter, setStatusFilter] = useState<string>('active');
+    const [stockFilter, setStockFilter] = useState<string>('all');
+    const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [formQuantity, setFormQuantity] = useState('');
 
@@ -155,18 +164,23 @@ export default function BoxInventoryPage() {
     );
 
     const filtered = useMemo(() => {
-        if (!search.trim()) return boxTypes;
         const q = search.toLowerCase();
         return boxTypes.filter(b =>
-            b.name.toLowerCase().includes(q) ||
-            (b.description?.toLowerCase().includes(q) ?? false)
+            (!q.trim() ||
+                b.name.toLowerCase().includes(q) ||
+                (b.description?.toLowerCase().includes(q) ?? false)) &&
+            (statusFilter === 'all' || b.status === statusFilter) &&
+            (stockFilter === 'all' ||
+                (stockFilter === 'normal' && stockStatus(b) === 'ok') ||
+                (stockFilter === 'low' && stockStatus(b) === 'low') ||
+                (stockFilter === 'out' && stockStatus(b) === 'out'))
         );
-    }, [boxTypes, search]);
+    }, [boxTypes, search, statusFilter, stockFilter]);
 
-    const stockStatus = (box: BoxType) => {
-        if (box.availableStock <= 0) return 'out';
-        if (box.availableStock <= box.minimumStock) return 'low';
-        return 'ok';
+    const hasActiveFilters = statusFilter !== 'all' || stockFilter !== 'all';
+    const clearFilters = () => {
+        setStatusFilter('all');
+        setStockFilter('all');
     };
 
     // ── Add/Edit form ─────────────────────────────────────────────────────────
@@ -369,15 +383,105 @@ export default function BoxInventoryPage() {
                     </div>
                 )}
 
-                {/* Search */}
-                <div className="relative max-w-sm">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Search box types..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        className="pl-9"
-                    />
+                {/* Search and Filters */}
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div className="relative flex-1 max-w-md">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            placeholder="Search box types..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            className="pl-9"
+                        />
+                    </div>
+
+                    <div className="hidden md:flex items-center gap-3">
+                        <Select value={statusFilter} onValueChange={setStatusFilter}>
+                            <SelectTrigger className="w-[140px]">
+                                <SelectValue placeholder="Status" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-popover">
+                                <SelectItem value="all">All Status</SelectItem>
+                                <SelectItem value="active">Active</SelectItem>
+                                <SelectItem value="inactive">Inactive</SelectItem>
+                            </SelectContent>
+                        </Select>
+
+                        <Select value={stockFilter} onValueChange={setStockFilter}>
+                            <SelectTrigger className="w-[160px]">
+                                <SelectValue placeholder="Stock Level" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-popover">
+                                <SelectItem value="all">All Stock Levels</SelectItem>
+                                <SelectItem value="normal">Normal</SelectItem>
+                                <SelectItem value="low">Low Stock</SelectItem>
+                                <SelectItem value="out">Out of Stock</SelectItem>
+                            </SelectContent>
+                        </Select>
+
+                        {hasActiveFilters && (
+                            <Button variant="ghost" size="sm" onClick={clearFilters}>
+                                <X className="h-4 w-4 mr-1" />
+                                Clear
+                            </Button>
+                        )}
+                    </div>
+
+                    <Sheet open={mobileFilterOpen} onOpenChange={setMobileFilterOpen}>
+                        <SheetTrigger asChild>
+                            <Button variant="outline" size="icon" className="md:hidden shrink-0">
+                                <Filter className="h-4 w-4" />
+                            </Button>
+                        </SheetTrigger>
+                        <SheetContent side="bottom" className="h-auto rounded-t-xl">
+                            <SheetHeader className="text-left mb-4">
+                                <SheetTitle>Filters</SheetTitle>
+                            </SheetHeader>
+                            <div className="space-y-4">
+                                <div>
+                                    <Label className="text-sm font-medium text-foreground mb-2 block">Status</Label>
+                                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Status" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-popover">
+                                            <SelectItem value="all">All Status</SelectItem>
+                                            <SelectItem value="active">Active</SelectItem>
+                                            <SelectItem value="inactive">Inactive</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div>
+                                    <Label className="text-sm font-medium text-foreground mb-2 block">Stock Level</Label>
+                                    <Select value={stockFilter} onValueChange={setStockFilter}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Stock Level" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-popover">
+                                            <SelectItem value="all">All Stock Levels</SelectItem>
+                                            <SelectItem value="normal">Normal</SelectItem>
+                                            <SelectItem value="low">Low Stock</SelectItem>
+                                            <SelectItem value="out">Out of Stock</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="flex gap-3 pt-2">
+                                    <Button variant="outline" onClick={clearFilters} className="flex-1">
+                                        Clear Filters
+                                    </Button>
+                                    <Button onClick={() => setMobileFilterOpen(false)} className="flex-1">
+                                        Apply
+                                    </Button>
+                                </div>
+                            </div>
+                        </SheetContent>
+                    </Sheet>
+                </div>
+
+                <div>
+                    <p className="text-sm text-muted-foreground">
+                        Showing {filtered.length} of {boxTypes.length} box types
+                    </p>
                 </div>
 
                 {/* Box types table */}
@@ -630,7 +734,7 @@ export default function BoxInventoryPage() {
                                         New stock: <strong>
                                             {adjustAction === 'add'
                                                 ? adjustBox.availableStock + (parseInt(adjustQty) || 0)
-                                                : Math.max(0, adjustBox.availableStock - (parseInt(adjustQty) || 0))
+                                                : adjustBox.availableStock - (parseInt(adjustQty) || 0)
                                             } boxes
                                         </strong>
                                     </p>

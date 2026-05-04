@@ -361,7 +361,7 @@ export default function PackagingEntry() {
     return e.boxTypeStockStatus === "out";
   });
 
-  const hasStockErrors = labelStockErrors.length > 0 || boxTypeStockErrors.length > 0;
+  const hasStockErrors = labelStockErrors.length > 0;
 
   // ─── Packet update handler ────────────────────────────────────────────────
 
@@ -545,7 +545,7 @@ export default function PackagingEntry() {
       return;
     }
     if (hasStockErrors) {
-      toast({ title: "Insufficient Stock", description: "Some labels or box types don't have enough stock.", variant: "destructive" });
+      toast({ title: "Insufficient Stock", description: "Some labels don't have enough stock.", variant: "destructive" });
       return;
     }
 
@@ -577,7 +577,7 @@ export default function PackagingEntry() {
 
   const handleFinishBatch = async () => {
     if (hasStockErrors) {
-      toast({ title: "Insufficient Stock", description: "Some labels or box types don't have enough stock.", variant: "destructive" });
+      toast({ title: "Insufficient Stock", description: "Some labels don't have enough stock.", variant: "destructive" });
       return;
     }
     setIsFinishing(true);
@@ -588,6 +588,7 @@ export default function PackagingEntry() {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            date: new Date().toISOString(),
             ...buildPayload(),
             remarks: remarks || `Batch marked as finished. Remaining ${batch!.remainingQuantity.toFixed(3)} kg counted as loss.`,
           }),
@@ -1064,12 +1065,12 @@ export default function PackagingEntry() {
                 </div>
               )}
 
-              {/* Box type stock error banner */}
+              {/* Box type stock warning banner */}
               {boxTypeStockErrors.length > 0 && (
-                <div className="mt-4 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
-                  <Box className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+                <div className="mt-4 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:bg-amber-900/20">
+                  <Box className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
                   <div>
-                    <p className="font-medium text-destructive text-sm">Insufficient box stock</p>
+                    <p className="font-medium text-amber-800 text-sm">Box stock will go negative</p>
                     <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
                       {boxTypeStockErrors.map((e) => (
                         <p key={e.type}>
@@ -1262,7 +1263,7 @@ export default function PackagingEntry() {
                 <div>
                   <p className="font-medium text-destructive text-sm">Cannot proceed — insufficient stock</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Please restock the labels or box types above before saving or finishing.
+                    Please restock the labels above before saving or finishing.
                   </p>
                 </div>
               </div>

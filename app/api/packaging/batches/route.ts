@@ -37,6 +37,8 @@ export async function GET(request: NextRequest) {
           include: {
             items: { include: { container: true } },
             performedBy: { select: { fullName: true } },
+            courierBoxes: true,
+            sessionLabels: true,
           },
           orderBy: { date: "desc" },
         },
@@ -97,11 +99,21 @@ export async function GET(request: NextRequest) {
         remarks: session.remarks,
         performedBy: session.performedBy?.fullName ?? "Unknown",
       }));
+      const latestPackagingSession = batch.packagingSessions.find((session) => {
+        const hasItems = session.items.length > 0;
+        const hasLabels = session.sessionLabels.length > 0;
+        const hasCourierBoxes = session.courierBoxes.length > 0;
+        const hasLoss = session.packagingLoss > 0;
+        const hasSemiPackaged = session.semiPackaged > 0;
+        const hasPackagedRemarks = !!session.remarks && !session.remarks.includes("ready for packaging");
+
+        return hasItems || hasLabels || hasCourierBoxes || hasLoss || hasSemiPackaged || hasPackagedRemarks;
+      });
 
       return {
         batchNumber: batch.batchNumber,
         productName: batch.formulation.name,
-        date: batch.productionDate.toISOString().split("T")[0],
+        date: latestPackagingSession?.date.toISOString() ?? null,
         producedQuantity: finalOutputKg,
         alreadyPackaged: totalPackagedWeight,
         totalLoss,
@@ -110,6 +122,13 @@ export async function GET(request: NextRequest) {
         status,
         sessions,
       };
+    });
+
+    formattedBatches.sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
     });
 
     return NextResponse.json(formattedBatches, { status: 200 });

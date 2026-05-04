@@ -13,6 +13,7 @@ import {
 
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -37,7 +38,6 @@ import { useToast } from "@/hooks/use-toast";
 
 import {
   MaterialRequirement,
-  calculateBatchSummary,
   formatCurrency,
 } from "@/data/productionData";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -65,6 +65,8 @@ export default function ProductionConfirm() {
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [batchNumber, setBatchNumber] = useState<string>("");
+  const [totalRawMaterial, setTotalRawMaterial] = useState("");
+  const [finalOutput, setFinalOutput] = useState("");
 
   useEffect(() => {
     const storedEntry = sessionStorage.getItem("productionEntry");
@@ -75,8 +77,17 @@ export default function ProductionConfirm() {
       return;
     }
 
-    setEntryData(JSON.parse(storedEntry));
-    setRequirements(JSON.parse(storedReqs));
+    const parsedEntry: ProductionEntryData = JSON.parse(storedEntry);
+    const parsedReqs: MaterialRequirement[] = JSON.parse(storedReqs);
+    const rawMaterialTotal = parsedReqs.reduce(
+      (sum, req) => sum + (Number(req.actualQuantity) || Number(req.requiredQuantity) || 0),
+      0
+    );
+
+    setEntryData(parsedEntry);
+    setRequirements(parsedReqs);
+    setTotalRawMaterial(rawMaterialTotal.toFixed(2));
+    setFinalOutput(parsedEntry.finalQuantity.toFixed(2));
 
     // Generate batch number (will be generated on server, but show placeholder)
     const year = new Date().getFullYear();
@@ -93,12 +104,38 @@ export default function ProductionConfirm() {
     );
   }
 
-  // No loss during production - loss happens during packaging
-  const summary = calculateBatchSummary(
-    entryData.finalQuantity,
-    0, // No loss during production
-    requirements
-  );
+  const totalRawMaterialValue = Number(totalRawMaterial) || 0;
+  const finalOutputValue = Number(finalOutput) || 0;
+  const totalInputQuantity = totalRawMaterialValue + (entryData.availableQuantity || 0);
+  const productionLoss = Math.max(0, totalInputQuantity - finalOutputValue);
+  const totalProductionCost = requirements.reduce((sum, req) => sum + req.cost, 0);
+  const costPerKg = finalOutputValue > 0 ? totalProductionCost / finalOutputValue : 0;
+
+  const handleTotalRawMaterialChange = (value: string) => {
+    setTotalRawMaterial(value);
+
+    const newTotal = Number(value);
+    if (!Number.isFinite(newTotal) || newTotal < 0) return;
+
+    setRequirements((current) => {
+      const currentTotal = current.reduce(
+        (sum, req) => sum + (Number(req.actualQuantity) || Number(req.requiredQuantity) || 0),
+        0
+      );
+      if (currentTotal <= 0) return current;
+
+      const ratio = newTotal / currentTotal;
+      return current.map((req) => {
+        const nextQuantity = Number(((Number(req.actualQuantity) || Number(req.requiredQuantity) || 0) * ratio).toFixed(2));
+        return {
+          ...req,
+          actualQuantity: nextQuantity,
+          cost: nextQuantity * req.ratePerUnit,
+          stockStatus: req.availableStock >= nextQuantity ? "sufficient" : "insufficient",
+        };
+      });
+    });
+  };
 
   const handleConfirm = async () => {
     if (!entryData) return;
@@ -113,10 +150,10 @@ export default function ProductionConfirm() {
         },
         body: JSON.stringify({
           formulationId: entryData.formulationId,
-          plannedQuantity: entryData.plannedQuantity,
+          plannedQuantity: totalInputQuantity,
           availableQuantity: entryData.availableQuantity,
           numberOfLots: entryData.numberOfLots,
-          finalQuantity: entryData.finalQuantity,
+          finalQuantity: finalOutputValue,
           unit: entryData.unit,
           productionDate: entryData.productionDate,
           materialRequirements: requirements,
@@ -244,7 +281,7 @@ export default function ProductionConfirm() {
                 </div>
               )}
               <div>
-                <p className="text-sm text-muted-foreground">Final Total</p>
+                <p className="text-sm text-muted-foreground">Estimated Total</p>
                 <p className="font-semibold">
                   {entryData.finalQuantity} {entryData.unit}
                 </p>
@@ -269,21 +306,47 @@ export default function ProductionConfirm() {
               </div>
             </div>
 
-            <div className="border-t mt-6 pt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-              <SummaryCard icon={Package} label="Total Raw Material">
-                {summary.totalRawMaterialConsumed.toFixed(2)} {entryData.unit}
-              </SummaryCard>
+            <div className="border-t mt-6 pt-6 grid grid-cols-2 md:grid-cols-5 gap-4">
+              <EditableSummaryCard icon={Package} label="Total Raw Material">
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={totalRawMaterial}
+                  onChange={(event) => handleTotalRawMaterialChange(event.target.value)}
+                  className="h-9 text-center font-bold"
+                />
+                <span className="text-xs text-muted-foreground">{entryData.unit}</span>
+              </EditableSummaryCard>
 
-              <SummaryCard icon={Factory} label="Final Output">
-                {summary.finalOutputQuantity.toFixed(2)} {entryData.unit}
-              </SummaryCard>
+              <EditableSummaryCard icon={Factory} label="Final Output">
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={finalOutput}
+                  onChange={(event) => setFinalOutput(event.target.value)}
+                  className="h-9 text-center font-bold"
+                />
+                <span className="text-xs text-muted-foreground">{entryData.unit}</span>
+              </EditableSummaryCard>
+
+              <EditableSummaryCard icon={Factory} label="Production Loss">
+                <Input
+                  type="number"
+                  value={productionLoss.toFixed(2)}
+                  readOnly
+                  className="h-9 text-center font-bold bg-muted"
+                />
+                <span className="text-xs text-muted-foreground">{entryData.unit}</span>
+              </EditableSummaryCard>
 
               <SummaryCard icon={IndianRupee} label="Production Cost">
-                {formatCurrency(summary.totalProductionCost)}
+                {formatCurrency(totalProductionCost)}
               </SummaryCard>
 
               <SummaryCard icon={IndianRupee} label="Cost per kg">
-                {formatCurrency(summary.costPerKg)}
+                {formatCurrency(costPerKg)}
               </SummaryCard>
             </div>
           </CardContent>
@@ -300,7 +363,7 @@ export default function ProductionConfirm() {
           <Button 
             onClick={() => setShowConfirmDialog(true)} 
             className="gap-2"
-            disabled={isSubmitting}
+            disabled={isSubmitting || totalRawMaterialValue <= 0 || finalOutputValue <= 0}
           >
             {isSubmitting ? (
               <>
@@ -323,7 +386,7 @@ export default function ProductionConfirm() {
               <AlertDialogTitle>Confirm Production Batch?</AlertDialogTitle>
               <AlertDialogDescription>
                 This will use{" "}
-                {summary.totalRawMaterialConsumed.toFixed(2)} {entryData.unit} of
+                {totalRawMaterialValue.toFixed(2)} {entryData.unit} of
                 raw materials and create batch{" "}
                 <strong>{batchNumber}</strong>.
                 <br />
@@ -375,6 +438,26 @@ function SummaryCard({
         <Icon className="h-6 w-6 mx-auto text-muted-foreground mb-2" />
         <p className="text-sm text-muted-foreground">{label}</p>
         <p className="text-xl font-bold">{children}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function EditableSummaryCard({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: any;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card className="bg-muted/50">
+      <CardContent className="p-4 text-center space-y-2">
+        <Icon className="h-6 w-6 mx-auto text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">{label}</p>
+        {children}
       </CardContent>
     </Card>
   );

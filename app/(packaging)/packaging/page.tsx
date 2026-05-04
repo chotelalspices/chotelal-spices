@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 interface PackagingBatch {
   batchNumber: string;
   productName: string;
-  date: string;
+  date: string | null;
   producedQuantity: number;
   alreadyPackaged: number;
   totalLoss: number;
@@ -38,7 +38,8 @@ interface PackagingBatch {
 const ALL_STATUSES = ["Not Started", "Semi Packaged", "Partial", "Completed"] as const;
 type StatusType = typeof ALL_STATUSES[number];
 
-const formatDisplayDate = (dateString: string) => {
+const formatDisplayDate = (dateString: string | null) => {
+  if (!dateString) return "Not packaged";
   const parsed = new Date(dateString);
   if (Number.isNaN(parsed.getTime())) return dateString;
   return parsed.toLocaleDateString("en-GB");
@@ -140,9 +141,9 @@ const PackagingList = () => {
       batch.productName.toLowerCase().includes(query);
     const matchesStatus =
       selectedStatuses.length === 0 || selectedStatuses.includes(batch.status as StatusType);
-    const batchDate = new Date(batch.date);
-    const matchesStartDate = !startDate || batchDate >= new Date(startDate);
-    const matchesEndDate = !endDate || batchDate <= new Date(`${endDate}T23:59:59`);
+    const batchDate = batch.date ? new Date(batch.date) : null;
+    const matchesStartDate = !startDate || !batchDate || batchDate >= new Date(startDate);
+    const matchesEndDate = !endDate || !batchDate || batchDate <= new Date(`${endDate}T23:59:59`);
 
     return matchesSearch && matchesStatus && matchesStartDate && matchesEndDate;
   });

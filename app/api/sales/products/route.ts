@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
 
     
     // Process finished products to calculate available quantities and costs
-    const availableProducts = finishedProducts.map((product) => {
+    const processedProducts = finishedProducts.map((product) => {
       const availableQuantity = product.availableInventory || 0;
 
       // Calculate production cost per packet
@@ -146,7 +146,46 @@ export async function GET(request: NextRequest) {
         },
         batches: [], // Can be populated if needed from formulation batches
       };
-    })
+    });
+
+    const groupedProducts = Array.from(
+      processedProducts.reduce((map, product) => {
+        const key = product.name.trim().toLowerCase();
+        const existing = map.get(key);
+
+        if (!existing) {
+          map.set(key, { ...product });
+          return map;
+        }
+
+        const existingStock = existing.availableQuantity || 0;
+        const productStock = product.availableQuantity || 0;
+        const totalStock = existingStock + productStock;
+        const weightedCost =
+          totalStock > 0
+            ? ((existing.productionCostPerPacket * existingStock) +
+                (product.productionCostPerPacket * productStock)) / totalStock
+            : existing.productionCostPerPacket || product.productionCostPerPacket;
+
+        existing.availableQuantity = totalStock;
+        existing.productionCostPerPacket = weightedCost;
+        existing.batches = [
+          ...(existing.batches || []),
+          {
+            productId: product.id,
+            availableQuantity: product.availableQuantity,
+            createdAt: product.createdAt,
+          },
+        ];
+
+        if (new Date(product.createdAt).getTime() > new Date(existing.createdAt).getTime()) {
+          existing.id = product.id;
+          existing.createdAt = product.createdAt;
+        }
+
+        return map;
+      }, new Map<string, any>()).values()
+    )
     // Temporarily show all products to debug - remove this filter if you want to filter by available inventory
     // .filter((product) => (product.availableQuantity || 0) > 0)
     .sort((a, b) => {
@@ -175,10 +214,10 @@ export async function GET(request: NextRequest) {
       return aNum - bNum;
     });
 
-    console.log('Processed products count:', availableProducts.length);
-    console.log('Sample processed product:', availableProducts[0]);
+    console.log('Processed products count:', groupedProducts.length);
+    console.log('Sample processed product:', groupedProducts[0]);
 
-    return NextResponse.json(availableProducts, { status: 200 });
+    return NextResponse.json(groupedProducts, { status: 200 });
   } catch (error) {
     console.error("Error fetching finished products:", error);
     return NextResponse.json(

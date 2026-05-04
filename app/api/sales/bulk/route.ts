@@ -31,6 +31,40 @@ function parseSaleDate(input: unknown): Date {
   return new Date();
 }
 
+async function deductProductPool(
+  tx: any,
+  products: Array<{ id: string; availableInventory: number | null }>,
+  fallbackProductId: string,
+  quantity: number
+) {
+  let remaining = quantity;
+
+  for (const product of products) {
+    if (remaining <= 0) break;
+    const currentStock = product.availableInventory || 0;
+    if (currentStock <= 0) continue;
+
+    const deduction = Math.min(currentStock, remaining);
+    await tx.finishedProduct.update({
+      where: { id: product.id },
+      data: { availableInventory: currentStock - deduction },
+    });
+    product.availableInventory = currentStock - deduction;
+    remaining -= deduction;
+  }
+
+  if (remaining > 0) {
+    const fallback = products.find((product) => product.id === fallbackProductId) || products[0];
+    if (fallback) {
+      await tx.finishedProduct.update({
+        where: { id: fallback.id },
+        data: { availableInventory: (fallback.availableInventory || 0) - remaining },
+      });
+      fallback.availableInventory = (fallback.availableInventory || 0) - remaining;
+    }
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -68,7 +102,27 @@ export async function POST(request: NextRequest) {
       select: { id: true, name: true, availableInventory: true },
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
-    const remainingStock = new Map(products.map((p) => [p.id, p.availableInventory || 0]));
+    const productNames = [...new Set(products.map((p) => p.name))];
+    const groupedInventoryProducts = await prisma.finishedProduct.findMany({
+      where: { name: { in: productNames } },
+      select: { id: true, name: true, availableInventory: true, createdAt: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    const productsBySelectedId = new Map(
+      products.map((product) => [
+        product.id,
+        groupedInventoryProducts.filter((inventoryProduct) => inventoryProduct.name === product.name),
+      ])
+    );
+    const remainingStock = new Map(
+      products.map((product) => [
+        product.id,
+        (productsBySelectedId.get(product.id) || []).reduce(
+          (sum, inventoryProduct) => sum + (inventoryProduct.availableInventory || 0),
+          0
+        ),
+      ])
+    );
 
     const validatedSales: Array<{
       productId: string;
@@ -184,10 +238,7 @@ export async function POST(request: NextRequest) {
           });
 
           for (const [productId, totalDeduction] of inventoryUpdates.entries()) {
-            await tx.finishedProduct.update({
-              where: { id: productId },
-              data: { availableInventory: { decrement: totalDeduction } },
-            });
+            await deductProductPool(tx, productsBySelectedId.get(productId) || [], productId, totalDeduction);
           }
 
           return createResult.count;

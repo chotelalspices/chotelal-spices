@@ -180,14 +180,6 @@ export async function POST(request: NextRequest) {
         }
         continue;
       }
-      if (boxType.availableStock < boxesUsed) {
-        return NextResponse.json(
-          {
-            error: `Insufficient stock for box type "${boxType.name}". Available: ${boxType.availableStock}, Required: ${boxesUsed}.`,
-          },
-          { status: 400 }
-        );
-      }
     }
 
     // ── Transaction ─────────────────────────────────────────────────────────

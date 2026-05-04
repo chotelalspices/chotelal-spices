@@ -241,6 +241,7 @@ export async function PATCH(
       remarks,
       labels,
       packagingLoss,
+      date,
       courierBox,
       totalBoxes,
       boxTypeDeductions,
@@ -384,14 +385,6 @@ export async function PATCH(
         }
         continue;
       }
-      if (boxType.availableStock < boxesUsed) {
-        return NextResponse.json(
-          {
-            error: `Insufficient stock for box type "${boxType.name}". Available: ${boxType.availableStock}, Required: ${boxesUsed}.`,
-          },
-          { status: 400 }
-        );
-      }
     }
 
     // ── Transaction ─────────────────────────────────────────────────────────
@@ -425,10 +418,12 @@ export async function PATCH(
               : `${remarks || ""} Packaged: ${packagingDetails.join(", ")}. Total: ${itemsWeight}kg${conversionNote}`.trim()
             : remarks || "Batch marked as finished - remaining quantity counted as loss";
 
+        const sessionDate = date ? new Date(date) : new Date();
+
         const packagingSession = await tx.packagingSession.create({
           data: {
             batchId: batch!.id,
-            date: new Date(),
+            date: Number.isNaN(sessionDate.getTime()) ? new Date() : sessionDate,
             packagingLoss: Math.max(0, finalLoss),
             remarks: sessionRemarks,
             performedById: authenticatedUserId,

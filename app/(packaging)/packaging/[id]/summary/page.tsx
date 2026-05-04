@@ -414,7 +414,7 @@ const PackagingSummary = () => {
   }
 
   const displaySessions = [...batch.sessions]
-    .reverse()
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .filter((s) => {
       const sessionType = getSessionType(s);
       if (sessionType === "semi") return (s.semiPackaged ?? 0) > 0;

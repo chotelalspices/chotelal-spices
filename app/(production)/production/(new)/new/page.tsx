@@ -41,6 +41,7 @@ export default function ProductionEntry() {
   const { toast } = useToast();
   const [activeFormulations, setActiveFormulations] = useState<Formulation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isFormulationOpen, setIsFormulationOpen] = useState(false);
 
   useEffect(() => {
     const fetchFormulations = async () => {
@@ -74,7 +75,6 @@ export default function ProductionEntry() {
     formulationId: '',
     plannedQuantity: '',
     availableQuantity: '',
-    productionLoss: '',
     numberOfLots: '1',
     productionDate: new Date().toISOString().split('T')[0],
   });
@@ -86,9 +86,6 @@ export default function ProductionEntry() {
   const grossQuantity = formData.plannedQuantity && formData.numberOfLots
     ? Number(formData.plannedQuantity) * Number(formData.numberOfLots) + (Number(formData.availableQuantity) || 0)
     : 0;
-  
-  const lossQuantity = Number(formData.productionLoss) || 0;
-  const finalQuantity = Math.max(0, grossQuantity - lossQuantity);
 
   const canProceed =
     formData.formulationId &&
@@ -102,8 +99,7 @@ export default function ProductionEntry() {
     if (!canProceed) return;
 
     const producedQty = Number(formData.plannedQuantity) * Number(formData.numberOfLots);
-    const lossQty = Number(formData.productionLoss) || 0;
-    const netProductionQty = Math.max(0, producedQty - lossQty);
+    const availableQty = Number(formData.availableQuantity) || 0;
 
     sessionStorage.setItem(
       'productionEntry',
@@ -111,12 +107,10 @@ export default function ProductionEntry() {
         formulationId: formData.formulationId,
         formulationName: selectedFormulation?.name,
         plannedQuantity: Number(formData.plannedQuantity),
-        availableQuantity: Number(formData.availableQuantity) || 0,
-        productionLoss: lossQty,
+        availableQuantity: availableQty,
         producedQuantity: producedQty,
-        netProductionQuantity: netProductionQty,
         numberOfLots: Number(formData.numberOfLots),
-        finalQuantity: finalQuantity,
+        finalQuantity: producedQty + availableQty,
         unit: selectedFormulation?.baseUnit || 'kg',
         productionDate: formData.productionDate,
       })
@@ -204,7 +198,7 @@ export default function ProductionEntry() {
                 Masala / Product Name *
               </Label>
 
-              <Popover>
+              <Popover open={isFormulationOpen} onOpenChange={setIsFormulationOpen}>
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
@@ -240,6 +234,7 @@ export default function ProductionEntry() {
                               formulationId: f.id,
                               plannedQuantity: f.defaultQuantity?.toString() || '',
                             });
+                            setIsFormulationOpen(false);
                           }}
                         >
                           <Check
@@ -314,35 +309,6 @@ export default function ProductionEntry() {
               </p>
             </div>
 
-            {/* Production Loss */}
-            <div className="space-y-2">
-              <Label htmlFor="productionLoss">
-                Production Loss
-              </Label>
-              <div className="flex gap-2">
-                <Input
-                  id="productionLoss"
-                  type="number"
-                  placeholder="Enter production loss"
-                  value={formData.productionLoss}
-                  onChange={e =>
-                    setFormData({
-                      ...formData,
-                      productionLoss: e.target.value,
-                    })
-                  }
-                  min="0"
-                  step="0.1"
-                />
-                <div className="flex items-center px-4 bg-muted rounded-md text-sm font-medium min-w-[60px] justify-center">
-                  {selectedFormulation?.baseUnit || 'kg'}
-                </div>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Expected loss during production (e.g., spillage, waste). Materials will be calculated for: {grossQuantity > 0 ? (grossQuantity - (Number(formData.productionLoss) || 0)) : 0} {selectedFormulation?.baseUnit || 'kg'}
-              </p>
-            </div>
-
             {/* Number of Lots */}
             <div className="space-y-2">
               <Label htmlFor="lots">Number of Lots *</Label>
@@ -367,12 +333,12 @@ export default function ProductionEntry() {
 
             {/* Final Quantity */}
             <div className="space-y-2">
-              <Label htmlFor="finalQuantity">Net Production Quantity</Label>
+              <Label htmlFor="finalQuantity">Estimated Total Output</Label>
               <div className="flex gap-2">
                 <Input
                   id="finalQuantity"
                   type="number"
-                  value={finalQuantity.toFixed(2)}
+                  value={grossQuantity.toFixed(2)}
                   readOnly
                   className="bg-muted"
                 />
@@ -381,7 +347,7 @@ export default function ProductionEntry() {
                 </div>
               </div>
               <p className="text-sm text-muted-foreground">
-                Calculated as: (Planned × Lots) + Available − Loss = {grossQuantity.toFixed(2)} − {(Number(formData.productionLoss) || 0).toFixed(2)} = {finalQuantity.toFixed(2)} {selectedFormulation?.baseUnit || 'kg'}
+                Production loss will be entered and calculated during confirmation.
               </p>
             </div>
 

@@ -16,6 +16,55 @@ async function getAuthUser(request?: NextRequest) {
   return { userId: id };
 }
 
+async function getProductPool(productId: string) {
+  const selectedProduct = await prisma.finishedProduct.findUnique({
+    where: { id: productId },
+    include: { formulation: true, salesRecords: true },
+  });
+  if (!selectedProduct) return null;
+
+  const products = await prisma.finishedProduct.findMany({
+    where: { name: selectedProduct.name },
+    include: { formulation: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+
+  return {
+    selectedProduct,
+    products,
+    availablePackets: products.reduce((sum, product) => sum + (product.availableInventory || 0), 0),
+  };
+}
+
+async function deductProductPool(tx: any, products: Array<{ id: string; availableInventory: number | null }>, fallbackProductId: string, quantity: number) {
+  let remaining = quantity;
+
+  for (const product of products) {
+    if (remaining <= 0) break;
+    const currentStock = product.availableInventory || 0;
+    if (currentStock <= 0) continue;
+
+    const deduction = Math.min(currentStock, remaining);
+    await tx.finishedProduct.update({
+      where: { id: product.id },
+      data: { availableInventory: currentStock - deduction },
+    });
+    product.availableInventory = currentStock - deduction;
+    remaining -= deduction;
+  }
+
+  if (remaining > 0) {
+    const fallback = products.find((product) => product.id === fallbackProductId) || products[0];
+    if (fallback) {
+      await tx.finishedProduct.update({
+        where: { id: fallback.id },
+        data: { availableInventory: (fallback.availableInventory || 0) - remaining },
+      });
+      fallback.availableInventory = (fallback.availableInventory || 0) - remaining;
+    }
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await getAuthUser();
@@ -127,13 +176,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid sale date." }, { status: 400 });
     }
 
-    const product = await prisma.finishedProduct.findUnique({
-      where: { id: productId },
-      include: { formulation: true, salesRecords: true },
-    });
-    if (!product) return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    const productPool = await getProductPool(productId);
+    if (!productPool) return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    const { selectedProduct: product } = productPool;
 
-    const availablePackets = Math.floor(product.availableInventory || 0);
+    const availablePackets = Math.floor(productPool.availablePackets);
     if (parsedQuantity > availablePackets) {
       return NextResponse.json(
         { error: `Insufficient stock. Available: ${availablePackets} packets, Requested: ${parsedQuantity} packets` },
@@ -165,10 +212,7 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      await tx.finishedProduct.update({
-        where: { id: productId },
-        data: { availableInventory: (product.availableInventory || 0) - parsedQuantity },
-      });
+      await deductProductPool(tx, productPool.products, productId, parsedQuantity);
 
       return salesRecord;
     });
@@ -197,7 +241,7 @@ export async function POST(request: NextRequest) {
         saleDate: result.saleDate.toISOString(),
         createdBy: result.createdBy?.fullName ?? null,
         createdAt: result.createdAt.toISOString(),
-        remainingQuantity: (product.availableInventory || 0) - parsedQuantity,
+        remainingQuantity: productPool.availablePackets - parsedQuantity,
       },
       { status: 201 }
     );
