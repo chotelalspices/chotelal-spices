@@ -168,7 +168,13 @@ export async function PATCH(
           boxesUsed: Math.max(0, parseInt(label.boxesUsed, 10) || 0),
           semiPackaged: !!label.semiPackaged,
         })).filter((label) => label.type)
-      : existingSession.sessionLabels;
+      : existingSession.sessionLabels.map((label) => ({
+          type: label.type,
+          quantity: label.quantity,
+          boxTypeId: label.boxTypeId,
+          boxesUsed: label.boxesUsed ?? 0,
+          semiPackaged: label.semiPackaged,
+        }));
 
     for (const nextProduct of nextProducts) {
       const oldProduct = currentProductMap.get(nextProduct.name);
