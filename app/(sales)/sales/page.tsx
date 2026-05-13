@@ -265,22 +265,19 @@ function MultiSelectFilter({
 // ─── Creatable combobox ───────────────────────────────────────────────────────
 
 const compactCalendarClassNames = {
+  root: 'relative',
+  months: 'block',
   month: 'space-y-2',
-  month_caption: 'relative flex h-7 items-center justify-center',
-  caption_label: 'text-xs font-semibold',
-  nav: 'absolute right-2 top-2 flex items-center gap-1',
-  button_previous: 'h-6 w-6 rounded-md border bg-transparent p-0 opacity-70 hover:opacity-100',
-  button_next: 'h-6 w-6 rounded-md border bg-transparent p-0 opacity-70 hover:opacity-100',
-  chevron: 'h-3.5 w-3.5',
+  month_caption: 'hidden',
   month_grid: 'w-full table-fixed border-collapse',
-  weekdays: 'border-b',
-  weekday: 'h-7 w-7 text-center text-[11px] font-normal text-muted-foreground',
+  weekdays: 'border-0',
+  weekday: 'h-7 text-center text-[11px] font-semibold text-muted-foreground',
   week: 'border-0',
-  day: 'h-7 w-7 p-0 text-center text-xs',
-  day_button: 'inline-flex h-7 w-7 items-center justify-center rounded-md p-0 text-xs font-normal transition-colors hover:bg-accent hover:text-accent-foreground',
+  day: 'h-8 p-0 text-center text-xs',
+  day_button: 'inline-flex h-8 w-8 items-center justify-center rounded-full p-0 text-xs font-medium text-foreground transition-colors hover:bg-muted',
   selected: '[&>button]:bg-primary [&>button]:text-primary-foreground [&>button]:hover:bg-primary [&>button]:hover:text-primary-foreground',
-  today: '[&>button]:bg-accent [&>button]:text-accent-foreground',
-  outside: '[&>button]:text-muted-foreground [&>button]:opacity-45',
+  today: '[&>button]:border [&>button]:border-primary [&>button]:text-primary',
+  outside: '[&>button]:invisible',
   disabled: '[&>button]:pointer-events-none [&>button]:text-muted-foreground [&>button]:opacity-35',
 };
 
@@ -297,11 +294,25 @@ function DateFilterButton({
   minDate?: string;
   className?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const selectedDate = value ? parseSalesCalendarDate(value) : undefined;
   const minCalendarDate = minDate ? parseSalesCalendarDate(minDate) : undefined;
+  const initialCalendarMonth = selectedDate ?? minCalendarDate ?? new Date();
+  const [displayMonth, setDisplayMonth] = useState(initialCalendarMonth);
+  const yearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const startYear = 2000;
+    const endYear = currentYear + 10;
+    return Array.from({ length: endYear - startYear + 1 }, (_, index) => startYear + index);
+  }, []);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) setDisplayMonth(selectedDate ?? minCalendarDate ?? new Date());
+  };
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -319,20 +330,65 @@ function DateFilterButton({
           </span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-2" align="start">
+      <PopoverContent className="w-[288px] border bg-white p-0 text-foreground shadow-xl" align="start">
+        <div className="flex items-center gap-2 border-b px-3 py-2">
+          <Select
+            value={String(displayMonth.getMonth())}
+            onValueChange={(nextMonth) => {
+              setDisplayMonth(new Date(displayMonth.getFullYear(), Number(nextMonth), 1));
+            }}
+          >
+            <SelectTrigger className="h-8 flex-1 text-xs font-medium">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MONTH_NAMES.map((monthName, index) => (
+                <SelectItem key={monthName} value={String(index)}>
+                  {monthName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={String(displayMonth.getFullYear())}
+            onValueChange={(nextYear) => {
+              setDisplayMonth(new Date(Number(nextYear), displayMonth.getMonth(), 1));
+            }}
+          >
+            <SelectTrigger className="h-8 w-24 text-xs font-medium">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-64">
+              {yearOptions.map((year) => (
+                <SelectItem key={year} value={String(year)}>
+                  {year}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <CalendarComponent
           mode="single"
+          hideNavigation
+          showOutsideDays={false}
           selected={selectedDate}
+          month={displayMonth}
+          onMonthChange={setDisplayMonth}
           onSelect={(date) => {
-            if (date) onChange(getSalesDateInputValue(date));
+            if (!date) return;
+            onChange(getSalesDateInputValue(date));
+            setOpen(false);
           }}
           defaultMonth={selectedDate ?? minCalendarDate ?? new Date()}
           disabled={minCalendarDate ? (date) => date < minCalendarDate : undefined}
-          className="w-fit rounded-lg border p-2"
+          formatters={{
+            formatWeekdayName: (date) => ['S', 'M', 'T', 'W', 'T', 'F', 'S'][date.getDay()],
+          }}
+          className="w-full rounded-none border-0 bg-white px-3 pb-3 pt-2"
           classNames={compactCalendarClassNames}
         />
         {value && (
-          <div className="mt-2 flex justify-end">
+          <div className="flex justify-end border-t px-3 py-2">
             <Button
               variant="ghost"
               size="sm"
