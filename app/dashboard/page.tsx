@@ -11,6 +11,7 @@ import {
   Boxes,
   Loader2,
   IndianRupee,
+  Download,
 } from 'lucide-react';
 import {
   Bar,
@@ -29,6 +30,7 @@ import {
 } from 'recharts';
 
 import { AppLayout } from '@/components/layout/AppLayout';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { QuickActions } from '@/components/dashboard/QuickActions';
@@ -42,6 +44,24 @@ const formatLakh = (amount: number): string => {
   if (amount >= 100000) {
     return `₹${(amount / 100000).toFixed(1)} L`;
   }
+  return formatCurrency(amount);
+};
+
+const formatPdfCurrency = (amount: number): string =>
+  `Rs. ${new Intl.NumberFormat('en-IN', {
+    maximumFractionDigits: 2,
+  }).format(amount)}`;
+
+const formatPdfNumber = (value: number): string =>
+  new Intl.NumberFormat('en-IN', {
+    maximumFractionDigits: 2,
+  }).format(value);
+
+const formatCompactCurrency = (amount: number): string => {
+  const absoluteAmount = Math.abs(amount);
+  if (absoluteAmount >= 10000000) return `${formatCurrency(amount / 10000000)} Cr`;
+  if (absoluteAmount >= 100000) return `${formatCurrency(amount / 100000)} L`;
+  if (absoluteAmount >= 1000) return `${formatCurrency(amount / 1000)}k`;
   return formatCurrency(amount);
 };
 
@@ -179,19 +199,19 @@ function ReportTooltip({
   if (!active || !payload?.length) return null;
 
   return (
-    <div className="rounded-md border bg-background px-3 py-2 text-xs shadow-md">
+    <div className="max-w-[280px] rounded-md border bg-background px-3 py-2 text-xs shadow-md">
       {label && <p className="mb-1 font-medium">{label}</p>}
       <div className="space-y-1">
         {payload.map((item) => (
-          <div key={item.name} className="flex items-center justify-between gap-4">
-            <span className="flex items-center gap-1.5 text-muted-foreground">
+          <div key={item.name} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+            <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
               <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: item.color }} />
-              {item.name}
+              <span className="truncate">{item.name}</span>
             </span>
-            <span className="font-medium">
+            <span className="shrink-0 font-medium">
               {valueType === 'currency' ||
                 (valueType === 'auto' &&
-                  ['revenue', 'profit', 'amount', 'received', 'outstanding'].some((term) =>
+                  ['profit', 'amount', 'received', 'outstanding'].some((term) =>
                     item.name?.toLowerCase().includes(term),
                   ))
                 ? formatCurrency(item.value ?? 0)
@@ -216,19 +236,21 @@ function PieReportCard({
   valueLabel?: string;
 }) {
   const total = data.reduce((sum, item) => sum + item.value, 0);
+  const formatLegendValue = (value: number) =>
+    valueLabel === 'Amount' ? formatCompactCurrency(value) : value.toLocaleString('en-IN');
 
   return (
-    <Card>
+    <Card className="min-w-0">
       <CardHeader className="pb-2">
         <CardTitle className="text-base">{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="min-w-0">
         {data.length === 0 || total <= 0 ? (
           <EmptyReport />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-[180px_1fr]">
-            <div className="h-[180px]">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-[160px_minmax(0,1fr)]">
+            <div className="h-[170px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Tooltip content={<ReportTooltip valueType={valueLabel === 'Amount' ? 'currency' : 'number'} />} />
@@ -236,8 +258,8 @@ function PieReportCard({
                     data={data}
                     dataKey="value"
                     nameKey="name"
-                    innerRadius={48}
-                    outerRadius={76}
+                    innerRadius={44}
+                    outerRadius={70}
                     paddingAngle={2}
                     strokeWidth={0}
                   >
@@ -248,15 +270,19 @@ function PieReportCard({
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="flex flex-col justify-center gap-2">
+            <div className="flex min-w-0 flex-col justify-center gap-2">
               {data.map((item) => (
-                <div key={item.name} className="flex items-center justify-between gap-3 text-sm">
-                  <span className="flex min-w-0 items-center gap-2">
+                <div
+                  key={item.name}
+                  className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-sm"
+                  title={`${item.name}: ${valueLabel === 'Amount' ? formatCurrency(item.value) : item.value.toLocaleString('en-IN')}`}
+                >
+                  <span className="flex min-w-0 items-center gap-2 overflow-hidden">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: item.fill }} />
                     <span className="truncate">{item.name}</span>
                   </span>
-                  <span className="shrink-0 font-medium">
-                    {valueLabel === 'Amount' ? formatCurrency(item.value) : item.value.toLocaleString('en-IN')}
+                  <span className="max-w-[86px] shrink-0 truncate text-right font-medium tabular-nums">
+                    {formatLegendValue(item.value)}
                   </span>
                 </div>
               ))}
@@ -293,6 +319,7 @@ export default function DashboardPage() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
   // Fetch dashboard data
   const fetchDashboardData = useCallback(async () => {
@@ -335,6 +362,154 @@ export default function DashboardPage() {
         return 'All time';
       default:
         return 'Period';
+    }
+  };
+
+  const handleDownloadPDF = async () => {
+    if (!dashboardData) return;
+
+    setIsDownloadingPdf(true);
+    try {
+      const jsPDF = (await import('jspdf')).default;
+      const { default: autoTable } = await import('jspdf-autotable');
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const report = dashboardData.reports;
+      const generatedDate = new Date();
+      const generatedDateLabel = generatedDate.toLocaleString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      let cursorY = 14;
+
+      const getFinalY = () =>
+        (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? cursorY;
+
+      const cleanCell = (value: string | number) => String(value).replace(/[–—]/g, '-');
+
+      const addSectionTitle = (title: string) => {
+        const nextY = getFinalY() + 8;
+        if (nextY > pageHeight - 22) {
+          doc.addPage();
+          cursorY = 14;
+        } else {
+          cursorY = nextY;
+        }
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.text(title, 14, cursorY);
+        cursorY += 3;
+      };
+
+      const addTable = (title: string, head: string[], body: Array<Array<string | number>>) => {
+        addSectionTitle(title);
+        autoTable(doc, {
+          startY: cursorY,
+          head: [head],
+          body: body.length > 0 ? body.map((row) => row.map(cleanCell)) : [['No data']],
+          margin: { left: 14, right: 14 },
+          theme: 'grid',
+          styles: {
+            fontSize: 8,
+            cellPadding: 2,
+            overflow: 'linebreak',
+            valign: 'middle',
+          },
+          headStyles: {
+            fillColor: [139, 74, 50],
+            textColor: [255, 255, 255],
+            fontStyle: 'bold',
+          },
+        });
+      };
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(16);
+      doc.text('Dashboard Report', 14, cursorY);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.text(`Range: ${getDateRangeLabel()} | Generated: ${generatedDateLabel}`, 14, cursorY + 6);
+      doc.text('Chotelal Spices', pageWidth - 14, cursorY + 6, { align: 'right' });
+      cursorY += 8;
+
+      addTable('Operations Overview', ['Metric', 'Value', 'Detail'], [
+        ['Low Stock', dashboardData.lowStockCount, `${dashboardData.outOfStockCount} out of stock`],
+        ['Production Today', `${formatPdfNumber(dashboardData.todayProduction.quantity)} kg`, `${dashboardData.todayProduction.batches} batches`],
+        ['Packaging Today', `${formatPdfNumber(dashboardData.todayPackaging.quantity)} kg`, `${dashboardData.todayPackaging.sessions} sessions`],
+        ['Sales Today', formatPdfCurrency(dashboardData.todaySales.revenue), `${formatPdfNumber(dashboardData.todaySales.quantity)} units`],
+        ['Packaging Loss', `${formatPdfNumber(dashboardData.packagingLoss)} kg`, getDateRangeLabel()],
+        ['Net Profit', formatPdfCurrency(dashboardData.profitSnapshot.profit), `Revenue: ${formatPdfCurrency(dashboardData.profitSnapshot.revenue)}`],
+        ['Raw Inventory Value', formatPdfCurrency(dashboardData.rawInventoryValue ?? 0), 'Cost x stock across materials'],
+        ['Label Inventory Value', formatPdfCurrency(dashboardData.labelInventoryValue ?? 0), 'Stock x cost per unit'],
+      ]);
+
+      addTable('Sales Summary', ['Metric', 'Value'], [
+        ['Sales Amount', formatPdfCurrency(report.salesSummary.revenue)],
+        ['Quantity', `${formatPdfNumber(report.salesSummary.quantity)} units`],
+        ['Client Records', formatPdfNumber(report.salesSummary.orders)],
+        ['Clients', formatPdfNumber(report.salesSummary.clients)],
+        ['Average Client Record', formatPdfCurrency(report.salesSummary.averageOrderValue)],
+        ['Received', formatPdfCurrency(report.salesSummary.received)],
+        ['Outstanding', formatPdfCurrency(report.salesSummary.outstanding)],
+      ]);
+
+      addTable('Operations Trend', ['Date', 'Profit', 'Production kg', 'Packaging kg'], report.operationsTrend.map((item) => [
+        item.label,
+        formatPdfCurrency(item.profit),
+        formatPdfNumber(item.productionQuantity),
+        formatPdfNumber(item.packagingQuantity),
+      ]));
+
+      addTable('Top Clients', ['Client', 'Amount', 'Quantity', 'Records'], report.topClients.map((item) => [
+        item.name,
+        formatPdfCurrency(item.value),
+        formatPdfNumber(item.quantity),
+        formatPdfNumber(item.orders),
+      ]));
+
+      addTable('Sales By Product', ['Product', 'Amount', 'Quantity'], report.productSales.map((item) => [
+        item.name,
+        formatPdfCurrency(item.value),
+        formatPdfNumber(item.quantity),
+      ]));
+
+      addTable('Collection', ['Status', 'Amount'], report.salesCollection.map((item) => [
+        item.name,
+        formatPdfCurrency(item.value),
+      ]));
+
+      addTable('Payment Status', ['Status', 'Amount'], report.paymentStatus.map((item) => [
+        item.name,
+        formatPdfCurrency(item.value),
+      ]));
+
+      addTable('Sales By City', ['City', 'Amount', 'Quantity'], report.salesByCity.map((item) => [
+        item.name,
+        formatPdfCurrency(item.value),
+        formatPdfNumber(item.quantity),
+      ]));
+
+      addTable('Sales By Salesman', ['Salesman', 'Amount', 'Quantity'], report.salesBySalesman.map((item) => [
+        item.name,
+        formatPdfCurrency(item.value),
+        formatPdfNumber(item.quantity),
+      ]));
+
+      addTable('Inventory Value', ['Inventory', 'Value'], report.inventoryValue.map((item) => [
+        item.name,
+        formatPdfCurrency(item.value),
+      ]));
+
+      doc.save(`dashboard-${dateRange}-${generatedDate.toISOString().slice(0, 10)}.pdf`);
+    } catch (downloadError) {
+      console.error('Failed to generate dashboard PDF:', downloadError);
+      window.alert('Failed to generate dashboard PDF.');
+    } finally {
+      setIsDownloadingPdf(false);
     }
   };
 
@@ -395,6 +570,20 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadPDF}
+              disabled={isDownloadingPdf || loading}
+              className="gap-2"
+            >
+              {isDownloadingPdf ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              Download PDF
+            </Button>
             <DateRangeFilter value={dateRange} onChange={(value) => setDateRange(value as DateRangeOption)} />
           </div>
         </div>
@@ -483,15 +672,15 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Operations Trend</CardTitle>
-              <CardDescription>Revenue, production, packaging, and profit by day</CardDescription>
+              <CardDescription>Production, packaging, and profit by day</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="min-w-0">
               {dashboardData.reports.operationsTrend.length === 0 ? (
                 <EmptyReport />
               ) : (
                 <div className="h-[300px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={dashboardData.reports.operationsTrend} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
+                    <ComposedChart data={dashboardData.reports.operationsTrend} margin={{ top: 10, right: 30, left: 6, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="label" tickLine={false} axisLine={false} minTickGap={24} />
                       <YAxis
@@ -499,6 +688,7 @@ export default function DashboardPage() {
                         tickLine={false}
                         axisLine={false}
                         width={72}
+                        tickMargin={8}
                         tickFormatter={(value) => `₹${Number(value) / 1000}k`}
                       />
                       <YAxis
@@ -506,17 +696,11 @@ export default function DashboardPage() {
                         orientation="right"
                         tickLine={false}
                         axisLine={false}
-                        width={44}
+                        width={58}
+                        tickMargin={8}
                       />
                       <Tooltip content={<ReportTooltip />} />
-                      <Legend />
-                      <Bar
-                        yAxisId="amount"
-                        dataKey="salesRevenue"
-                        name="Revenue"
-                        fill="#8b4a32"
-                        radius={[4, 4, 0, 0]}
-                      />
+                      <Legend wrapperStyle={{ paddingTop: 8 }} />
                       <Line
                         yAxisId="amount"
                         type="monotone"
