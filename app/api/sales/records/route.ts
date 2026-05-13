@@ -73,6 +73,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const city     = searchParams.get('city')     || null;
     const salesman = searchParams.get('salesman') || null;
+    const paymentRaw = searchParams.get('paymentRaw') === '1';
 
     // If city or salesman filter active, find matching clientNames from ClientMeta
     let filteredClientNames: string[] | null = null;
@@ -126,9 +127,9 @@ export async function GET(request: NextRequest) {
         discount: record.discount || 0,
         saleDate: record.saleDate.toISOString().split("T")[0],
         remarks: record.remarks,
-        paymentStatus: record.paymentStatus || "paid",
-        amountPaid: record.amountPaid ?? totalAmount,
-        amountDue: record.amountDue || 0,
+        paymentStatus: paymentRaw ? record.paymentStatus : record.paymentStatus || "paid",
+        amountPaid: paymentRaw ? record.amountPaid : record.amountPaid ?? totalAmount,
+        amountDue: paymentRaw ? record.amountDue : record.amountDue || 0,
         paymentNote: record.paymentNote || null,
         createdBy: record.createdBy?.fullName ?? null,
         createdAt: record.createdAt.toISOString(),

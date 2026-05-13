@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   Package,
@@ -57,6 +57,7 @@ import { Input } from "@/components/ui/input";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
 import { getStatusColor } from "@/data/packagingData";
+import { RecordPagination, usePaginatedRecords } from "@/components/ui/record-pagination";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -370,6 +371,26 @@ const PackagingSummary = () => {
     fetchBatch();
   }, [batchNumber, toast]);
 
+  const displaySessions = useMemo(
+    () =>
+      batch
+        ? [...batch.sessions]
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+            .filter((s) => {
+              const sessionType = getSessionType(s);
+              if (sessionType === "semi") return (s.semiPackaged ?? 0) > 0;
+              return (
+                s.totalPackagedWeight > 0 ||
+                (s.labels && s.labels.filter((l) => !l.semiPackaged).length > 0) ||
+                (s.courierBoxes && s.courierBoxes.length > 0)
+              );
+            })
+        : [],
+    [batch]
+  );
+  const sessionsPagination = usePaginatedRecords(displaySessions);
+  const paginatedSessions = sessionsPagination.paginatedRecords;
+
   const startEditingDate = (sessionId: string, currentDate: string) => {
     setEditingSessionId(sessionId);
     setEditedDate(new Date(currentDate).toISOString().split("T")[0]);
@@ -500,18 +521,6 @@ const PackagingSummary = () => {
     );
   }
 
-  const displaySessions = [...batch.sessions]
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    .filter((s) => {
-      const sessionType = getSessionType(s);
-      if (sessionType === "semi") return (s.semiPackaged ?? 0) > 0;
-      return (
-        s.totalPackagedWeight > 0 ||
-        (s.labels && s.labels.filter((l) => !l.semiPackaged).length > 0) ||
-        (s.courierBoxes && s.courierBoxes.length > 0)
-      );
-    });
-
   const summaryItems = [
     { label: "Total Produced", value: `${batch.producedQuantity.toFixed(2)} kg`, icon: Boxes, color: "bg-muted/50 text-foreground" },
     { label: "Total Packaged", value: `${batch.alreadyPackaged.toFixed(2)} kg`, icon: PackageCheck, color: "bg-green-100 text-black dark:bg-green-900/30 dark:text-black" },
@@ -627,7 +636,7 @@ const PackagingSummary = () => {
             ) : isMobile ? (
               /* ── Mobile cards ── */
               <div className="space-y-4">
-                {displaySessions.map((session) => {
+                {paginatedSessions.map((session) => {
                   const sessionType = getSessionType(session);
                   const config = SESSION_TYPE_CONFIG[sessionType];
                   return (
@@ -733,7 +742,7 @@ const PackagingSummary = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {displaySessions.map((session) => {
+                  {paginatedSessions.map((session) => {
                     const sessionType = getSessionType(session);
                     const config = SESSION_TYPE_CONFIG[sessionType];
 
@@ -917,6 +926,7 @@ const PackagingSummary = () => {
                 </TableBody>
               </Table>
             )}
+            <RecordPagination {...sessionsPagination} itemLabel="sessions" className="mt-4 px-0" />
           </CardContent>
         </Card>
 

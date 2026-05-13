@@ -58,6 +58,7 @@ import {
 import { formatDate } from "@/data/sampleData";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Formulation } from "@/data/formulationData";
+import { RecordPagination, usePaginatedRecords } from "@/components/ui/record-pagination";
 
 /* ================================================================
    TYPES
@@ -188,6 +189,10 @@ export default function ProductionPlanning() {
     Number(formData.plannedQuantity) > 0 &&
     Number(formData.numberOfLots) > 0 &&
     !!formData.plannedDate;
+  const stagedPlansPagination = usePaginatedRecords(stagedPlans);
+  const paginatedStagedPlans = stagedPlansPagination.paginatedRecords;
+  const savedPlansPagination = usePaginatedRecords(savedPlans);
+  const paginatedSavedPlans = savedPlansPagination.paginatedRecords;
 
   /* ================================================================
      HANDLERS — form
@@ -544,7 +549,7 @@ export default function ProductionPlanning() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {stagedPlans.map((plan) => (
+                    {paginatedStagedPlans.map((plan) => (
                       <TableRow key={plan.localId}>
                         <TableCell className="font-medium">{plan.formulationName}</TableCell>
                         <TableCell className="text-right text-sm">
@@ -569,6 +574,7 @@ export default function ProductionPlanning() {
                   </TableBody>
                 </Table>
               )}
+              <RecordPagination {...stagedPlansPagination} itemLabel="plans" className="px-4" />
             </CardContent>
           </Card>
         </div>
@@ -603,7 +609,7 @@ export default function ProductionPlanning() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  savedPlans.map((plan) => (
+                  paginatedSavedPlans.map((plan) => (
                     <TableRow key={plan.id}>
                       <TableCell>{plan.formulationName}</TableCell>
                       <TableCell className="text-right">
@@ -625,6 +631,7 @@ export default function ProductionPlanning() {
                 )}
               </TableBody>
             </Table>
+            <RecordPagination {...savedPlansPagination} itemLabel="plans" />
           </CardContent>
         </Card>
       </div>

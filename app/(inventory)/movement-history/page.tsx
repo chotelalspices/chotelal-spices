@@ -41,6 +41,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 
 const reasonLabels: Record<string, string> = {
   purchase: 'Purchase',
@@ -108,6 +109,8 @@ export default function MovementHistory() {
     };
     fetchStockMovements();
   }, [materialFilter, reasonFilter, dateFrom, dateTo]);
+  const movementsPagination = usePaginatedRecords(stockMovements);
+  const paginatedMovements = movementsPagination.paginatedRecords;
 
   // ── Early returns AFTER all hooks ────────────────────────────────────────
 
@@ -360,13 +363,14 @@ export default function MovementHistory() {
       {!dataLoading && !error && stockMovements.length > 0 && (
         <>
           <div className="hidden md:block">
-            <MovementTable movements={stockMovements} />
+            <MovementTable movements={paginatedMovements} />
           </div>
           <div className="md:hidden space-y-3">
-            {stockMovements.map(movement => (
+            {paginatedMovements.map(movement => (
               <MovementCard key={movement.id} movement={movement} />
             ))}
           </div>
+          <RecordPagination {...movementsPagination} itemLabel="records" className="px-0" />
         </>
       )}
 

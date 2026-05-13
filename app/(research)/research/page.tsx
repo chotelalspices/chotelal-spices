@@ -26,6 +26,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/data/sampleData';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useAuth } from '@/hooks/use-auth';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 
 export default function ResearchList() {
   const router = useRouter();
@@ -69,6 +70,8 @@ export default function ResearchList() {
     const matchesStatus = statusFilter === 'all' || research.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
+  const researchPagination = usePaginatedRecords(filteredFormulations);
+  const paginatedFormulations = researchPagination.paginatedRecords;
 
   const pendingCount  = researchFormulations.filter((r) => r.status === 'pending').length;
   const approvedCount = researchFormulations.filter((r) => r.status === 'approved').length;
@@ -337,7 +340,7 @@ export default function ResearchList() {
           </div>
         ) : isMobile ? (
           <div className="space-y-3">
-            {filteredFormulations.map((research) => (
+            {paginatedFormulations.map((research) => (
               <Card key={research.id}>
                 <CardContent className="p-4">
                   <div className="flex justify-between items-start mb-3">
@@ -373,7 +376,7 @@ export default function ResearchList() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredFormulations.map((research) => (
+                {paginatedFormulations.map((research) => (
                   <TableRow key={research.id}>
                     <TableCell className="font-medium">{research.tempName}</TableCell>
                     <TableCell>{research.researcher}</TableCell>
@@ -394,6 +397,7 @@ export default function ResearchList() {
             </Table>
           </Card>
         )}
+        {!loading && <RecordPagination {...researchPagination} itemLabel="research records" className="px-0" />}
 
         {!loading && filteredFormulations.length === 0 && (
           <div className="text-center py-12">

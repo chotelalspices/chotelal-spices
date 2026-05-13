@@ -33,6 +33,7 @@ import { ProductionBatch, formatCurrency } from '@/data/productionData';
 import { formatDate, formatDateTime } from '@/data/sampleData';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useToast } from '@/hooks/use-toast';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 
 export default function ProductionList() {
   const router = useRouter();
@@ -84,6 +85,8 @@ export default function ProductionList() {
     const matchesEndDate = !endDate || batchDate <= new Date(endDate + 'T23:59:59');
     return matchesSearch && matchesStartDate && matchesEndDate;
   });
+  const batchesPagination = usePaginatedRecords(filteredBatches);
+  const paginatedBatches = batchesPagination.paginatedRecords;
 
   const totalBatches = filteredBatches.length;
   const confirmedBatches = filteredBatches.filter(b => b.status === 'confirmed').length;
@@ -327,7 +330,7 @@ export default function ProductionList() {
         {/* List */}
         {isMobile ? (
           <div className="space-y-3">
-            {filteredBatches.map(batch => (
+            {paginatedBatches.map(batch => (
               <Card key={batch.id} className={batch.status === 'draft' ? 'border-amber-200' : ''}>
                 <CardContent className="p-4">
                   <div className="flex justify-between mb-3">
@@ -414,7 +417,7 @@ export default function ProductionList() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredBatches.map(batch => (
+                {paginatedBatches.map(batch => (
                   <TableRow key={batch.id} className={batch.status === 'draft' ? 'bg-amber-50/40' : ''}>
                     <TableCell className="font-mono text-primary">{batch.batchNumber}</TableCell>
                     <TableCell>{batch.formulationName}</TableCell>
@@ -474,6 +477,7 @@ export default function ProductionList() {
             </Table>
           </Card>
         )}
+        <RecordPagination {...batchesPagination} itemLabel="batches" className="px-0" />
 
         {filteredBatches.length === 0 && (
           <div className="text-center py-12">

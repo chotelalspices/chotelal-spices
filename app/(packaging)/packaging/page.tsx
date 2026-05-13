@@ -21,6 +21,7 @@ import {
 import { cn } from "@/libs/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
+import { RecordPagination, usePaginatedRecords } from "@/components/ui/record-pagination";
 
 interface PackagingBatch {
   batchNumber: string;
@@ -32,7 +33,7 @@ interface PackagingBatch {
   remainingQuantity: number;
   semiPackaged: number;
   status: "Not Started" | "Partial" | "Semi Packaged" | "Completed";
-  sessions: any[];
+  sessions: unknown[];
   packagedProducts?: Array<{ name: string; packets: number; totalWeight: number }>;
 }
 
@@ -44,6 +45,11 @@ const formatDisplayDate = (dateString: string | null) => {
   const parsed = new Date(dateString);
   if (Number.isNaN(parsed.getTime())) return dateString;
   return parsed.toLocaleDateString("en-GB");
+};
+
+const getStartOfCurrentMonth = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 };
 
 const getMatchingPackagedTotal = (batch: PackagingBatch, query: string) => {
@@ -93,7 +99,7 @@ const PackagingList = () => {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const [searchQuery, setSearchQuery]       = useState("");
-  const [startDate, setStartDate]           = useState("");
+  const [startDate, setStartDate]           = useState(getStartOfCurrentMonth);
   const [endDate, setEndDate]               = useState("");
   const [selectedStatuses, setSelectedStatuses] = useState<StatusType[]>([]);
   const [dropdownOpen, setDropdownOpen]     = useState(false);
@@ -160,6 +166,8 @@ const PackagingList = () => {
 
     return matchesSearch && matchesStatus && matchesStartDate && matchesEndDate;
   });
+  const batchesPagination = usePaginatedRecords(filteredBatches);
+  const paginatedBatches = batchesPagination.paginatedRecords;
   const searchedPackagedTotal = searchQuery.trim()
     ? filteredBatches.reduce(
       (sum, batch) => {
@@ -437,7 +445,7 @@ const PackagingList = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredBatches.map((batch) => (
+                {paginatedBatches.map((batch) => (
                   <TableRow key={batch.batchNumber}>
                     <TableCell className="font-medium">{batch.batchNumber}</TableCell>
                     <TableCell>{batch.productName}</TableCell>
@@ -488,13 +496,14 @@ const PackagingList = () => {
                 )}
               </TableBody>
             </Table>
+            <RecordPagination {...batchesPagination} itemLabel="batches" />
           </Card>
         )}
 
         {/* ── Mobile cards ── */}
         {isMobile && (
           <div className="space-y-3">
-            {filteredBatches.map((batch) => (
+            {paginatedBatches.map((batch) => (
               <Card key={batch.batchNumber}>
                 <CardContent className="p-4">
                   <div className="flex justify-between mb-3">
@@ -580,6 +589,7 @@ const PackagingList = () => {
                 </p>
               </div>
             )}
+            <RecordPagination {...batchesPagination} itemLabel="batches" className="px-0" />
           </div>
         )}
 

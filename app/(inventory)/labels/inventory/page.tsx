@@ -34,6 +34,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 
 interface Label {
   id: string;
@@ -108,6 +109,8 @@ export default function LabelInventoryDashboard() {
       return true;
     });
   }, [labels, searchQuery, statusFilter, stockFilter]);
+  const labelsPagination = usePaginatedRecords(filteredLabels);
+  const paginatedLabels = labelsPagination.paginatedRecords;
 
   const hasActiveFilters = statusFilter !== 'all' || stockFilter !== 'all';
   const clearFilters = () => {
@@ -347,15 +350,16 @@ export default function LabelInventoryDashboard() {
 
       {/* Desktop Table */}
       <div className="hidden md:block">
-        <LabelTable labels={filteredLabels} />
+        <LabelTable labels={paginatedLabels} />
       </div>
 
       {/* Mobile Cards */}
       <div className="md:hidden space-y-3">
-        {filteredLabels.map((label) => (
+        {paginatedLabels.map((label) => (
           <LabelCard key={label.id} label={label} />
         ))}
       </div>
+      <RecordPagination {...labelsPagination} itemLabel="labels" className="mt-4 px-0" />
 
       {/* Empty State */}
       {filteredLabels.length === 0 && (

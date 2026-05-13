@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -70,6 +71,8 @@ export default function FormulationProducts() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const productsPagination = usePaginatedRecords(products);
+  const paginatedProducts = productsPagination.paginatedRecords;
 
   useEffect(() => {
     const fetchData = async () => {
@@ -234,7 +237,7 @@ export default function FormulationProducts() {
                 </TableHeader>
 
                 <TableBody>
-                  {products.map((product) => (
+                  {paginatedProducts.map((product) => (
                     <TableRow key={product.id}>
                       <TableCell className="font-medium">
                         {product.name}
@@ -356,6 +359,7 @@ export default function FormulationProducts() {
                 </TableBody>
               </Table>
             )}
+            <RecordPagination {...productsPagination} itemLabel="products" className="mt-4 px-0" />
           </CardContent>
         </Card>
       </div>

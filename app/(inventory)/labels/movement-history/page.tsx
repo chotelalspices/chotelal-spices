@@ -40,6 +40,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 
 interface LabelItem {
   id: string;
@@ -121,6 +122,8 @@ export default function LabelMovementHistoryPage() {
     setDateFrom('');
     setDateTo('');
   };
+  const movementsPagination = usePaginatedRecords(movements);
+  const paginatedMovements = movementsPagination.paginatedRecords;
 
   return (
     <AppLayout>
@@ -354,13 +357,14 @@ export default function LabelMovementHistoryPage() {
       {!loading && !error && movements.length > 0 && (
         <>
           <div className="hidden md:block">
-            <LabelMovementTable movements={movements} />
+            <LabelMovementTable movements={paginatedMovements} />
           </div>
           <div className="md:hidden space-y-3">
-            {movements.map((movement) => (
+            {paginatedMovements.map((movement) => (
               <LabelMovementCard key={movement.id} movement={movement} />
             ))}
           </div>
+          <RecordPagination {...movementsPagination} itemLabel="records" className="px-0" />
         </>
       )}
 

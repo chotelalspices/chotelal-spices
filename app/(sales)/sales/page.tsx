@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
@@ -32,12 +32,16 @@ import {
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger,
 } from '@/components/ui/sheet';
+import { Calendar as CalendarComponent } from '@/components/ui/calendar';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 import {
   Plus, Upload, Filter, TrendingUp, IndianRupee, Package,
   Pencil, Trash2, Loader2, User, CheckCircle2, ArrowUpRight,
   ArrowDownRight, ChevronDown, ChevronRight, X, Check, ChevronsUpDown,
-  Download, Settings2, Save, BarChart3, History,
+  Download, Settings2, Save, BarChart3, History, CreditCard, MapPin,
+  BriefcaseBusiness, type LucideIcon,
 } from 'lucide-react';
 
 import { StatCard } from '@/components/inventory/StatCard';
@@ -48,8 +52,20 @@ import {
   calculateSalesSummary, formatCurrency, formatSaleDate, type SalesRecord,
 } from '@/data/salesData';
 
-const SHOW_PROFIT_TO_STAFF = true;
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+type ClientNameOrder = 'latest' | 'az' | 'za';
+type PaymentStatus = 'paid' | 'unpaid' | 'partial';
+const CLIENT_NAME_ORDER_LABELS: Record<ClientNameOrder, string> = {
+  latest: 'Default',
+  az: 'A-Z',
+  za: 'Z-A',
+};
+const PAYMENT_STATUS_OPTIONS = ['Paid', 'Unpaid', 'Partially Paid'];
+const PAYMENT_STATUS_VALUES: Record<string, PaymentStatus> = {
+  Paid: 'paid',
+  Unpaid: 'unpaid',
+  'Partially Paid': 'partial',
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,13 +85,67 @@ interface ClientGroup {
   records: SalesRecord[];
   groupTotal: number;
   groupProfit: number;
-  paymentStatus?: 'paid' | 'unpaid' | 'partial';
+  paymentStatus?: PaymentStatus;
   amountPaid?: number;
   amountDue?: number;
   paymentNote?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function normalizeRecordPayment(record: SalesRecord): {
+  paymentStatus: PaymentStatus;
+  amountPaid: number;
+  amountDue: number;
+} {
+  const total = record.totalAmount ?? 0;
+  const explicitPaid = typeof record.amountPaid === 'number' ? record.amountPaid : undefined;
+  const amountPaid = Math.min(
+    Math.max(record.paymentStatus === 'paid' ? (explicitPaid ?? total) : (explicitPaid ?? 0), 0),
+    total,
+  );
+  const amountDue = Math.max(0, total - amountPaid);
+
+  return {
+    paymentStatus: total <= 0 || amountDue <= 0 ? 'paid' : amountPaid > 0 ? 'partial' : 'unpaid',
+    amountPaid,
+    amountDue,
+  };
+}
+
+function parseSalesCalendarDate(dateString: string): Date {
+  const [datePart] = dateString.split('T');
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
+  if (!match) return new Date(dateString);
+
+  const [, year, month, day] = match;
+  return new Date(Number(year), Number(month) - 1, Number(day));
+}
+
+function getDateFilterBoundary(dateString: string, endOfDay = false): Date {
+  const date = parseSalesCalendarDate(dateString);
+  date.setHours(endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
+  return date;
+}
+
+function getSalesDateKey(dateString: string): string {
+  return dateString.split('T')[0];
+}
+
+function getSalesDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatSalesDateFilterLabel(dateString: string): string {
+  return parseSalesCalendarDate(dateString).toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
 
 function groupByClient(records: SalesRecord[]): ClientGroup[] {
   const map = new Map<string, ClientGroup>();
@@ -91,7 +161,7 @@ function groupByClient(records: SalesRecord[]): ClientGroup[] {
         records: [],
         groupTotal: 0,
         groupProfit: 0,
-        paymentStatus: 'paid',
+        paymentStatus: 'unpaid',
         amountPaid: 0,
         amountDue: 0,
         paymentNote: record.paymentNote,
@@ -101,22 +171,29 @@ function groupByClient(records: SalesRecord[]): ClientGroup[] {
     g.records.push(record);
     g.groupTotal += record.totalAmount ?? 0;
     g.groupProfit += record.profit ?? 0;
-    g.amountPaid = (g.amountPaid ?? 0) + (record.amountPaid ?? record.totalAmount ?? 0);
-    g.amountDue = (g.amountDue ?? 0) + (record.amountDue ?? 0);
-    const s = record.paymentStatus ?? 'paid';
-    if (s === 'unpaid') g.paymentStatus = 'unpaid';
-    else if (s === 'partial' && g.paymentStatus !== 'unpaid') g.paymentStatus = 'partial';
+    const payment = normalizeRecordPayment(record);
+    g.amountPaid = (g.amountPaid ?? 0) + payment.amountPaid;
+    g.amountDue = (g.amountDue ?? 0) + payment.amountDue;
   });
-  return Array.from(map.values());
+  return Array.from(map.values()).map((group) => {
+    const amountPaid = Number((group.amountPaid ?? 0).toFixed(2));
+    const amountDue = Number(Math.max(0, group.groupTotal - amountPaid).toFixed(2));
+    return {
+      ...group,
+      amountPaid,
+      amountDue,
+      paymentStatus: group.groupTotal <= 0 || amountDue <= 0 ? 'paid' : amountPaid > 0 ? 'partial' : 'unpaid',
+    };
+  });
 }
 
 // ─── Multi-select filter ──────────────────────────────────────────────────────
 
 function MultiSelectFilter({
-  label, values, onChange, options, placeholder,
+  label, values, onChange, options, placeholder, className, icon: Icon, iconOnly = false,
 }: {
   label: string; values: string[]; onChange: (v: string[]) => void;
-  options: string[]; placeholder: string;
+  options: string[]; placeholder: string; className?: string; icon?: LucideIcon; iconOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const toggle = (opt: string) =>
@@ -128,9 +205,28 @@ function MultiSelectFilter({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button variant="outline" role="combobox"
-          className={cn('justify-between font-normal', values.length > 0 && 'border-primary text-primary')}>
-          <span className="truncate max-w-[160px]">{displayLabel}</span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          aria-label={label}
+          title={label}
+          className={cn(
+            iconOnly ? 'relative h-9 w-9 justify-center p-0' : 'justify-between font-normal min-w-0',
+            className,
+            values.length > 0 && 'border-primary text-primary',
+          )}>
+          {iconOnly && Icon ? (
+            <>
+              <Icon className="h-4 w-4" />
+              {values.length > 0 && (
+                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none text-primary-foreground">
+                  {values.length}
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="truncate max-w-[160px]">{displayLabel}</span>
+              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            </>
+          )}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[240px] p-0" align="start">
@@ -168,6 +264,129 @@ function MultiSelectFilter({
 
 // ─── Creatable combobox ───────────────────────────────────────────────────────
 
+const compactCalendarClassNames = {
+  month: 'space-y-2',
+  month_caption: 'relative flex h-7 items-center justify-center',
+  caption_label: 'text-xs font-semibold',
+  nav: 'absolute right-2 top-2 flex items-center gap-1',
+  button_previous: 'h-6 w-6 rounded-md border bg-transparent p-0 opacity-70 hover:opacity-100',
+  button_next: 'h-6 w-6 rounded-md border bg-transparent p-0 opacity-70 hover:opacity-100',
+  chevron: 'h-3.5 w-3.5',
+  month_grid: 'w-full table-fixed border-collapse',
+  weekdays: 'border-b',
+  weekday: 'h-7 w-7 text-center text-[11px] font-normal text-muted-foreground',
+  week: 'border-0',
+  day: 'h-7 w-7 p-0 text-center text-xs',
+  day_button: 'inline-flex h-7 w-7 items-center justify-center rounded-md p-0 text-xs font-normal transition-colors hover:bg-accent hover:text-accent-foreground',
+  selected: '[&>button]:bg-primary [&>button]:text-primary-foreground [&>button]:hover:bg-primary [&>button]:hover:text-primary-foreground',
+  today: '[&>button]:bg-accent [&>button]:text-accent-foreground',
+  outside: '[&>button]:text-muted-foreground [&>button]:opacity-45',
+  disabled: '[&>button]:pointer-events-none [&>button]:text-muted-foreground [&>button]:opacity-35',
+};
+
+function DateFilterButton({
+  label,
+  value,
+  onChange,
+  minDate,
+  className,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  minDate?: string;
+  className?: string;
+}) {
+  const selectedDate = value ? parseSalesCalendarDate(value) : undefined;
+  const minCalendarDate = minDate ? parseSalesCalendarDate(minDate) : undefined;
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          className={cn(
+            'h-9 min-w-0 justify-start px-2 text-left font-normal',
+            value && 'border-primary text-primary',
+            className,
+          )}
+        >
+          <span className="min-w-0 leading-none">
+            <span className="block text-[10px] font-medium uppercase text-muted-foreground">{label}</span>
+            <span className="mt-0.5 block truncate text-xs font-semibold">
+              {value ? formatSalesDateFilterLabel(value) : 'Select date'}
+            </span>
+          </span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-2" align="start">
+        <CalendarComponent
+          mode="single"
+          selected={selectedDate}
+          onSelect={(date) => {
+            if (date) onChange(getSalesDateInputValue(date));
+          }}
+          defaultMonth={selectedDate ?? minCalendarDate ?? new Date()}
+          disabled={minCalendarDate ? (date) => date < minCalendarDate : undefined}
+          className="w-fit rounded-lg border p-2"
+          classNames={compactCalendarClassNames}
+        />
+        {value && (
+          <div className="mt-2 flex justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              onClick={() => onChange('')}
+            >
+              Clear
+            </Button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function DateRangeCalendarFilter({
+  startDate,
+  endDate,
+  onStartDateChange,
+  onEndDateChange,
+  inline = false,
+}: {
+  startDate: string;
+  endDate: string;
+  onStartDateChange: (value: string) => void;
+  onEndDateChange: (value: string) => void;
+  inline?: boolean;
+}) {
+  const setStartDateValue = (value: string) => {
+    onStartDateChange(value);
+    if (value && endDate && parseSalesCalendarDate(endDate) < parseSalesCalendarDate(value)) {
+      onEndDateChange('');
+    }
+  };
+
+  return (
+    <div className={cn(inline ? 'flex items-center gap-1.5' : 'grid grid-cols-2 gap-2')}>
+      <DateFilterButton
+        label="From"
+        value={startDate}
+        onChange={setStartDateValue}
+        className={inline ? 'w-[116px]' : 'w-full'}
+      />
+      <DateFilterButton
+        label="To"
+        value={endDate}
+        onChange={onEndDateChange}
+        minDate={startDate}
+        className={inline ? 'w-[116px]' : 'w-full'}
+      />
+    </div>
+  );
+}
+
 function CreatableCombobox({
   value, onChange, options, placeholder,
 }: {
@@ -175,11 +394,16 @@ function CreatableCombobox({
 }) {
   const [open, setOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
-  useEffect(() => { if (!value) setInputValue(''); }, [value]);
   const filtered = options.filter((o) => o.toLowerCase().includes(inputValue.toLowerCase()));
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setInputValue('');
+      }}
+    >
       <PopoverTrigger asChild>
         <Button variant="outline" role="combobox" className="w-full justify-between font-normal min-w-0">
           <span className="truncate">{value || placeholder}</span>
@@ -196,7 +420,7 @@ function CreatableCombobox({
           <CommandList className="max-h-[180px]">
             {filtered.length === 0 && inputValue && (
               <div className="px-3 py-2 text-sm text-muted-foreground">
-                Press Enter to use "<strong>{inputValue}</strong>"
+                Press Enter to use &quot;<strong>{inputValue}</strong>&quot;
               </div>
             )}
             <CommandGroup>
@@ -251,17 +475,18 @@ function ClientCombobox({
 // ─── Collapsible client row ───────────────────────────────────────────────────
 
 function ClientGroupRow({
-  group, colSpan, isAdmin, onPaymentClick, handleDeleteSale, router,
+  group, colSpan, isAdmin, onPaymentClick, handleDeleteSale, handleDeleteGroup, router,
 }: {
   group: ClientGroup; colSpan: number; isAdmin: boolean;
   onPaymentClick: (group: ClientGroup) => void;
   handleDeleteSale: (id: string) => void;
+  handleDeleteGroup: (group: ClientGroup) => void;
   router: ReturnType<typeof useRouter>;
 }) {
   const [open, setOpen] = useState(false);
 
   const paymentBadge = (() => {
-    const status = group.paymentStatus || 'paid';
+    const status = group.paymentStatus || 'unpaid';
     let cls = ''; let label = '';
     if (status === 'paid') {
       cls = 'bg-green-100 text-green-800 border-green-300';
@@ -272,7 +497,7 @@ function ClientGroupRow({
     } else {
       cls = 'bg-orange-100 text-orange-800 border-orange-300';
       const balance = Math.max(0, group.groupTotal - (group.amountPaid ?? 0));
-      label = `BALANCE ${formatCurrency(balance)}`;
+      label = `PARTIAL ${formatCurrency(balance)}`;
     }
     return (
       <Badge
@@ -316,6 +541,33 @@ function ClientGroupRow({
                 {group.records.length} item{group.records.length !== 1 ? 's' : ''}
               </Badge>
               <span className="font-semibold text-sm">{formatCurrency(group.groupTotal)}</span>
+              {isAdmin && (
+                <div onClick={(e) => e.stopPropagation()}>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Client Record</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Delete all {group.records.length} item{group.records.length !== 1 ? 's' : ''} for <strong>{group.clientName}</strong>? Quantity will be restored.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => handleDeleteGroup(group)}
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              )}
             </div>
           </div>
         </TableCell>
@@ -353,7 +605,7 @@ function ClientGroupRow({
                     {formatCurrency(productionCostTotal)}
                   </TableCell>
                 )}
-                {SHOW_PROFIT_TO_STAFF && (
+                {isAdmin && (
                   <TableCell className="text-right text-sm">
                     {isFree ? (
                       <span className="text-muted-foreground text-xs">N/A</span>
@@ -405,18 +657,22 @@ function ClientGroupRow({
             <TableCell colSpan={5} className="pl-14 py-1.5 text-xs text-muted-foreground">
               {group.records.length} item{group.records.length !== 1 ? 's' : ''} for {group.clientName}
             </TableCell>
-            <TableCell className="text-right font-semibold text-sm py-1.5">{formatCurrency(group.groupTotal)}</TableCell>
-            <TableCell className="text-right text-xs text-muted-foreground py-1.5">
-              {formatCurrency(group.records.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}
-            </TableCell>
-            {SHOW_PROFIT_TO_STAFF && (
+            {isAdmin && (
+              <TableCell className="text-right font-semibold text-sm py-1.5">{formatCurrency(group.groupTotal)}</TableCell>
+            )}
+            {isAdmin && (
+              <TableCell className="text-right text-xs text-muted-foreground py-1.5">
+                {formatCurrency(group.records.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}
+              </TableCell>
+            )}
+            {isAdmin && (
               <TableCell className="text-right py-1.5">
                 <span className={`text-xs font-semibold ${group.groupProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {formatCurrency(group.groupProfit)}
                 </span>
               </TableCell>
             )}
-            <TableCell colSpan={isAdmin ? 1 : 0} />
+            {isAdmin && <TableCell />}
           </TableRow>
         </>
       )}
@@ -441,6 +697,8 @@ export default function SalesSummary() {
   // ── Other filters ─────────────────────────────────────────────────────────
   const [productFilters, setProductFilters] = useState<string[]>([]);
   const [clientFilters, setClientFilters] = useState<string[]>([]);
+  const [clientNameOrder, setClientNameOrder] = useState<ClientNameOrder>('latest');
+  const [paymentStatusFilters, setPaymentStatusFilters] = useState<string[]>([]);
   const [cityFilters, setCityFilters] = useState<string[]>([]);
   const [salesmanFilters, setSalesmanFilters] = useState<string[]>([]);
   const [startDate, setStartDate] = useState('');
@@ -469,6 +727,7 @@ export default function SalesSummary() {
     try {
       setLoading(true);
       const params = new URLSearchParams();
+      params.set('paymentRaw', '1');
       if (cityFilters.length === 1) params.set('city', cityFilters[0]);
       if (salesmanFilters.length === 1) params.set('salesman', salesmanFilters[0]);
       const res = await fetch(`/api/sales/records?${params.toString()}`);
@@ -494,7 +753,7 @@ export default function SalesSummary() {
   // ── Available years ───────────────────────────────────────────────────────
   const availableYears = useMemo(() => {
     const years = new Set<number>();
-    salesRecords.forEach((r) => years.add(new Date(r.saleDate).getFullYear()));
+    salesRecords.forEach((r) => years.add(parseSalesCalendarDate(r.saleDate).getFullYear()));
     return Array.from(years).sort((a, b) => b - a);
   }, [salesRecords]);
 
@@ -523,8 +782,11 @@ export default function SalesSummary() {
 
   // ── Apply all filters ─────────────────────────────────────────────────────
   const filteredRecords = useMemo(() => {
+    const startBoundary = startDate ? getDateFilterBoundary(startDate) : null;
+    const endBoundary = endDate ? getDateFilterBoundary(endDate, true) : null;
+
     return salesRecords.filter((r) => {
-      const d = new Date(r.saleDate);
+      const d = parseSalesCalendarDate(r.saleDate);
       if (selectedYears.length > 0 && !selectedYears.includes(d.getFullYear())) return false;
       if (selectedMonths.length > 0 && !selectedMonths.includes(d.getMonth())) return false;
       if (productFilters.length > 0 && !productFilters.includes(r.productName)) return false;
@@ -537,8 +799,8 @@ export default function SalesSummary() {
         const meta = clientMetaMap.get(r.clientName?.trim() ?? '');
         if (!meta?.salesman || !salesmanFilters.includes(meta.salesman)) return false;
       }
-      if (startDate && d < new Date(startDate)) return false;
-      if (endDate && d > new Date(endDate)) return false;
+      if (startBoundary && d < startBoundary) return false;
+      if (endBoundary && d > endBoundary) return false;
       return true;
     });
   }, [
@@ -547,37 +809,100 @@ export default function SalesSummary() {
     startDate, endDate, clientMetaMap,
   ]);
 
-  const clientGroups = useMemo(() => groupByClient(filteredRecords), [filteredRecords]);
+  const clientGroups = useMemo(() => {
+    let groups = groupByClient(filteredRecords);
+    if (paymentStatusFilters.length > 0) {
+      const selectedStatuses = new Set(paymentStatusFilters.map((status) => PAYMENT_STATUS_VALUES[status]));
+      groups = groups.filter((group) => selectedStatuses.has(group.paymentStatus ?? 'unpaid'));
+    }
+    if (clientNameOrder === 'latest') return groups;
+
+    return [...groups].sort((a, b) => {
+      const comparison = a.clientName.localeCompare(b.clientName, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      });
+      return clientNameOrder === 'az' ? comparison : -comparison;
+    });
+  }, [filteredRecords, clientNameOrder, paymentStatusFilters]);
+  const clientGroupsPagination = usePaginatedRecords(clientGroups);
+  const paginatedClientGroups = clientGroupsPagination.paginatedRecords;
+  const pageRecords = useMemo(() => paginatedClientGroups.flatMap((g) => g.records), [paginatedClientGroups]);
+  const pageSummary = useMemo(() => calculateSalesSummary(pageRecords), [pageRecords]);
   const allRecords = useMemo(() => clientGroups.flatMap((g) => g.records), [clientGroups]);
   const summary = useMemo(() => calculateSalesSummary(allRecords), [allRecords]);
 
   // ── Average revenue ───────────────────────────────────────────────────────
   const { avgRevenue, avgLabel } = useMemo(() => {
     if (selectedMonths.length === 1 && selectedYears.length <= 1) {
-      const days = new Set(filteredRecords.map((r) => r.saleDate.split('T')[0]));
+      const days = new Set(allRecords.map((r) => getSalesDateKey(r.saleDate)));
       const count = days.size;
       return { avgRevenue: count > 0 ? summary.totalRevenue / count : 0, avgLabel: 'Avg / Day' };
     }
     const months = new Set(
-      filteredRecords.map((r) => {
-        const d = new Date(r.saleDate);
+      allRecords.map((r) => {
+        const d = parseSalesCalendarDate(r.saleDate);
         return `${d.getFullYear()}-${d.getMonth()}`;
       }),
     );
     const count = months.size;
     return { avgRevenue: count > 0 ? summary.totalRevenue / count : 0, avgLabel: 'Avg / Month' };
-  }, [filteredRecords, summary.totalRevenue, selectedMonths, selectedYears]);
+  }, [allRecords, summary.totalRevenue, selectedMonths, selectedYears]);
 
   const hasActiveFilters =
+    selectedMonths.length > 0 || selectedYears.length > 0 ||
     productFilters.length > 0 || clientFilters.length > 0 ||
     cityFilters.length > 0 || salesmanFilters.length > 0 ||
+    paymentStatusFilters.length > 0 ||
+    clientNameOrder !== 'latest' ||
     !!startDate || !!endDate;
 
   const clearFilters = () => {
     setProductFilters([]); setClientFilters([]);
+    setClientNameOrder('latest');
+    setSelectedMonths([]); setSelectedYears([]);
+    setPaymentStatusFilters([]);
     setCityFilters([]); setSalesmanFilters([]);
     setStartDate(''); setEndDate(''); setFilterOpen(false);
   };
+
+  const activeFilterChips: Array<{ key: string; label: string; onRemove: () => void }> = [
+    ...clientFilters.map((value) => ({
+      key: `client-${value}`,
+      label: `Client: ${value}`,
+      onRemove: () => setClientFilters((prev) => prev.filter((item) => item !== value)),
+    })),
+    ...(clientNameOrder !== 'latest'
+      ? [{
+        key: 'client-order',
+        label: `Order: ${CLIENT_NAME_ORDER_LABELS[clientNameOrder]}`,
+        onRemove: () => setClientNameOrder('latest'),
+      }]
+      : []),
+    ...paymentStatusFilters.map((value) => ({
+      key: `payment-${value}`,
+      label: `Payment: ${value}`,
+      onRemove: () => setPaymentStatusFilters((prev) => prev.filter((item) => item !== value)),
+    })),
+    ...productFilters.map((value) => ({
+      key: `product-${value}`,
+      label: `Product: ${value}`,
+      onRemove: () => setProductFilters((prev) => prev.filter((item) => item !== value)),
+    })),
+    ...cityFilters.map((value) => ({
+      key: `city-${value}`,
+      label: `City: ${value}`,
+      onRemove: () => setCityFilters((prev) => prev.filter((item) => item !== value)),
+    })),
+    ...salesmanFilters.map((value) => ({
+      key: `salesman-${value}`,
+      label: `Salesman: ${value}`,
+      onRemove: () => setSalesmanFilters((prev) => prev.filter((item) => item !== value)),
+    })),
+    ...(startDate ? [{ key: 'start-date', label: `From: ${startDate}`, onRemove: () => setStartDate('') }] : []),
+    ...(endDate ? [{ key: 'end-date', label: `To: ${endDate}`, onRemove: () => setEndDate('') }] : []),
+  ];
+  const activeFilterCount = activeFilterChips.length + selectedYears.length + selectedMonths.length;
 
   // ── Maintenance ───────────────────────────────────────────────────────────
   const openMaintenance = () => {
@@ -615,6 +940,22 @@ export default function SalesSummary() {
       toast.success('Sales record deleted');
       fetchRecords();
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to delete'); }
+  };
+
+  const handleDeleteClientGroup = async (group: ClientGroup) => {
+    try {
+      for (const record of group.records) {
+        const res = await fetch(`/api/sales/records/${record.id}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          throw new Error(data?.error || 'Failed to delete client record');
+        }
+      }
+      toast.success(`Deleted ${group.records.length} item${group.records.length !== 1 ? 's' : ''} for ${group.clientName}`);
+      fetchRecords();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete client record');
+    }
   };
 
   // ── Payment modal ─────────────────────────────────────────────────────────
@@ -740,18 +1081,24 @@ export default function SalesSummary() {
       selectedYears.length > 0 ? `Years: ${selectedYears.join(', ')}` : null,
       productFilters.length > 0 ? `Products: ${productFilters.join(', ')}` : null,
       clientFilters.length > 0 ? `Clients: ${clientFilters.join(', ')}` : null,
+      clientNameOrder !== 'latest' ? `Client order: ${CLIENT_NAME_ORDER_LABELS[clientNameOrder]}` : null,
+      paymentStatusFilters.length > 0 ? `Payment: ${paymentStatusFilters.join(', ')}` : null,
       cityFilters.length > 0 ? `Cities: ${cityFilters.join(', ')}` : null,
       salesmanFilters.length > 0 ? `Salesmen: ${salesmanFilters.join(', ')}` : null,
       startDate ? `From: ${startDate}` : null,
       endDate ? `To: ${endDate}` : null,
     ].filter(Boolean);
 
+    const pdfColumnCount = isAdmin ? 8 : 7;
+    const profitStatHtml = isAdmin
+      ? `<div class="stat-box"><div class="stat-label">Profit</div><div class="stat-value ${summary.totalProfit >= 0 ? 'profit' : 'loss'}">${formatCurrency(summary.totalProfit)}</div></div>`
+      : '';
     const statsHtml = `
       <div class="stats-grid">
         <div class="stat-box"><div class="stat-label">Total Sales</div><div class="stat-value">${summary.salesCount}</div></div>
         <div class="stat-box"><div class="stat-label">Revenue</div><div class="stat-value">${formatCurrency(summary.totalRevenue)}</div></div>
         <div class="stat-box"><div class="stat-label">Qty Sold</div><div class="stat-value">${summary.totalQuantity} pkts</div></div>
-        <div class="stat-box"><div class="stat-label">Profit</div><div class="stat-value ${summary.totalProfit >= 0 ? 'profit' : 'loss'}">${formatCurrency(summary.totalProfit)}</div></div>
+        ${profitStatHtml}
         <div class="stat-box"><div class="stat-label">${avgLabel}</div><div class="stat-value">${formatCurrency(avgRevenue)}</div></div>
       </div>`;
 
@@ -765,17 +1112,17 @@ export default function SalesSummary() {
           <td class="right">${r.discount > 0 ? r.discount + '%' : '—'}</td>
           <td class="right">${formatCurrency(r.totalAmount)}</td>
           <td class="right">${formatCurrency((r.productionCostPerUnit ?? 0) * r.quantitySold)}</td>
-          <td class="right ${r.profit >= 0 ? 'profit' : 'loss'}">${formatCurrency(r.profit)}</td>
+          ${isAdmin ? `<td class="right ${r.profit >= 0 ? 'profit' : 'loss'}">${formatCurrency(r.profit)}</td>` : ''}
         </tr>`).join('');
-      const payStatus = group.paymentStatus || 'paid';
+      const payStatus = group.paymentStatus || 'unpaid';
       const balance = Math.max(0, group.groupTotal - (group.amountPaid ?? 0));
       const payLabel2 = payStatus === 'paid'
         ? 'PAID'
         : payStatus === 'unpaid'
           ? 'UNPAID'
-          : `BALANCE ${formatCurrency(balance)}`;
+          : `PARTIAL ${formatCurrency(balance)}`;
       return `
-        <tr class="group-header"><td colspan="8">
+        <tr class="group-header"><td colspan="${pdfColumnCount}">
           <div class="group-row">
             <div>
               <strong>${group.clientName}</strong>
@@ -791,7 +1138,7 @@ export default function SalesSummary() {
           <td colspan="5" class="indent-label">${group.records.length} item${group.records.length !== 1 ? 's' : ''}</td>
           <td class="right"><strong>${formatCurrency(group.groupTotal)}</strong></td>
           <td class="right muted">${formatCurrency(group.records.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}</td>
-          <td class="right ${group.groupProfit >= 0 ? 'profit' : 'loss'}">${formatCurrency(group.groupProfit)}</td>
+          ${isAdmin ? `<td class="right ${group.groupProfit >= 0 ? 'profit' : 'loss'}">${formatCurrency(group.groupProfit)}</td>` : ''}
         </tr>`;
     }).join('');
 
@@ -804,7 +1151,7 @@ export default function SalesSummary() {
       .meta-line{font-size:11px;color:#666;margin-bottom:8px}
       .filter-tags{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px}
       .filter-tag{font-size:10px;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:4px;padding:2px 6px;color:#374151}
-      .stats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:16px}
+      .stats-grid{display:grid;grid-template-columns:repeat(${isAdmin ? 5 : 4},1fr);gap:8px;margin-bottom:16px}
       .stat-box{background:#f8f8f6;border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px}
       .stat-label{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
       .stat-value{font-size:15px;font-weight:700;color:#111}
@@ -836,14 +1183,14 @@ export default function SalesSummary() {
       <th>#</th><th>Product</th>
       <th class="right">Packets</th><th class="right">Price/Pkt</th>
       <th class="right">Discount</th><th class="right">Final Amt</th>
-      <th class="right">Prod. Cost</th><th class="right">Profit/Loss</th>
+      <th class="right">Prod. Cost</th>${isAdmin ? '<th class="right">Profit/Loss</th>' : ''}
     </tr></thead><tbody>
       ${rows}
       <tr class="grand">
         <td colspan="5">Grand Total — ${clientGroups.length} client${clientGroups.length !== 1 ? 's' : ''} · ${allRecords.length} records</td>
         <td class="right">${formatCurrency(summary.totalRevenue)}</td>
         <td class="right muted">${formatCurrency(allRecords.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}</td>
-        <td class="right ${summary.totalProfit >= 0 ? 'profit' : 'loss'}">${formatCurrency(summary.totalProfit)}</td>
+        ${isAdmin ? `<td class="right ${summary.totalProfit >= 0 ? 'profit' : 'loss'}">${formatCurrency(summary.totalProfit)}</td>` : ''}
       </tr>
     </tbody></table></body></html>`;
 
@@ -855,36 +1202,120 @@ export default function SalesSummary() {
     setTimeout(() => { win.print(); win.close(); }, 300);
   };
 
-  const totalColSpan = 5 + (isAdmin ? 2 : 0) + (SHOW_PROFIT_TO_STAFF ? 1 : 0) + (isAdmin ? 1 : 0);
+  const totalColSpan = 5 + (isAdmin ? 2 : 0) + (isAdmin ? 1 : 0) + (isAdmin ? 1 : 0);
+
+  const FilterIconPopover = ({
+    label,
+    icon: Icon,
+    active,
+    contentClassName,
+    children,
+  }: {
+    label: string;
+    icon: LucideIcon;
+    active?: boolean;
+    contentClassName?: string;
+    children: ReactNode;
+  }) => (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label={label}
+              className={cn('relative h-9 w-9', active && 'border-primary text-primary')}
+            >
+              <Icon className="h-4 w-4" />
+              {active && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary" />}
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+      <PopoverContent className={cn('w-72 p-3', contentClassName)} align="start">
+        <div className="space-y-3">
+          <Label className="text-xs text-muted-foreground">{label}</Label>
+          {children}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 
   const FilterContent = () => (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <Label>Client</Label>
-        <MultiSelectFilter label="Client" values={clientFilters} onChange={setClientFilters} options={uniqueClients} placeholder="All Clients" />
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 gap-4">
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">Client</Label>
+          <MultiSelectFilter className="w-full" label="Client" values={clientFilters} onChange={setClientFilters} options={uniqueClients} placeholder="All Clients" />
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Client Name Order</Label>
+            <Select value={clientNameOrder} onValueChange={(value) => setClientNameOrder(value as ClientNameOrder)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="latest">Default</SelectItem>
+                <SelectItem value="az">A-Z</SelectItem>
+                <SelectItem value="za">Z-A</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Payment Status</Label>
+            <MultiSelectFilter className="w-full" label="Payment Status" values={paymentStatusFilters} onChange={setPaymentStatusFilters} options={PAYMENT_STATUS_OPTIONS} placeholder="All Payments" />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">Product</Label>
+          <MultiSelectFilter className="w-full" label="Product" values={productFilters} onChange={setProductFilters} options={uniqueProducts} placeholder="All Products" />
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">City</Label>
+            <MultiSelectFilter className="w-full" label="City" values={cityFilters} onChange={setCityFilters} options={uniqueCities} placeholder="All Cities" />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Salesman</Label>
+            <MultiSelectFilter className="w-full" label="Salesman" values={salesmanFilters} onChange={setSalesmanFilters} options={uniqueSalesmen} placeholder="All Salesmen" />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">Date Range</Label>
+          <DateRangeCalendarFilter
+            startDate={startDate}
+            endDate={endDate}
+            onStartDateChange={setStartDate}
+            onEndDateChange={setEndDate}
+          />
+        </div>
       </div>
-      <div className="space-y-2">
-        <Label>Product</Label>
-        <MultiSelectFilter label="Product" values={productFilters} onChange={setProductFilters} options={uniqueProducts} placeholder="All Products" />
-      </div>
-      <div className="space-y-2">
-        <Label>City</Label>
-        <MultiSelectFilter label="City" values={cityFilters} onChange={setCityFilters} options={uniqueCities} placeholder="All Cities" />
-      </div>
-      <div className="space-y-2">
-        <Label>Salesman</Label>
-        <MultiSelectFilter label="Salesman" values={salesmanFilters} onChange={setSalesmanFilters} options={uniqueSalesmen} placeholder="All Salesmen" />
-      </div>
-      <div className="space-y-2">
-        <Label>Start Date</Label>
-        <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-      </div>
-      <div className="space-y-2">
-        <Label>End Date</Label>
-        <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-      </div>
+
+      {activeFilterChips.length > 0 && (
+        <div className="space-y-2 border-t pt-4">
+          <div className="flex flex-wrap gap-2">
+            {activeFilterChips.map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                onClick={chip.onRemove}
+                className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/50 px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted"
+              >
+                <span className="truncate">{chip.label}</span>
+                <X className="h-3 w-3 shrink-0" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {hasActiveFilters && (
-        <Button variant="outline" onClick={clearFilters} className="w-full">Clear All Filters</Button>
+        <Button variant="outline" onClick={clearFilters} className="w-full gap-2">
+          <X className="h-4 w-4" />Clear Filters
+        </Button>
       )}
     </div>
   );
@@ -978,7 +1409,7 @@ export default function SalesSummary() {
                   {MONTH_NAMES.map((name, idx) => {
                     const relevantYears = selectedYears.length > 0 ? selectedYears : availableYears;
                     const hasData = salesRecords.some((r) => {
-                      const d = new Date(r.saleDate);
+                      const d = parseSalesCalendarDate(r.saleDate);
                       return relevantYears.includes(d.getFullYear()) && d.getMonth() === idx;
                     });
                     const isSelected = selectedMonths.includes(idx);
@@ -1044,7 +1475,7 @@ export default function SalesSummary() {
                       </Badge>
                     ))}
                   </div>
-                  <span className="text-xs text-muted-foreground shrink-0">{filteredRecords.length} records</span>
+                  <span className="text-xs text-muted-foreground shrink-0">{allRecords.length} records</span>
                 </div>
               )}
 
@@ -1054,8 +1485,8 @@ export default function SalesSummary() {
 
         {/* Stats — 5 boxes */}
         {loading ? (
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-            {[...Array(5)].map((_, i) => (
+          <div className={cn('grid grid-cols-2 gap-4', isAdmin ? 'lg:grid-cols-5' : 'lg:grid-cols-4')}>
+            {[...Array(isAdmin ? 5 : 4)].map((_, i) => (
               <Card key={i} className="animate-pulse">
                 <CardContent className="p-6">
                   <div className="h-4 bg-muted rounded w-3/4 mb-2" />
@@ -1065,11 +1496,11 @@ export default function SalesSummary() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className={cn('grid grid-cols-2 gap-4', isAdmin ? 'lg:grid-cols-5' : 'lg:grid-cols-4')}>
             <StatCard title="Total Sales" value={summary.salesCount.toString()} icon={Package} />
             <StatCard title="Revenue" value={formatCurrency(summary.totalRevenue)} icon={IndianRupee} />
             <StatCard title="Qty Sold" value={`${summary.totalQuantity} packets`} icon={TrendingUp} />
-            {SHOW_PROFIT_TO_STAFF && (
+            {isAdmin && (
               <StatCard title="Profit" value={formatCurrency(summary.totalProfit)} icon={TrendingUp} />
             )}
             <StatCard title={avgLabel} value={formatCurrency(avgRevenue)} icon={BarChart3} />
@@ -1078,38 +1509,150 @@ export default function SalesSummary() {
 
         {/* Desktop filter bar */}
         <Card className="hidden md:block">
-          <CardContent className="py-4">
-            <div className="flex items-end gap-3 flex-wrap">
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Client</Label>
-                <MultiSelectFilter label="Client" values={clientFilters} onChange={setClientFilters} options={uniqueClients} placeholder="All Clients" />
+          <CardContent className="flex flex-wrap items-center gap-2 p-2">
+            <TooltipProvider delayDuration={150}>
+              <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-muted/50 px-2 text-xs font-medium text-muted-foreground">
+                <Filter className="h-4 w-4 text-primary" />
+                {activeFilterCount > 0 && (
+                  <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                    {activeFilterCount}
+                  </Badge>
+                )}
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Product</Label>
-                <MultiSelectFilter label="Product" values={productFilters} onChange={setProductFilters} options={uniqueProducts} placeholder="All Products" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">City</Label>
-                <MultiSelectFilter label="City" values={cityFilters} onChange={setCityFilters} options={uniqueCities} placeholder="All Cities" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Salesman</Label>
-                <MultiSelectFilter label="Salesman" values={salesmanFilters} onChange={setSalesmanFilters} options={uniqueSalesmen} placeholder="All Salesmen" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Start</Label>
-                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-36" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">End</Label>
-                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-36" />
-              </div>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <MultiSelectFilter
+                      iconOnly
+                      icon={User}
+                      label="Client"
+                      values={clientFilters}
+                      onChange={setClientFilters}
+                      options={uniqueClients}
+                      placeholder="All Clients"
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>Client</TooltipContent>
+              </Tooltip>
+
+              <FilterIconPopover label="Client Order" icon={ChevronsUpDown} active={clientNameOrder !== 'latest'}>
+                <Select value={clientNameOrder} onValueChange={(value) => setClientNameOrder(value as ClientNameOrder)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="latest">Default</SelectItem>
+                    <SelectItem value="az">A-Z</SelectItem>
+                    <SelectItem value="za">Z-A</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FilterIconPopover>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <MultiSelectFilter
+                      iconOnly
+                      icon={CreditCard}
+                      label="Payment Status"
+                      values={paymentStatusFilters}
+                      onChange={setPaymentStatusFilters}
+                      options={PAYMENT_STATUS_OPTIONS}
+                      placeholder="All Payments"
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>Payment Status</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <MultiSelectFilter
+                      iconOnly
+                      icon={Package}
+                      label="Product"
+                      values={productFilters}
+                      onChange={setProductFilters}
+                      options={uniqueProducts}
+                      placeholder="All Products"
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>Product</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <MultiSelectFilter
+                      iconOnly
+                      icon={MapPin}
+                      label="City"
+                      values={cityFilters}
+                      onChange={setCityFilters}
+                      options={uniqueCities}
+                      placeholder="All Cities"
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>City</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <MultiSelectFilter
+                      iconOnly
+                      icon={BriefcaseBusiness}
+                      label="Salesman"
+                      values={salesmanFilters}
+                      onChange={setSalesmanFilters}
+                      options={uniqueSalesmen}
+                      placeholder="All Salesmen"
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>Salesman</TooltipContent>
+              </Tooltip>
+
+              <DateRangeCalendarFilter
+                inline
+                startDate={startDate}
+                endDate={endDate}
+                onStartDateChange={setStartDate}
+                onEndDateChange={setEndDate}
+              />
+
               {hasActiveFilters && (
-                <Button variant="ghost" size="sm" onClick={clearFilters} className="self-end">
-                  <X className="h-4 w-4 mr-1" />Clear
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="icon" onClick={clearFilters} className="h-9 w-9">
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Clear Filters</TooltipContent>
+                </Tooltip>
               )}
-            </div>
+            </TooltipProvider>
+
+            {activeFilterChips.length > 0 && (
+              <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+                {activeFilterChips.map((chip) => (
+                  <button
+                    key={chip.key}
+                    type="button"
+                    onClick={chip.onRemove}
+                    className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-muted"
+                  >
+                    <span className="truncate">{chip.label}</span>
+                    <X className="h-3 w-3 shrink-0" />
+                  </button>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -1119,11 +1662,16 @@ export default function SalesSummary() {
             <SheetTrigger asChild>
               <Button variant="outline" className="w-full gap-2">
                 <Filter className="h-4 w-4" />Filters
-                {hasActiveFilters && <Badge variant="secondary">Active</Badge>}
+                {activeFilterCount > 0 && <Badge variant="secondary">{activeFilterCount}</Badge>}
               </Button>
             </SheetTrigger>
             <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto">
-              <SheetHeader><SheetTitle>Filter Sales</SheetTitle></SheetHeader>
+              <SheetHeader>
+                <SheetTitle className="flex items-center gap-2">
+                  Filter Sales
+                  {activeFilterCount > 0 && <Badge variant="secondary">{activeFilterCount}</Badge>}
+                </SheetTitle>
+              </SheetHeader>
               <div className="mt-4"><FilterContent /></div>
             </SheetContent>
           </Sheet>
@@ -1165,12 +1713,12 @@ export default function SalesSummary() {
                       <TableHead className="text-right">Discount %</TableHead>
                       {isAdmin && <TableHead className="text-right">Final Amt</TableHead>}
                       {isAdmin && <TableHead className="text-right">Prod. Cost</TableHead>}
-                      {SHOW_PROFIT_TO_STAFF && <TableHead className="text-right">Profit / Loss</TableHead>}
+                      {isAdmin && <TableHead className="text-right">Profit / Loss</TableHead>}
                       {isAdmin && <TableHead className="text-right">Actions</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {clientGroups.map((group) => (
+                    {paginatedClientGroups.map((group) => (
                       <ClientGroupRow
                         key={group.groupKey}
                         group={group}
@@ -1178,30 +1726,36 @@ export default function SalesSummary() {
                         isAdmin={isAdmin}
                         onPaymentClick={openPaymentModal}
                         handleDeleteSale={handleDeleteSale}
+                        handleDeleteGroup={handleDeleteClientGroup}
                         router={router}
                       />
                     ))}
                     <TableRow className="bg-muted/60 font-semibold border-t-2">
                       <TableCell colSpan={5} className="py-3 pl-4 text-sm">
-                        Grand Total — {clientGroups.length} client{clientGroups.length !== 1 ? 's' : ''} · {allRecords.length} record{allRecords.length !== 1 ? 's' : ''}
+                        Page Total - {paginatedClientGroups.length} client{paginatedClientGroups.length !== 1 ? 's' : ''} - {pageRecords.length} record{pageRecords.length !== 1 ? 's' : ''}
                       </TableCell>
-                      <TableCell className="text-right text-sm py-3">{formatCurrency(summary.totalRevenue)}</TableCell>
-                      <TableCell className="text-right text-sm py-3 text-muted-foreground">
-                        {formatCurrency(allRecords.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}
-                      </TableCell>
-                      {SHOW_PROFIT_TO_STAFF && (
+                      {isAdmin && (
+                        <TableCell className="text-right text-sm py-3">{formatCurrency(pageSummary.totalRevenue)}</TableCell>
+                      )}
+                      {isAdmin && (
+                        <TableCell className="text-right text-sm py-3 text-muted-foreground">
+                          {formatCurrency(pageRecords.reduce((s, r) => s + (r.productionCostPerUnit ?? 0) * r.quantitySold, 0))}
+                        </TableCell>
+                      )}
+                      {isAdmin && (
                         <TableCell className="text-right py-3">
-                          <span className={`text-sm font-semibold ${summary.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {formatCurrency(summary.totalProfit)}
+                          <span className={`text-sm font-semibold ${pageSummary.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {formatCurrency(pageSummary.totalProfit)}
                           </span>
                         </TableCell>
                       )}
-                      <TableCell colSpan={isAdmin ? 1 : 0} />
+                      {isAdmin && <TableCell />}
                     </TableRow>
                   </TableBody>
                 </Table>
               </div>
             )}
+            <RecordPagination {...clientGroupsPagination} itemLabel="records" className="px-4" />
           </CardContent>
         </Card>
 
@@ -1217,16 +1771,22 @@ export default function SalesSummary() {
                 {salesRecords.length === 0 ? 'No sales records found' : 'No records match the current filters'}
               </CardContent>
             </Card>
-          ) : clientGroups.map((group) => (
-            <MobileClientCard
-              key={group.groupKey}
-              group={group}
-              isAdmin={isAdmin}
-              onPaymentClick={openPaymentModal}
-              handleDeleteSale={handleDeleteSale}
-              router={router}
-            />
-          ))}
+          ) : (
+            <>
+              {paginatedClientGroups.map((group) => (
+                <MobileClientCard
+                  key={group.groupKey}
+                  group={group}
+                  isAdmin={isAdmin}
+                  onPaymentClick={openPaymentModal}
+                  handleDeleteSale={handleDeleteSale}
+                  handleDeleteGroup={handleDeleteClientGroup}
+                  router={router}
+                />
+              ))}
+              <RecordPagination {...clientGroupsPagination} itemLabel="records" className="px-0" />
+            </>
+          )}
         </div>
 
         {/* ── Maintenance modal ── */}
@@ -1472,17 +2032,18 @@ export default function SalesSummary() {
 
 /* ── Mobile client card ──────────────────────────────────────────────────── */
 function MobileClientCard({
-  group, isAdmin, onPaymentClick, handleDeleteSale, router,
+  group, isAdmin, onPaymentClick, handleDeleteSale, handleDeleteGroup, router,
 }: {
   group: ClientGroup; isAdmin: boolean;
   onPaymentClick: (g: ClientGroup) => void;
   handleDeleteSale: (id: string) => void;
+  handleDeleteGroup: (group: ClientGroup) => void;
   router: ReturnType<typeof useRouter>;
 }) {
   const [open, setOpen] = useState(false);
 
   const paymentBadge = (() => {
-    const status = group.paymentStatus || 'paid';
+    const status = group.paymentStatus || 'unpaid';
     let cls = ''; let label = '';
     if (status === 'paid') {
       cls = 'bg-green-100 text-green-800 border-green-300';
@@ -1493,7 +2054,7 @@ function MobileClientCard({
     } else {
       cls = 'bg-orange-100 text-orange-800 border-orange-300';
       const balance = Math.max(0, group.groupTotal - (group.amountPaid ?? 0));
-      label = `BALANCE ${formatCurrency(balance)}`;
+      label = `PARTIAL ${formatCurrency(balance)}`;
     }
     return (
       <Badge
@@ -1582,7 +2143,7 @@ function MobileClientCard({
                   <div><p className="text-muted-foreground">Prod. Cost</p><p className="font-medium">{formatCurrency(prodCost)}</p></div>
                   <div><p className="text-muted-foreground">Final Amt</p><p className="font-semibold">{formatCurrency(record.totalAmount)}</p></div>
                 </div>
-                {SHOW_PROFIT_TO_STAFF && !isFree && (
+                {isAdmin && !isFree && (
                   <div className="mt-1.5">
                     <span className={`text-xs font-semibold flex items-center gap-0.5 ${record.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {record.profit >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
@@ -1593,9 +2154,36 @@ function MobileClientCard({
               </div>
             );
           })}
-          <div className="px-4 py-2 bg-muted/30 flex justify-between text-xs font-medium">
+          <div className="px-4 py-2 bg-muted/30 flex items-center justify-between gap-2 text-xs font-medium">
             <span className="text-muted-foreground">{group.records.length} item{group.records.length !== 1 ? 's' : ''}</span>
-            <span>{formatCurrency(group.groupTotal)}</span>
+            <div className="flex items-center gap-2">
+              <span>{formatCurrency(group.groupTotal)}</span>
+              {isAdmin && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete Client Record</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Delete all {group.records.length} item{group.records.length !== 1 ? 's' : ''} for <strong>{group.clientName}</strong>? Quantity will be restored.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => handleDeleteGroup(group)}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                        Delete
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+            </div>
           </div>
         </CardContent>
       )}

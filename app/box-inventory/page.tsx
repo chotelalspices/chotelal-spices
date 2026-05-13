@@ -36,6 +36,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/libs/utils';
 import { format } from 'date-fns';
 import { hasPermission } from '@/lib/role-permissions';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -176,6 +177,10 @@ export default function BoxInventoryPage() {
                 (stockFilter === 'out' && stockStatus(b) === 'out'))
         );
     }, [boxTypes, search, statusFilter, stockFilter]);
+    const boxPagination = usePaginatedRecords(filtered);
+    const paginatedBoxes = boxPagination.paginatedRecords;
+    const movementsPagination = usePaginatedRecords(movements);
+    const paginatedMovements = movementsPagination.paginatedRecords;
 
     const hasActiveFilters = statusFilter !== 'all' || stockFilter !== 'all';
     const clearFilters = () => {
@@ -518,7 +523,7 @@ export default function BoxInventoryPage() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {filtered.map((box) => {
+                                        {paginatedBoxes.map((box) => {
                                             const ss = stockStatus(box);
                                             return (
                                                 <TableRow key={box.id}>
@@ -643,6 +648,7 @@ export default function BoxInventoryPage() {
                                         })}
                                     </TableBody>
                                 </Table>
+                                <RecordPagination {...boxPagination} itemLabel="box types" />
                             </div>
                         )}
                     </CardContent>
@@ -824,7 +830,7 @@ export default function BoxInventoryPage() {
                                 <div className="py-12 text-center text-muted-foreground text-sm">No movements recorded yet.</div>
                             ) : (
                                 <div className="space-y-2">
-                                    {movements.map((m) => (
+                                    {paginatedMovements.map((m) => (
                                         <div key={m.id} className="flex items-start gap-3 p-3 rounded-lg border bg-muted/20">
                                             <Badge variant="outline" className={cn(
                                                 'gap-1 text-xs shrink-0 mt-0.5',
@@ -851,6 +857,7 @@ export default function BoxInventoryPage() {
                                             </div>
                                         </div>
                                     ))}
+                                    <RecordPagination {...movementsPagination} itemLabel="movements" className="mt-3 px-0" />
                                 </div>
                             )}
                         </div>

@@ -53,6 +53,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 
 type UserRole =
   | 'admin'
@@ -130,6 +131,21 @@ export default function UserListPage() {
     }
   }, [isAdmin, isLoading, router, toast]);
 
+  // Filter users
+  const filteredUsers = users.filter((user) => {
+    const matchesSearch =
+      user.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      user.email.toLowerCase().includes(searchQuery.toLowerCase());
+
+    const matchesRole = roleFilter === 'all' || user.roles.includes(roleFilter as any);
+    const matchesStatus =
+      statusFilter === 'all' || user.status === statusFilter;
+
+    return matchesSearch && matchesRole && matchesStatus;
+  });
+  const usersPagination = usePaginatedRecords(filteredUsers);
+  const paginatedUsers = usersPagination.paginatedRecords;
+
   // Show loading or redirect state
   if (isLoading || !isAdmin) {
     return (
@@ -143,19 +159,6 @@ export default function UserListPage() {
       </AppLayout>
     );
   }
-
-  // Filter users
-  const filteredUsers = users.filter((user) => {
-    const matchesSearch =
-      user.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchQuery.toLowerCase());
-
-    const matchesRole = roleFilter === 'all' || user.roles.includes(roleFilter as any);
-    const matchesStatus =
-      statusFilter === 'all' || user.status === statusFilter;
-
-    return matchesSearch && matchesRole && matchesStatus;
-  });
 
   const handleToggleStatus = async (user: User) => {
     try {
@@ -335,7 +338,7 @@ export default function UserListPage() {
             </TableHeader>
 
             <TableBody>
-              {filteredUsers.map((user) => (
+              {paginatedUsers.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell className="font-medium">
                     {user.fullName}
@@ -448,7 +451,7 @@ export default function UserListPage() {
 
         {/* Mobile Cards */}
         <div className="md:hidden space-y-3">
-          {filteredUsers.map((user) => (
+          {paginatedUsers.map((user) => (
             <div key={user.id} className="mobile-card">
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-3">
@@ -548,6 +551,7 @@ export default function UserListPage() {
             </div>
           )}
         </div>
+        <RecordPagination {...usersPagination} itemLabel="users" className="px-0" />
       </div>
 
       {/* Delete Confirmation Dialog */}

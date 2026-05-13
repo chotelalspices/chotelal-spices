@@ -22,6 +22,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 import { format } from 'date-fns';
 
 interface ExtendedItem {
@@ -72,6 +73,8 @@ export default function ExtendedInventoryPage() {
       (item.code?.toLowerCase().includes(q) ?? false)
     );
   });
+  const itemsPagination = usePaginatedRecords(filtered);
+  const paginatedItems = itemsPagination.paginatedRecords;
 
   const handleDelete = async (id: string) => {
     try {
@@ -152,7 +155,7 @@ export default function ExtendedInventoryPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((item) => (
+                {paginatedItems.map((item) => (
                   <TableRow key={item.id}>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                       {format(new Date(item.date), 'dd MMM yyyy')}
@@ -220,6 +223,7 @@ export default function ExtendedInventoryPage() {
                 )}
               </TableBody>
             </Table>
+            <RecordPagination {...itemsPagination} itemLabel="items" />
           </Card>
         )}
 
@@ -233,7 +237,7 @@ export default function ExtendedInventoryPage() {
                   {items.length === 0 ? 'No items added yet' : 'No items match your search'}
                 </p>
               </div>
-            ) : filtered.map((item) => (
+            ) : paginatedItems.map((item) => (
               <Card key={item.id}>
                 <CardContent className="p-4 space-y-3">
                   <div className="flex justify-between items-start">
@@ -293,6 +297,7 @@ export default function ExtendedInventoryPage() {
                 </CardContent>
               </Card>
             ))}
+            <RecordPagination {...itemsPagination} itemLabel="items" className="px-0" />
           </div>
         )}
       </div>

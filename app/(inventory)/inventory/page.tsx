@@ -34,6 +34,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 
 export default function InventoryDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -100,6 +101,8 @@ export default function InventoryDashboard() {
       return true;
     });
   }, [rawMaterials, searchQuery, statusFilter, stockFilter]);
+  const materialsPagination = usePaginatedRecords(filteredMaterials);
+  const paginatedMaterials = materialsPagination.paginatedRecords;
 
   const hasActiveFilters = statusFilter !== 'all' || stockFilter !== 'all';
   const clearFilters = () => {
@@ -309,15 +312,16 @@ export default function InventoryDashboard() {
 
       {/* Desktop Table */}
       <div className="hidden md:block">
-        <MaterialTable materials={filteredMaterials} />
+        <MaterialTable materials={paginatedMaterials} />
       </div>
 
       {/* Mobile Cards */}
       <div className="md:hidden space-y-3">
-        {filteredMaterials.map((material) => (
+        {paginatedMaterials.map((material) => (
           <MaterialCard key={material.id} material={material} />
         ))}
       </div>
+      <RecordPagination {...materialsPagination} itemLabel="materials" className="mt-4 px-0" />
 
       {/* Empty State */}
       {filteredMaterials.length === 0 && (

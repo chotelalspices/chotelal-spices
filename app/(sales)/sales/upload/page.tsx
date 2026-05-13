@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { Fragment, useState, useCallback, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -39,6 +39,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 
 import {
   ArrowLeft,
@@ -276,7 +277,6 @@ export default function SalesUpload() {
   const [products, setProducts] = useState<FinishedProduct[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
-  const [maxVisibleRows, setMaxVisibleRows] = useState<number>(150);
 
   useEffect(() => {
     fetch('/api/sales/products')
@@ -286,10 +286,16 @@ export default function SalesUpload() {
   }, []);
 
   /* ── derived counts ── */
-  const allRows = sessions.flatMap((s) => s.products);
+  const allRows = useMemo(() => sessions.flatMap((s) => s.products), [sessions]);
   const validRows = allRows.filter((r) => r.status === 'valid');
   const invalidRows = allRows.filter((r) => r.status === 'invalid');
   const totalAmount = validRows.reduce((s, r) => s + r.finalAmount, 0);
+  const rowsPagination = usePaginatedRecords(allRows);
+  const paginatedRows = rowsPagination.paginatedRecords;
+  const paginatedRowNumbers = useMemo(
+    () => new Set(paginatedRows.map((row) => row.rowNumber)),
+    [paginatedRows]
+  );
 
   const productMap = useMemo(
     () =>
@@ -300,24 +306,15 @@ export default function SalesUpload() {
   );
 
   const visibleSessions = useMemo(() => {
-    if (maxVisibleRows <= 0 || allRows.length <= maxVisibleRows) return sessions;
+    if (paginatedRowNumbers.size === 0) return [];
+    return sessions
+      .map((session) => ({
+        ...session,
+        products: session.products.filter((product) => paginatedRowNumbers.has(product.rowNumber)),
+      }))
+      .filter((session) => session.products.length > 0);
+  }, [sessions, paginatedRowNumbers]);
 
-    let remaining = maxVisibleRows;
-    const sliced: ClientSession[] = [];
-    for (const session of sessions) {
-      if (remaining <= 0) break;
-      const visibleProducts = session.products.slice(0, remaining);
-      if (visibleProducts.length === 0) continue;
-      sliced.push({ ...session, products: visibleProducts });
-      remaining -= visibleProducts.length;
-    }
-    return sliced;
-  }, [sessions, allRows.length, maxVisibleRows]);
-
-  const visibleRowCount = useMemo(
-    () => visibleSessions.reduce((sum, s) => sum + s.products.length, 0),
-    [visibleSessions]
-  );
 
   /* ── drag & drop ── */
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
@@ -375,7 +372,7 @@ export default function SalesUpload() {
     );
   };
 
-  const handleClearUpload = () => { setUploadedFile(null); setSessions([]); setMaxVisibleRows(150); };
+  const handleClearUpload = () => { setUploadedFile(null); setSessions([]); };
 
   /* ── import ── */
   const handleConfirmImport = async () => {
@@ -525,21 +522,6 @@ export default function SalesUpload() {
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">
-                    <Select
-                      value={maxVisibleRows === -1 ? 'all' : String(maxVisibleRows)}
-                      onValueChange={(value) => setMaxVisibleRows(value === 'all' ? -1 : Number(value))}
-                    >
-                      <SelectTrigger className="w-44">
-                        <SelectValue placeholder="Preview rows" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="100">Show 100 rows</SelectItem>
-                        <SelectItem value="150">Show 150 rows</SelectItem>
-                        <SelectItem value="300">Show 300 rows</SelectItem>
-                        <SelectItem value="500">Show 500 rows</SelectItem>
-                        <SelectItem value="all">Show all rows</SelectItem>
-                      </SelectContent>
-                    </Select>
                     <Button variant="outline" onClick={handleClearUpload} disabled={isImporting}>
                       <Trash2 className="h-4 w-4 mr-2" />
                       Clear
@@ -558,11 +540,6 @@ export default function SalesUpload() {
               </CardHeader>
 
               <CardContent className="p-0">
-                {visibleRowCount < allRows.length && (
-                  <div className="px-4 py-2 text-sm text-amber-700 bg-amber-50 border-y">
-                    Showing {visibleRowCount} of {allRows.length} rows for smooth preview. Increase preview rows if needed.
-                  </div>
-                )}
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
@@ -588,10 +565,9 @@ export default function SalesUpload() {
                         const sessionTotal = session.products.reduce((s, p) => s + p.finalAmount, 0);
 
                         return (
-                          <>
+                          <Fragment key={session.sessionKey}>
                             {/* ── CLIENT HEADER ROW ── */}
                             <TableRow
-                              key={`session-${session.sessionKey}`}
                               className="bg-primary/5 border-t-2 border-primary/20"
                             >
                               <TableCell colSpan={11} className="py-2.5 px-4">
@@ -775,7 +751,6 @@ export default function SalesUpload() {
 
                             {/* ── SESSION SUBTOTAL ROW ── */}
                             <TableRow
-                              key={`subtotal-${session.sessionKey}`}
                               className="bg-muted/30 border-b-2 border-muted"
                             >
                               <TableCell colSpan={5} className="pl-8 py-2">
@@ -788,7 +763,7 @@ export default function SalesUpload() {
                               </TableCell>
                               <TableCell colSpan={5} />
                             </TableRow>
-                          </>
+                          </Fragment>
                         );
                       })}
 
@@ -807,6 +782,7 @@ export default function SalesUpload() {
                     </TableBody>
                   </Table>
                 </div>
+                <RecordPagination {...rowsPagination} itemLabel="line items" />
               </CardContent>
             </Card>
           </>

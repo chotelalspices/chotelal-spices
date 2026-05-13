@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/use-auth';
 
@@ -132,6 +133,8 @@ export default function FormulationListPage() {
       return true;
     });
   }, [formulations, searchQuery, statusFilter]);
+  const formulationsPagination = usePaginatedRecords(filteredFormulations);
+  const paginatedFormulations = formulationsPagination.paginatedRecords;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -199,7 +202,7 @@ export default function FormulationListPage() {
       {!isLoading && !error && (
         <div className="mb-4">
           <p className="text-sm text-muted-foreground">
-            Showing {filteredFormulations.length} of {formulations.length} formulations
+            Showing {formulationsPagination.startRecord}-{formulationsPagination.endRecord} of {filteredFormulations.length} filtered formulations
           </p>
         </div>
       )}
@@ -208,7 +211,7 @@ export default function FormulationListPage() {
       {!isLoading && !error && (
         <div className="hidden md:block">
           <FormulationTable
-            formulations={filteredFormulations}
+            formulations={paginatedFormulations}
             isAdmin={isAdmin}
             onStatusChange={handleStatusChange}
             onDelete={handleDelete}
@@ -219,10 +222,13 @@ export default function FormulationListPage() {
       {/* Mobile cards */}
       {!isLoading && !error && (
         <div className="md:hidden space-y-3">
-          {filteredFormulations.map((formulation) => (
+          {paginatedFormulations.map((formulation) => (
             <FormulationCard key={formulation.id} formulation={formulation} isAdmin={isAdmin} />
           ))}
         </div>
+      )}
+      {!isLoading && !error && (
+        <RecordPagination {...formulationsPagination} itemLabel="formulations" className="mt-4 px-0" />
       )}
 
       {/* Empty */}

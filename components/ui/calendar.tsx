@@ -13,37 +13,43 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }: C
       showOutsideDays={showOutsideDays}
       className={cn("p-3", className)}
       classNames={{
-        months: "flex flex-col sm:flex-row space-y-4 sm:space-x-4 sm:space-y-0",
-        month: "space-y-4",
-        caption: "flex justify-center pt-1 relative items-center",
+        months: "flex flex-col gap-4 sm:flex-row",
+        month: "space-y-3",
+        month_caption: "relative flex h-8 items-center justify-center",
         caption_label: "text-sm font-medium",
-        nav: "space-x-1 flex items-center",
-        nav_button: cn(
+        nav: "absolute right-2 top-2 flex items-center gap-1",
+        button_previous: cn(
           buttonVariants({ variant: "outline" }),
           "h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100",
         ),
-        nav_button_previous: "absolute left-1",
-        nav_button_next: "absolute right-1",
-        table: "w-full border-collapse space-y-1",
-        head_row: "flex",
-        head_cell: "text-muted-foreground rounded-md w-9 font-normal text-[0.8rem]",
-        row: "flex w-full mt-2",
-        cell: "h-9 w-9 text-center text-sm p-0 relative [&:has([aria-selected].day-range-end)]:rounded-r-md [&:has([aria-selected].day-outside)]:bg-accent/50 [&:has([aria-selected])]:bg-accent first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20",
-        day: cn(buttonVariants({ variant: "ghost" }), "h-9 w-9 p-0 font-normal aria-selected:opacity-100"),
-        day_range_end: "day-range-end",
-        day_selected:
-          "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
-        day_today: "bg-accent text-accent-foreground",
-        day_outside:
-          "day-outside text-muted-foreground opacity-50 aria-selected:bg-accent/50 aria-selected:text-muted-foreground aria-selected:opacity-30",
-        day_disabled: "text-muted-foreground opacity-50",
-        day_range_middle: "aria-selected:bg-accent aria-selected:text-accent-foreground",
-        day_hidden: "invisible",
+        button_next: cn(
+          buttonVariants({ variant: "outline" }),
+          "h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100",
+        ),
+        chevron: "h-4 w-4",
+        month_grid: "w-full table-fixed border-collapse",
+        weekdays: "border-b",
+        weekday: "h-8 w-9 text-center text-[0.8rem] font-normal text-muted-foreground",
+        week: "border-0",
+        day: "h-9 w-9 p-0 text-center text-sm",
+        day_button: cn(buttonVariants({ variant: "ghost" }), "h-9 w-9 p-0 font-normal"),
+        range_end: "[&>button]:rounded-r-md",
+        range_middle: "[&>button]:bg-accent [&>button]:text-accent-foreground",
+        range_start: "[&>button]:rounded-l-md",
+        selected:
+          "[&>button]:bg-primary [&>button]:text-primary-foreground [&>button]:hover:bg-primary [&>button]:hover:text-primary-foreground [&>button]:focus:bg-primary [&>button]:focus:text-primary-foreground",
+        today: "[&>button]:bg-accent [&>button]:text-accent-foreground",
+        outside:
+          "[&>button]:text-muted-foreground [&>button]:opacity-50 data-[selected=true]:[&>button]:bg-accent/50 data-[selected=true]:[&>button]:text-muted-foreground",
+        disabled: "[&>button]:text-muted-foreground [&>button]:opacity-50",
+        hidden: "invisible",
         ...classNames,
       }}
       components={{
-        IconLeft: ({ ..._props }) => <ChevronLeft className="h-4 w-4" />,
-        IconRight: ({ ..._props }) => <ChevronRight className="h-4 w-4" />,
+        Chevron: ({ orientation, className, disabled }) => {
+          const Icon = orientation === "left" ? ChevronLeft : ChevronRight;
+          return <Icon className={cn("h-4 w-4", disabled && "opacity-50", className)} />;
+        },
       } as React.ComponentProps<typeof DayPicker>["components"]}
       {...props}
     />

@@ -27,6 +27,7 @@ import {
 import {
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@/components/ui/tabs';
+import { RecordPagination, usePaginatedRecords } from '@/components/ui/record-pagination';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/libs/utils';
@@ -344,6 +345,10 @@ export default function SalesHistoryPage() {
       l.action.toLowerCase().includes(q)
     );
   }, [auditLogs, search]);
+  const groupsPagination = usePaginatedRecords(filteredGroups);
+  const paginatedGroups = groupsPagination.paginatedRecords;
+  const logsPagination = usePaginatedRecords(filteredLogs);
+  const paginatedLogs = logsPagination.paginatedRecords;
 
   // Open payment modal
   const openPaymentModal = (group: ClientGroup) => {
@@ -532,7 +537,7 @@ export default function SalesHistoryPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredGroups.map((group) => (
+                        {paginatedGroups.map((group) => (
                           <ClientGroupRow
                             key={group.groupKey}
                             group={group}
@@ -541,6 +546,7 @@ export default function SalesHistoryPage() {
                         ))}
                       </TableBody>
                     </Table>
+                    <RecordPagination {...groupsPagination} itemLabel="groups" />
                   </div>
                 )}
               </CardContent>
@@ -571,7 +577,7 @@ export default function SalesHistoryPage() {
                   </div>
                 ) : (
                   <div className="divide-y">
-                    {filteredLogs.map((log) => (
+                    {paginatedLogs.map((log) => (
                       <div key={log.id} className="px-4 py-3 hover:bg-muted/20">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-start gap-3 min-w-0">
@@ -630,6 +636,7 @@ export default function SalesHistoryPage() {
                         </div>
                       </div>
                     ))}
+                    <RecordPagination {...logsPagination} itemLabel="logs" />
                   </div>
                 )}
               </CardContent>
