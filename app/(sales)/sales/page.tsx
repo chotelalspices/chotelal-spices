@@ -147,10 +147,21 @@ function formatSalesDateFilterLabel(dateString: string): string {
   });
 }
 
+function getClientGroupKey(record: SalesRecord): string {
+  const clientName = record.clientName?.trim() || 'Unknown';
+  const saleDate = getSalesDateKey(record.saleDate);
+  const voucherType = record.voucherType?.trim() || 'no-voucher-type';
+  const voucherNo = record.voucherNo?.trim() || 'no-voucher';
+
+  return [clientName, saleDate, voucherType, voucherNo]
+    .map((part) => part.toLowerCase())
+    .join('__');
+}
+
 function groupByClient(records: SalesRecord[]): ClientGroup[] {
   const map = new Map<string, ClientGroup>();
   records.forEach((record) => {
-    const key = record.voucherNo?.trim() || `${(record.clientName || 'Unknown').trim()}__${record.saleDate}`;
+    const key = getClientGroupKey(record);
     if (!map.has(key)) {
       map.set(key, {
         groupKey: key,
