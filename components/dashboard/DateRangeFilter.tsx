@@ -16,7 +16,7 @@ interface DateRangeFilterProps {
   className?: string;
 }
 
-const options: DateRangeOption[] = ['today', 'week', 'month', 'quarter'];
+const options: DateRangeOption[] = ['all', 'today', 'week', 'month', 'quarter'];
 
 export function DateRangeFilter({ value, onChange, className }: DateRangeFilterProps) {
   return (

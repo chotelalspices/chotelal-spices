@@ -46,7 +46,7 @@ const formatLakh = (amount: number): string => {
 };
 
 // ✅ UPDATED: Added 'quarter' to DateRangeOption
-export type DateRangeOption = 'today' | 'week' | 'month' | 'quarter';
+export type DateRangeOption = 'today' | 'week' | 'month' | 'quarter' | 'all';
 
 // Types for dashboard data
 interface DashboardData {
@@ -289,7 +289,7 @@ function SalesReportMetric({
 }
 
 export default function DashboardPage() {
-  const [dateRange, setDateRange] = useState<DateRangeOption>('month');
+  const [dateRange, setDateRange] = useState<DateRangeOption>('all');
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -331,6 +331,8 @@ export default function DashboardPage() {
         return 'This month';
       case 'quarter':
         return 'This quarter';
+      case 'all':
+        return 'All time';
       default:
         return 'Period';
     }
@@ -564,14 +566,14 @@ export default function DashboardPage() {
                 detail={`${dashboardData.reports.salesSummary.quantity.toLocaleString('en-IN')} units`}
               />
               <SalesReportMetric
-                label="Orders"
+                label="Client Records"
                 value={dashboardData.reports.salesSummary.orders.toLocaleString('en-IN')}
                 detail={`${dashboardData.reports.salesSummary.clients.toLocaleString('en-IN')} clients`}
               />
               <SalesReportMetric
                 label="Average Order"
                 value={formatCurrency(dashboardData.reports.salesSummary.averageOrderValue)}
-                detail="Per sales record"
+                detail="Per client record"
               />
               <SalesReportMetric
                 label="Received"

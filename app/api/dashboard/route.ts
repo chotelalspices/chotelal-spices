@@ -35,6 +35,16 @@ function formatShortDateLabel(date: Date) {
   return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 }
 
+function formatMonthKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function formatMonthLabel(date: Date) {
+  return date.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+}
+
 function getPaymentStatus(totalAmount: number, amountPaid: number | null, paymentStatus: string | null) {
   const paid = Math.min(Math.max(amountPaid ?? (paymentStatus === "paid" ? totalAmount : 0), 0), totalAmount);
   const due = Math.max(0, totalAmount - paid);
@@ -46,6 +56,31 @@ function getPaymentStatus(totalAmount: number, amountPaid: number | null, paymen
 
 function getPaidAmount(totalAmount: number, amountPaid: number | null, paymentStatus: string | null) {
   return Math.min(Math.max(amountPaid ?? (paymentStatus === "paid" ? totalAmount : 0), 0), totalAmount);
+}
+
+function getSaleFinalAmount(sale: { quantitySold: number; sellingPrice: number; discount: number | null }) {
+  const gross = sale.quantitySold * sale.sellingPrice;
+  return gross - gross * ((sale.discount || 0) / 100);
+}
+
+function getSalesReportGroupKey(sale: {
+  clientName: string | null;
+  saleDate: Date;
+  voucherType: string | null;
+  voucherNo: string | null;
+}) {
+  const clientName = sale.clientName?.trim() || "Unknown Client";
+  const voucherType = sale.voucherType?.trim() || "no-voucher-type";
+  const voucherNo = sale.voucherNo?.trim() || "no-voucher";
+
+  return [clientName, formatDateKey(sale.saleDate), voucherType, voucherNo]
+    .map((part) => part.toLowerCase())
+    .join("__");
+}
+
+function getCityFromClientName(clientName: string) {
+  const match = clientName.match(/\(([^()]*)\)\s*$/);
+  return match?.[1]?.trim() || null;
 }
 
 export async function GET(request: NextRequest) {
@@ -68,10 +103,11 @@ export async function GET(request: NextRequest) {
 
     // ── Date range ────────────────────────────────────────────────────────────
     const { searchParams } = new URL(request.url);
-    const dateRange = searchParams.get("dateRange") || "month";
+    const dateRange = searchParams.get("dateRange") || "all";
     const now = new Date();
-    let startDate: Date;
-    let endDate: Date = new Date();
+    const isAllTime = dateRange === "all";
+    let startDate: Date = new Date(0);
+    let endDate: Date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
 
     switch (dateRange) {
       case "today":
@@ -93,10 +129,13 @@ export async function GET(request: NextRequest) {
         startDate = new Date(now.getFullYear(), currentQuarter * 3, 1);
         break;
       }
+      case "all":
+        break;
       default:
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        startDate = new Date(0);
         break;
     }
+    const rangeDateFilter = isAllTime ? undefined : { gte: startDate, lt: endDate };
 
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
@@ -159,14 +198,14 @@ export async function GET(request: NextRequest) {
     const todaySales = {
       quantity: todaySalesRecords.reduce((sum, sale) => sum + sale.quantitySold, 0),
       revenue: todaySalesRecords.reduce(
-        (sum, sale) => sum + sale.quantitySold * sale.sellingPrice, 0
+        (sum, sale) => sum + getSaleFinalAmount(sale), 0
       ),
       count: todaySalesRecords.length,
     };
 
     // ── Packaging loss (date range) ───────────────────────────────────────────
     const packagingSessionsInRange = await prisma.packagingSession.findMany({
-      where: { date: { gte: startDate, lt: endDate } },
+      where: rangeDateFilter ? { date: rangeDateFilter } : {},
       include: { items: true },
     });
 
@@ -176,19 +215,19 @@ export async function GET(request: NextRequest) {
 
     // ── Profit snapshot (date range) ──────────────────────────────────────────
     const salesRecordsInRange = await prisma.salesRecord.findMany({
-      where: { saleDate: { gte: startDate, lt: endDate } },
+      where: rangeDateFilter ? { saleDate: rangeDateFilter } : {},
       include: { product: true },
     });
 
     const productionBatchesInRange = await prisma.productionBatch.findMany({
       where: {
-        productionDate: { gte: startDate, lt: endDate },
+        ...(rangeDateFilter ? { productionDate: rangeDateFilter } : {}),
         status: { in: ["confirmed", "ready_for_packaging"] },
       },
     });
 
     const revenue = salesRecordsInRange.reduce(
-      (sum, sale) => sum + sale.quantitySold * sale.sellingPrice, 0
+      (sum, sale) => sum + getSaleFinalAmount(sale), 0
     );
     const cost = salesRecordsInRange.reduce(
       (sum, sale) => sum + (sale.productionCost || 0), 0
@@ -209,25 +248,70 @@ export async function GET(request: NextRequest) {
       }
     >();
 
-    for (const cursor = new Date(startDate); cursor < endDate; cursor.setDate(cursor.getDate() + 1)) {
-      const day = new Date(cursor);
-      const key = formatDateKey(day);
-      trendMap.set(key, {
-        date: key,
-        label: formatShortDateLabel(day),
-        salesRevenue: 0,
-        salesQuantity: 0,
-        profit: 0,
-        productionQuantity: 0,
-        packagingQuantity: 0,
-        packagingLoss: 0,
-      });
+    const trendDates = [
+      ...salesRecordsInRange.map((sale) => sale.saleDate),
+      ...productionBatchesInRange.map((batch) => batch.productionDate),
+      ...packagingSessionsInRange.map((packagingSession) => packagingSession.date),
+    ];
+    const groupTrendByMonth = isAllTime || trendDates.some((date) => date < startDate || date >= endDate);
+    const getTrendKey = (date: Date) => (groupTrendByMonth ? formatMonthKey(date) : formatDateKey(date));
+    const getTrendLabel = (date: Date) => (groupTrendByMonth ? formatMonthLabel(date) : formatShortDateLabel(date));
+
+    if (groupTrendByMonth && trendDates.length > 0) {
+      const minDate = new Date(Math.min(...trendDates.map((date) => date.getTime())));
+      const maxDate = new Date(Math.max(...trendDates.map((date) => date.getTime())));
+      const cursor = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+      const trendEnd = new Date(maxDate.getFullYear(), maxDate.getMonth() + 1, 1);
+
+      while (cursor < trendEnd) {
+        const bucketDate = new Date(cursor);
+        const key = getTrendKey(bucketDate);
+        trendMap.set(key, {
+          date: key,
+          label: getTrendLabel(bucketDate),
+          salesRevenue: 0,
+          salesQuantity: 0,
+          profit: 0,
+          productionQuantity: 0,
+          packagingQuantity: 0,
+          packagingLoss: 0,
+        });
+        cursor.setMonth(cursor.getMonth() + 1);
+      }
+    } else {
+      for (const cursor = new Date(startDate); cursor < endDate; cursor.setDate(cursor.getDate() + 1)) {
+        const day = new Date(cursor);
+        const key = getTrendKey(day);
+        trendMap.set(key, {
+          date: key,
+          label: getTrendLabel(day),
+          salesRevenue: 0,
+          salesQuantity: 0,
+          profit: 0,
+          productionQuantity: 0,
+          packagingQuantity: 0,
+          packagingLoss: 0,
+        });
+      }
     }
 
     const productSalesMap = new Map<string, { name: string; value: number; quantity: number }>();
     const clientSalesMap = new Map<string, { name: string; value: number; quantity: number; orders: number }>();
     const citySalesMap = new Map<string, { name: string; value: number; quantity: number }>();
     const salesmanSalesMap = new Map<string, { name: string; value: number; quantity: number }>();
+    const salesGroupMap = new Map<
+      string,
+      {
+        clientName: string;
+        totalAmount: number;
+        quantity: number;
+        profit: number;
+        amountPaid: number;
+        amountDue: number;
+        paymentStatus: string;
+        lineCount: number;
+      }
+    >();
     const paymentStatusMap = new Map<string, number>([
       ["Paid", 0],
       ["Partial", 0],
@@ -246,16 +330,14 @@ export async function GET(request: NextRequest) {
     const clientMetas = await clientMetaDelegate.clientMeta.findMany({
       select: { clientName: true, city: true, salesman: true },
     });
-    const clientMetaMap = new Map(clientMetas.map((meta) => [meta.clientName.trim(), meta]));
+    const clientMetaMap = new Map(clientMetas.map((meta) => [meta.clientName.trim().toLowerCase(), meta]));
 
     salesRecordsInRange.forEach((sale) => {
-      const key = formatDateKey(sale.saleDate);
+      const key = getTrendKey(sale.saleDate);
       const day = trendMap.get(key);
-      const saleRevenue = sale.quantitySold * sale.sellingPrice;
-      const saleProfit = saleRevenue - (sale.productionCost || 0);
+      const saleRevenue = getSaleFinalAmount(sale);
+      const saleProfit = sale.profit ?? saleRevenue - (sale.productionCost || 0);
       const paid = getPaidAmount(saleRevenue, sale.amountPaid, sale.paymentStatus);
-      paidAmount += paid;
-      outstandingAmount += Math.max(0, saleRevenue - paid);
 
       if (day) {
         day.salesRevenue += saleRevenue;
@@ -270,37 +352,71 @@ export async function GET(request: NextRequest) {
       productSalesMap.set(productName, product);
 
       const clientName = sale.clientName?.trim() || "Unknown Client";
+      const groupKey = getSalesReportGroupKey(sale);
+      const group = salesGroupMap.get(groupKey) || {
+        clientName,
+        totalAmount: 0,
+        quantity: 0,
+        profit: 0,
+        amountPaid: 0,
+        amountDue: 0,
+        paymentStatus: "Unpaid",
+        lineCount: 0,
+      };
+      group.totalAmount += saleRevenue;
+      group.quantity += sale.quantitySold;
+      group.profit += saleProfit;
+      group.amountPaid += paid;
+      group.lineCount += 1;
+      salesGroupMap.set(groupKey, group);
+    });
+
+    const salesGroups = Array.from(salesGroupMap.values()).map((group) => {
+      const amountPaid = Math.min(Math.max(group.amountPaid, 0), group.totalAmount);
+      const amountDue = Math.max(0, group.totalAmount - amountPaid);
+      return {
+        ...group,
+        amountPaid,
+        amountDue,
+        paymentStatus: getPaymentStatus(group.totalAmount, amountPaid, null),
+      };
+    });
+
+    salesGroups.forEach((group) => {
+      paidAmount += group.amountPaid;
+      outstandingAmount += group.amountDue;
+
+      const clientName = group.clientName;
       const client = clientSalesMap.get(clientName) || { name: clientName, value: 0, quantity: 0, orders: 0 };
-      client.value += saleRevenue;
-      client.quantity += sale.quantitySold;
+      client.value += group.totalAmount;
+      client.quantity += group.quantity;
       client.orders += 1;
       clientSalesMap.set(clientName, client);
 
-      const meta = clientMetaMap.get(clientName);
-      const cityName = meta?.city?.trim() || "Unassigned";
+      const meta = clientMetaMap.get(clientName.toLowerCase());
+      const cityName = meta?.city?.trim() || getCityFromClientName(clientName) || "Unassigned";
       const city = citySalesMap.get(cityName) || { name: cityName, value: 0, quantity: 0 };
-      city.value += saleRevenue;
-      city.quantity += sale.quantitySold;
+      city.value += group.totalAmount;
+      city.quantity += group.quantity;
       citySalesMap.set(cityName, city);
 
       const salesmanName = meta?.salesman?.trim() || "Unassigned";
       const salesman = salesmanSalesMap.get(salesmanName) || { name: salesmanName, value: 0, quantity: 0 };
-      salesman.value += saleRevenue;
-      salesman.quantity += sale.quantitySold;
+      salesman.value += group.totalAmount;
+      salesman.quantity += group.quantity;
       salesmanSalesMap.set(salesmanName, salesman);
 
-      const status = getPaymentStatus(saleRevenue, sale.amountPaid, sale.paymentStatus);
-      paymentStatusMap.set(status, (paymentStatusMap.get(status) || 0) + saleRevenue);
+      paymentStatusMap.set(group.paymentStatus, (paymentStatusMap.get(group.paymentStatus) || 0) + group.totalAmount);
     });
 
     productionBatchesInRange.forEach((batch) => {
-      const key = formatDateKey(batch.productionDate);
+      const key = getTrendKey(batch.productionDate);
       const day = trendMap.get(key);
       if (day) day.productionQuantity += batch.finalOutput || batch.plannedQuantity;
     });
 
     packagingSessionsInRange.forEach((packagingSession) => {
-      const key = formatDateKey(packagingSession.date);
+      const key = getTrendKey(packagingSession.date);
       const day = trendMap.get(key);
       if (day) {
         day.packagingQuantity += getSessionPackagedQuantity(packagingSession);
@@ -415,7 +531,7 @@ export async function GET(request: NextRequest) {
       clientName: sale.clientName || null,
       productName: sale.product.name,
       quantity: sale.quantitySold,
-      totalAmount: sale.quantitySold * sale.sellingPrice,
+      totalAmount: getSaleFinalAmount(sale),
       date: sale.saleDate.toISOString().split("T")[0],
     }));
 
@@ -481,11 +597,11 @@ export async function GET(request: NextRequest) {
           salesSummary: {
             revenue: Math.round(revenue * 100) / 100,
             quantity: salesRecordsInRange.reduce((sum, sale) => sum + sale.quantitySold, 0),
-            orders: salesRecordsInRange.length,
+            orders: salesGroups.length,
             clients: uniqueClientCount,
             averageOrderValue:
-              salesRecordsInRange.length > 0
-                ? Math.round((revenue / salesRecordsInRange.length) * 100) / 100
+              salesGroups.length > 0
+                ? Math.round((revenue / salesGroups.length) * 100) / 100
                 : 0,
             received: Math.round(paidAmount * 100) / 100,
             outstanding: Math.round(outstandingAmount * 100) / 100,

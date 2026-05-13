@@ -3,7 +3,7 @@
 import { rawMaterials, getStockStatus } from './sampleData';
 import { productionBatches } from './productionData';
 import { packagingBatches } from './packagingData';
-import { salesRecords, finishedProducts } from './salesData';
+import { salesRecords } from './salesData';
 
 // Role types
 export type UserRole = 'admin' | 'staff';
@@ -201,6 +201,7 @@ export type DateRangeOption =
   | 'week' 
   | 'month' 
   | 'quarter' 
+  | 'all'
   | 'custom';
 
 export const getDateRangeLabel = (option: DateRangeOption): string => {
@@ -213,6 +214,8 @@ export const getDateRangeLabel = (option: DateRangeOption): string => {
       return 'This Month';
     case 'quarter': 
       return 'This Quarter';
+    case 'all':
+      return 'All Time';
     case 'custom': 
       return 'Custom';
     default:
@@ -242,6 +245,9 @@ export const getDateRangeStartDate = (option: DateRangeOption): Date => {
       const quarterStartMonth = currentQuarter * 3;
       return new Date(now.getFullYear(), quarterStartMonth, 1);
     }
+
+    case 'all':
+      return new Date(0);
 
     case 'custom':
       // You can later override this from date picker
