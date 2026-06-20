@@ -77,7 +77,7 @@ function extractSalesData(workbook: any) {
                     product: row[1],
                     pieces: pieces,
                     pricePerPiece: pricePerPiece,
-                    totalPrice: row[4] || (pricePerPiece * pieces)
+                    totalPrice: row[4]
                 };
                 currentSales.push(product);
             }

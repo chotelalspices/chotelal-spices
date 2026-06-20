@@ -4,6 +4,8 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
+import { deductInventoryFifo } from "@/lib/sales-inventory";
+import { parseAuthoritativeUploadAmount } from "@/lib/sales-values";
 
 const CHUNK_SIZE = 100;
 
@@ -29,40 +31,6 @@ function parseSaleDate(input: unknown): Date {
   }
 
   return new Date();
-}
-
-async function deductProductPool(
-  tx: any,
-  products: Array<{ id: string; availableInventory: number | null }>,
-  fallbackProductId: string,
-  quantity: number
-) {
-  let remaining = quantity;
-
-  for (const product of products) {
-    if (remaining <= 0) break;
-    const currentStock = product.availableInventory || 0;
-    if (currentStock <= 0) continue;
-
-    const deduction = Math.min(currentStock, remaining);
-    await tx.finishedProduct.update({
-      where: { id: product.id },
-      data: { availableInventory: currentStock - deduction },
-    });
-    product.availableInventory = currentStock - deduction;
-    remaining -= deduction;
-  }
-
-  if (remaining > 0) {
-    const fallback = products.find((product) => product.id === fallbackProductId) || products[0];
-    if (fallback) {
-      await tx.finishedProduct.update({
-        where: { id: fallback.id },
-        data: { availableInventory: (fallback.availableInventory || 0) - remaining },
-      });
-      fallback.availableInventory = (fallback.availableInventory || 0) - remaining;
-    }
-  }
 }
 
 export async function POST(request: NextRequest) {
@@ -134,6 +102,7 @@ export async function POST(request: NextRequest) {
       discount: number;
       productionCost: number;
       profit: number;
+      totalAmount: number;
       remarks: string | null;
       saleDate: Date;
     }> = [];
@@ -180,9 +149,13 @@ export async function POST(request: NextRequest) {
 
       remainingStock.set(product.id, currentRemaining - parsedQuantity);
 
-      const totalAmount = parsedQuantity * parsedPrice;
-      const discountAmount = totalAmount * (parsedDiscount / 100);
-      const finalAmount = totalAmount - discountAmount;
+      let finalAmount: number;
+      try {
+        finalAmount = parseAuthoritativeUploadAmount(sale.totalAmount);
+      } catch (error) {
+        errors.push({ row: i + 1, error: error instanceof Error ? error.message : "Invalid Excel total amount" });
+        continue;
+      }
       const isFree = finalAmount === 0;
       const providedProductionCost = sale.productionCost ? parseFloat(String(sale.productionCost)) : 0;
       const productionCost = Number.isNaN(providedProductionCost) ? 0 : providedProductionCost;
@@ -198,6 +171,7 @@ export async function POST(request: NextRequest) {
         discount: parsedDiscount,
         productionCost,
         profit,
+        totalAmount: finalAmount,
         remarks: sale.remarks || null,
         saleDate: parseSaleDate(sale.saleDate),
       });
@@ -228,6 +202,7 @@ export async function POST(request: NextRequest) {
               quantitySold: sale.quantitySold,
               unit: "kg",
               sellingPrice: sale.sellingPrice,
+              totalAmount: sale.totalAmount,
               discount: sale.discount,
               productionCost: sale.productionCost,
               profit: sale.profit,
@@ -238,7 +213,7 @@ export async function POST(request: NextRequest) {
           });
 
           for (const [productId, totalDeduction] of inventoryUpdates.entries()) {
-            await deductProductPool(tx, productsBySelectedId.get(productId) || [], productId, totalDeduction);
+            await deductInventoryFifo(tx, productsBySelectedId.get(productId) || [], totalDeduction);
           }
 
           return createResult.count;

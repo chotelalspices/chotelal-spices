@@ -323,7 +323,7 @@ export default function SalesEntry() {
                         ) : (
                           availableProducts.map((product) => (
                             <SelectItem key={product.id} value={product.id}>
-                              {product.name}
+                              {product.name} (Available: {product.availableQuantity} pcs)
                             </SelectItem>
                           ))
                         )}

@@ -66,7 +66,7 @@ export async function GET(
     }
 
     const gross = salesRecord.quantitySold * salesRecord.sellingPrice;
-    const totalAmount = gross - gross * ((salesRecord.discount || 0) / 100);
+    const totalAmount = salesRecord.totalAmount ?? (gross - gross * ((salesRecord.discount || 0) / 100));
 
     return NextResponse.json({
       id: salesRecord.id,
@@ -174,6 +174,7 @@ export async function PUT(
         data: {
           quantitySold: parsedQuantity,
           sellingPrice: parsedSellingPrice,
+          totalAmount: parsedQuantity * parsedSellingPrice * (1 - finalDiscount / 100),
           discount: finalDiscount,
           remarks: remarks || null,
           productionCost: existingRecord.productionCost
@@ -227,7 +228,7 @@ export async function PUT(
     }
 
     const gross = result.quantitySold * result.sellingPrice;
-    const totalAmount = gross - gross * ((result.discount || 0) / 100);
+    const totalAmount = result.totalAmount ?? (gross - gross * ((result.discount || 0) / 100));
 
     return NextResponse.json({
       id: result.id,

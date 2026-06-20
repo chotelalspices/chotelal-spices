@@ -50,7 +50,19 @@ export async function GET(request: NextRequest) {
     const batches = await prisma.productionBatch.findMany({
       where: { status: { in: ["ready_for_packaging", "confirmed"] } },
       include: {
-        formulation: true,
+        formulation: {
+          include: {
+            finishedProducts: {
+              include: {
+                productLabels: {
+                  include: {
+                    label: true,
+                  },
+                },
+              },
+            },
+          },
+        },
         packagingSessions: {
           include: {
             items: { include: { container: true } },
@@ -65,6 +77,15 @@ export async function GET(request: NextRequest) {
     });
 
     const formattedBatches = batches.map((batch) => {
+      const semiPackageableLabelNames = new Set<string>();
+      for (const finishedProduct of batch.formulation.finishedProducts) {
+        for (const productLabel of finishedProduct.productLabels) {
+          if (productLabel.semiPackageable) {
+            semiPackageableLabelNames.add(productLabel.label.name.trim().toLowerCase());
+          }
+        }
+      }
+
       // Fully packaged weight parsed from session remarks
       const totalPackagedWeight = batch.packagingSessions.reduce((sum, session) => {
         if (session.remarks && session.remarks.includes("Total:")) {
@@ -72,6 +93,27 @@ export async function GET(request: NextRequest) {
           if (match) return sum + parseFloat(match[1]);
         }
         return sum;
+      }, 0);
+
+      const totalPackagedPackets = batch.packagingSessions.reduce((sum, session) => {
+        return (
+          sum +
+          parsePackagedProducts(session.remarks).reduce(
+            (sessionSum, product) => sessionSum + product.packets,
+            0
+          )
+        );
+      }, 0);
+
+      const semiPackagedPackets = batch.packagingSessions.reduce((sum, session) => {
+        return (
+          sum +
+          session.sessionLabels.reduce((sessionSum, label) => {
+            if (!label.semiPackaged) return sessionSum;
+            if (!semiPackageableLabelNames.has(label.type.trim().toLowerCase())) return sessionSum;
+            return sessionSum + label.quantity;
+          }, 0)
+        );
       }, 0);
 
       const totalLoss = batch.packagingSessions.reduce(
@@ -86,6 +128,19 @@ export async function GET(request: NextRequest) {
           packagedProductTotals.set(product.name, {
             packets: current.packets + product.packets,
             totalWeight: current.totalWeight + product.weight,
+          });
+        });
+      });
+
+      const semiPackagedProductTotals = new Map<string, { packets: number }>();
+
+      batch.packagingSessions.forEach((session) => {
+        session.sessionLabels.forEach((label) => {
+          if (!label.semiPackaged) return;
+          if (!semiPackageableLabelNames.has(label.type.trim().toLowerCase())) return;
+          const current = semiPackagedProductTotals.get(label.type) || { packets: 0 };
+          semiPackagedProductTotals.set(label.type, {
+            packets: current.packets + label.quantity,
           });
         });
       });
@@ -150,6 +205,12 @@ export async function GET(request: NextRequest) {
           packets: total.packets,
           totalWeight: total.totalWeight,
         })),
+        semiPackagedProducts: Array.from(semiPackagedProductTotals.entries()).map(([name, total]) => ({
+          name,
+          packets: total.packets,
+        })),
+        totalPackagedPackets,
+        semiPackagedPackets,
         totalLoss,
         remainingQuantity: Math.max(0, remainingQuantity),
         semiPackaged: batchSemiPackagedKg,

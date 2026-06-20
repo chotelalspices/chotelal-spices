@@ -58,7 +58,8 @@ function getPaidAmount(totalAmount: number, amountPaid: number | null, paymentSt
   return Math.min(Math.max(amountPaid ?? (paymentStatus === "paid" ? totalAmount : 0), 0), totalAmount);
 }
 
-function getSaleFinalAmount(sale: { quantitySold: number; sellingPrice: number; discount: number | null }) {
+function getSaleFinalAmount(sale: { quantitySold: number; sellingPrice: number; discount: number | null; totalAmount?: number | null }) {
+  if (sale.totalAmount != null) return sale.totalAmount;
   const gross = sale.quantitySold * sale.sellingPrice;
   return gross - gross * ((sale.discount || 0) / 100);
 }

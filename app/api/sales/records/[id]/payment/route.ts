@@ -98,10 +98,11 @@ export async function PATCH(
     }
 
     // 6️⃣ Total calculation
-    const totalAmount =
+    const totalAmount = existingSale.totalAmount ?? (
       existingSale.quantitySold *
       existingSale.sellingPrice *
-      (1 - (existingSale.discount ?? 0) / 100);
+      (1 - (existingSale.discount ?? 0) / 100)
+    );
 
     if (parsedAmount > totalAmount) {
       return NextResponse.json(

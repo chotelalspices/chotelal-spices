@@ -180,7 +180,7 @@ async function parseExcelFile(
     // Excel format: Column C = packets (e.g., "100.00 PCS"), Column D = price per packet (e.g., "40.00/PCS")
     const numberOfPackets = Number(colC);  // Column C - packets/quantity
     const pricePerUnit = Number(colD);     // Column D - price per packet
-    const totalPrice = Number(colE);
+    const totalPrice = colE === '' || colE === null || colE === undefined ? Number.NaN : Number(colE);
 
     if (
       colB &&
@@ -197,13 +197,13 @@ async function parseExcelFile(
         productName: colB,
         pricePerUnit,
         numberOfPackets,
-        totalPrice: isNaN(totalPrice) ? pricePerUnit * numberOfPackets : totalPrice,
+        totalPrice,
         id: '',
         availableQuantity: 0,
         sellingPricePerPacket: pricePerUnit,
         discount: 0,
         productionCost: 0,
-        finalAmount: totalPrice || pricePerUnit * numberOfPackets,
+        finalAmount: totalPrice,
         profitLoss: 0,
         isFree: false,
         status: 'invalid',
@@ -226,7 +226,7 @@ function enrichRows(
     const qty = row.numberOfPackets;
     const price = row.sellingPricePerPacket;
     const discount = row.discount;
-    const finalAmount = price * qty * (1 - discount / 100);
+    const finalAmount = row.totalPrice;
     const isFree = finalAmount === 0;
     const productionCost = product ? product.productionCostPerPacket * qty : 0;
     const profitLoss = isFree ? 0 : finalAmount - productionCost;
@@ -235,6 +235,7 @@ function enrichRows(
     if (!product) errors.push(`"${row.productName}" not found in system`);
     if (qty <= 0) errors.push('Invalid quantity');
     if (!isFree && price <= 0) errors.push('Invalid selling price');
+    if (!Number.isFinite(finalAmount) || finalAmount < 0) errors.push('Invalid Excel total amount');
     if (product && qty > product.availableQuantity)
       errors.push(`Insufficient stock (${product.availableQuantity} avail.)`);
 
@@ -383,11 +384,13 @@ export default function SalesUpload() {
         productId: row.id,
         clientName: row.clientName,
         voucherNo: row.voucherNo,
+        voucherType: row.voucherType,
         saleDate: row.saleDate,
         numberOfPackets: row.numberOfPackets,
         sellingPricePerPacket: row.sellingPricePerPacket,
         discount: row.discount,
         productionCost: row.productionCost,
+        totalAmount: row.finalAmount,
         remarks: `Bulk import – ${uploadedFile?.name ?? 'Excel file'}`,
       }));
 
@@ -562,7 +565,7 @@ export default function SalesUpload() {
                       {visibleSessions.map((session) => {
                         const sessionValid = session.products.filter((p) => p.status === 'valid');
                         const sessionInvalid = session.products.filter((p) => p.status === 'invalid');
-                        const sessionTotal = session.products.reduce((s, p) => s + p.finalAmount, 0);
+                        const sessionTotal = session.products.reduce((s, p) => s + (Number.isFinite(p.finalAmount) ? p.finalAmount : 0), 0);
 
                         return (
                           <Fragment key={session.sessionKey}>

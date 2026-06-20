@@ -277,6 +277,7 @@ model SalesRecord {
   productionCost   Float
   discount         Float
   sellingPrice     Float
+  totalAmount      Float?
   profit           Float
   remarks          String?
   saleDate         DateTime

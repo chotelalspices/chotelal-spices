@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { Fragment, useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Package, Search, Loader2, AlertCircle, Check, ChevronDown, X } from "lucide-react";
 
@@ -29,12 +29,15 @@ interface PackagingBatch {
   date: string | null;
   producedQuantity: number;
   alreadyPackaged: number;
+  totalPackagedPackets?: number;
+  semiPackagedPackets?: number;
   totalLoss: number;
   remainingQuantity: number;
   semiPackaged: number;
   status: "Not Started" | "Partial" | "Semi Packaged" | "Completed";
   sessions: unknown[];
   packagedProducts?: Array<{ name: string; packets: number; totalWeight: number }>;
+  semiPackagedProducts?: Array<{ name: string; packets: number }>;
 }
 
 const ALL_STATUSES = ["Not Started", "Semi Packaged", "Partial", "Completed"] as const;
@@ -52,16 +55,66 @@ const getStartOfCurrentMonth = () => {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 };
 
+const normalizeSearchString = (value: string) =>
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "");
+
+const getSearchTokens = (value: string) =>
+  value
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(normalizeSearchString)
+    .filter(Boolean);
+
+const matchesSearchTokens = (value: string, tokens: string[]) => {
+  const normalizedValue = normalizeSearchString(value);
+  return tokens.every((token) => normalizedValue.includes(token));
+};
+
+const matchesProductAndMasala = (
+  productName: string,
+  masalaName: string,
+  tokens: string[]
+) => {
+  const normalizedMasala = normalizeSearchString(masalaName);
+  const normalizedProduct = normalizeSearchString(productName);
+  return tokens.every(
+    (token) =>
+      normalizedMasala.includes(token) || normalizedProduct.includes(token)
+  );
+};
+
+const parsePackageSizeKg = (labelName: string): number | null => {
+  const match = labelName.match(/(\d+(?:\.\d+)?)\s*(kg|g|gm)\b/i);
+  if (!match) return null;
+  const size = parseFloat(match[1]);
+  if (!Number.isFinite(size)) return null;
+  const unit = match[2].toLowerCase();
+  return unit === "kg" ? size : size / 1000;
+};
+
+const getPacketsWeightKg = (labelName: string, packets: number, fallbackWeightKg = 0) => {
+  const sizeKg = parsePackageSizeKg(labelName);
+  if (sizeKg !== null) return packets * sizeKg;
+  return fallbackWeightKg;
+};
+
 const getMatchingPackagedTotal = (batch: PackagingBatch, query: string) => {
-  const normalizedQuery = query.toLowerCase().trim();
-  if (!normalizedQuery) return null;
+  const tokens = getSearchTokens(query);
+  if (tokens.length === 0) return null;
 
   const total = (batch.packagedProducts || [])
-    .filter((product) => product.name.toLowerCase().includes(normalizedQuery))
+    .filter((product) =>
+      matchesProductAndMasala(product.name, batch.productName, tokens)
+    )
     .reduce(
       (sum, product) => ({
         packets: sum.packets + product.packets,
-        totalWeight: sum.totalWeight + product.totalWeight,
+        totalWeight: sum.totalWeight + getPacketsWeightKg(product.name, product.packets, product.totalWeight),
       }),
       { packets: 0, totalWeight: 0 }
     );
@@ -99,6 +152,9 @@ const PackagingList = () => {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const [searchQuery, setSearchQuery]       = useState("");
+  const [packagingSearch, setPackagingSearch] = useState("");
+  const [debouncedPackagingSearch, setDebouncedPackagingSearch] = useState("");
+  const [expandedMasalas, setExpandedMasalas] = useState<Set<string>>(new Set());
   const [startDate, setStartDate]           = useState(getStartOfCurrentMonth);
   const [endDate, setEndDate]               = useState("");
   const [selectedStatuses, setSelectedStatuses] = useState<StatusType[]>([]);
@@ -150,13 +206,16 @@ const PackagingList = () => {
 
   // Filter batches
   const filteredBatches = batches.filter((batch) => {
-    const query = searchQuery.toLowerCase().trim();
+    const tokens = getSearchTokens(searchQuery);
     const matchesSearch =
-      !query ||
-      batch.batchNumber.toLowerCase().includes(query) ||
-      batch.productName.toLowerCase().includes(query) ||
-      (batch.packagedProducts || []).some((product) =>
-        product.name.toLowerCase().includes(query)
+      tokens.length === 0 ||
+      tokens.every(
+        (token) =>
+          batch.batchNumber.toLowerCase().includes(token) ||
+          normalizeSearchString(batch.productName).includes(token) ||
+          (batch.packagedProducts || []).some((product) =>
+            normalizeSearchString(product.name).includes(token)
+          )
       );
     const matchesStatus =
       selectedStatuses.length === 0 || selectedStatuses.includes(batch.status as StatusType);
@@ -181,6 +240,126 @@ const PackagingList = () => {
     )
     : { packets: 0, totalWeight: 0 };
 
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setDebouncedPackagingSearch(packagingSearch.trim().toLowerCase()),
+      300,
+    );
+    return () => window.clearTimeout(timer);
+  }, [packagingSearch]);
+
+  const packagingOverview = useMemo(() => {
+    type PackageTotal = {
+      name: string;
+      fullyPackagedPackets: number;
+      semiPackagedPackets: number;
+      totalWeight: number;
+      displayWeightKg: number;
+    };
+    type BatchDetail = PackagingBatch & { packageBreakdown: PackageTotal[] };
+    const byMasala = new Map<string, {
+      masalaName: string;
+      totalQuantity: number;
+      totalPackagedWeight: number;
+      totalPackagedPackets: number;
+      semiPackagedPackets: number;
+      remainingQuantity: number;
+      batchCount: number;
+      packageBreakdown: PackageTotal[];
+      batches: BatchDetail[];
+    }>();
+
+    for (const batch of batches) {
+      const key = batch.productName.trim().toLowerCase();
+      const row = byMasala.get(key) || {
+        masalaName: batch.productName,
+        totalQuantity: 0,
+        totalPackagedWeight: 0,
+        displayPackagedWeight: 0,
+        totalPackagedPackets: 0,
+        semiPackagedPackets: 0,
+        remainingQuantity: 0,
+        batchCount: 0,
+        packageBreakdown: [],
+        batches: [],
+      };
+      row.totalQuantity += batch.producedQuantity;
+      row.remainingQuantity += batch.remainingQuantity;
+      row.batchCount += 1;
+
+      const batchPackages = (batch.packagedProducts || [])
+        .filter((product) => product.packets > 0 || product.totalWeight > 0)
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      const batchSemiPackages = (batch.semiPackagedProducts || [])
+        .filter((product) => product.packets > 0)
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      for (const product of batchPackages) {
+        const packageKey = product.name.trim().toLowerCase();
+        const existing = row.packageBreakdown.find(
+          (item) => item.name.trim().toLowerCase() === packageKey,
+        );
+        if (existing) {
+          existing.fullyPackagedPackets += product.packets;
+          existing.totalWeight += product.totalWeight;
+          existing.displayWeightKg += getPacketsWeightKg(product.name, product.packets, product.totalWeight);
+        } else {
+          row.packageBreakdown.push({
+            name: product.name,
+            fullyPackagedPackets: product.packets,
+            semiPackagedPackets: 0,
+            totalWeight: product.totalWeight,
+            displayWeightKg: getPacketsWeightKg(product.name, product.packets, product.totalWeight),
+          });
+        }
+        row.totalPackagedWeight += product.totalWeight;
+        row.displayPackagedWeight += getPacketsWeightKg(product.name, product.packets, product.totalWeight);
+      }
+
+      for (const product of batchSemiPackages) {
+        const semiKey = normalizeSearchString(product.name);
+        const existing = row.packageBreakdown.find((item) => {
+          const packageKey = normalizeSearchString(item.name);
+          return packageKey.includes(semiKey) || semiKey.includes(packageKey);
+        });
+
+        if (!existing) continue;
+
+        if (existing) {
+          existing.semiPackagedPackets += product.packets;
+        }
+      }
+
+      row.totalPackagedPackets += batch.totalPackagedPackets ?? batch.packagedProducts?.reduce((sum, product) => sum + product.packets, 0) ?? 0;
+      row.semiPackagedPackets += row.packageBreakdown.reduce((sum, item) => sum + item.semiPackagedPackets, 0);
+
+      row.batches.push({ ...batch, packageBreakdown: batchPackages });
+      byMasala.set(key, row);
+    }
+
+    const searchTokens = getSearchTokens(debouncedPackagingSearch);
+
+    return Array.from(byMasala.values())
+      .map((row) => ({
+        ...row,
+        packageBreakdown: row.packageBreakdown.sort((a, b) => a.name.localeCompare(b.name)),
+        batches: row.batches.sort((a, b) => a.batchNumber.localeCompare(b.batchNumber)),
+      }))
+      .filter((row) => {
+        if (searchTokens.length === 0) return true;
+
+        const masalaMatches = matchesSearchTokens(row.masalaName, searchTokens);
+        const productMatches = row.packageBreakdown.some((item) =>
+          matchesSearchTokens(item.name, searchTokens)
+        );
+
+        return masalaMatches || productMatches;
+      })
+      .sort((a, b) => a.masalaName.localeCompare(b.masalaName));
+  }, [batches, debouncedPackagingSearch]);
+
+  const overviewPagination = usePaginatedRecords(packagingOverview, 10);
   const handlePackaging    = (batchNumber: string) => router.push(`/packaging/${batchNumber}/entry`);
   const handleViewSummary  = (batchNumber: string) => router.push(`/packaging/${batchNumber}/summary`);
 
@@ -267,6 +446,121 @@ const PackagingList = () => {
           </div>
         </div>
 
+        <Card>
+          <CardContent className="p-4 sm:p-6 space-y-4">
+            <div>
+              <h2 className="font-semibold">360° Masala Packaging Search</h2>
+              <p className="text-sm text-muted-foreground">Aggregated across every packaging batch</p>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Type a masala name"
+                value={packagingSearch}
+                onChange={(event) => setPackagingSearch(event.target.value)}
+                className="pl-10"
+              />
+            </div>
+            {packagingSearch.trim() && (
+              <div className="space-y-3">
+                {overviewPagination.paginatedRecords.map((row) => {
+                  const isExpanded = expandedMasalas.has(row.masalaName);
+                  return (
+                    <Card key={row.masalaName} className="overflow-hidden">
+                      <CardContent className="p-4 sm:p-5">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="space-y-2">
+                            <div>
+                              <h3 className="text-lg font-semibold">{row.masalaName}</h3>
+                              <p className="text-sm text-muted-foreground">
+                                {row.batchCount} batches across all packaging records
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {row.packageBreakdown.length > 0 ? (
+                                row.packageBreakdown.map((item) => (
+                                  <Badge key={item.name} variant="secondary" className="font-normal">
+                                    {item.name}: {item.fullyPackagedPackets.toLocaleString("en-IN")} full / {item.semiPackagedPackets.toLocaleString("en-IN")} semi
+                                  </Badge>
+                                ))
+                              ) : (
+                                <span className="text-sm text-muted-foreground">No retail packages recorded</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="grid gap-2 sm:grid-cols-3 lg:min-w-[360px] lg:grid-cols-3">
+                            <div className="rounded-lg border bg-background p-3">
+                              <p className="text-xs text-muted-foreground">Packed Weight</p>
+                              <p className="mt-1 text-xl font-bold">{row.displayPackagedWeight.toFixed(3)} kg</p>
+                            </div>
+                            <div className="rounded-lg border bg-background p-3">
+                              <p className="text-xs text-muted-foreground">Remaining</p>
+                              <p className="mt-1 text-xl font-bold">{row.remainingQuantity.toFixed(3)} kg</p>
+                            </div>
+                            <div className="rounded-lg border bg-background p-3">
+                              <p className="text-xs text-muted-foreground">Batches</p>
+                              <p className="mt-1 text-xl font-bold">{row.batchCount}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex justify-end">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setExpandedMasalas((current) => {
+                              const next = new Set(current);
+                              if (next.has(row.masalaName)) next.delete(row.masalaName);
+                              else next.add(row.masalaName);
+                              return next;
+                            })}
+                          >
+                            Details
+                            <ChevronDown className={cn("ml-1 h-4 w-4 transition-transform", isExpanded && "rotate-180")} />
+                          </Button>
+                        </div>
+
+                        {isExpanded && (
+                          <div className="mt-4 space-y-4 border-t pt-4">
+                            <div>
+                              <h4 className="mb-2 text-sm font-semibold">Package-size totals across all batches</h4>
+                              {row.packageBreakdown.length > 0 ? (
+                                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                                  {row.packageBreakdown.map((item) => (
+                                    <div key={item.name} className="rounded-lg border bg-background p-3">
+                                      <p className="font-medium">{item.name}</p>
+                                      <div className="mt-2 space-y-1 text-sm">
+                                        <p>
+                                          <span className="font-semibold">Full:</span> {item.fullyPackagedPackets.toLocaleString("en-IN")} pcs
+                                        </p>
+                                        <p>
+                                          <span className="font-semibold">Semi:</span> {item.semiPackagedPackets.toLocaleString("en-IN")} pcs
+                                        </p>
+                                        <p className="text-xs text-muted-foreground">{item.displayWeightKg.toFixed(3)} kg packed</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-sm text-muted-foreground">No fully packaged retail sizes have been recorded.</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+                {overviewPagination.totalRecords === 0 && (
+                  <div className="rounded-md border py-8 text-center text-muted-foreground">
+                    No masala or package size matched your search
+                  </div>
+                )}
+                <RecordPagination {...overviewPagination} itemLabel="masalas" />
+              </div>
+            )}          </CardContent>
+        </Card>
         {/* Filters */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
 

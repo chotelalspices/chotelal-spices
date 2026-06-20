@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
+import { deductInventoryFifo } from "@/lib/sales-inventory";
 
 async function getAuthUser(request?: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -34,35 +35,6 @@ async function getProductPool(productId: string) {
     products,
     availablePackets: products.reduce((sum, product) => sum + (product.availableInventory || 0), 0),
   };
-}
-
-async function deductProductPool(tx: any, products: Array<{ id: string; availableInventory: number | null }>, fallbackProductId: string, quantity: number) {
-  let remaining = quantity;
-
-  for (const product of products) {
-    if (remaining <= 0) break;
-    const currentStock = product.availableInventory || 0;
-    if (currentStock <= 0) continue;
-
-    const deduction = Math.min(currentStock, remaining);
-    await tx.finishedProduct.update({
-      where: { id: product.id },
-      data: { availableInventory: currentStock - deduction },
-    });
-    product.availableInventory = currentStock - deduction;
-    remaining -= deduction;
-  }
-
-  if (remaining > 0) {
-    const fallback = products.find((product) => product.id === fallbackProductId) || products[0];
-    if (fallback) {
-      await tx.finishedProduct.update({
-        where: { id: fallback.id },
-        data: { availableInventory: (fallback.availableInventory || 0) - remaining },
-      });
-      fallback.availableInventory = (fallback.availableInventory || 0) - remaining;
-    }
-  }
 }
 
 export async function GET(request: NextRequest) {
@@ -105,7 +77,7 @@ export async function GET(request: NextRequest) {
 
     const transformedRecords = salesRecords.map((record) => {
       const gross = record.quantitySold * record.sellingPrice;
-      const totalAmount = gross - gross * ((record.discount || 0) / 100);
+      const totalAmount = record.totalAmount ?? (gross - gross * ((record.discount || 0) / 100));
       return {
         id: record.id,
         productId: record.productId,
@@ -200,6 +172,7 @@ export async function POST(request: NextRequest) {
           quantitySold: parsedQuantity,
           unit: "kg" as "kg" | "gm",
           sellingPrice,
+          totalAmount: parsedQuantity * parseFloat(sellingPrice) * (1 - (discount ? parseFloat(discount) : 0) / 100),
           discount: discount ? parseFloat(discount) : 0,
           productionCost: productionCost ? parseFloat(productionCost) : 0,
           profit: profit ? parseFloat(profit) : 0,
@@ -213,13 +186,13 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      await deductProductPool(tx, productPool.products, productId, parsedQuantity);
+      await deductInventoryFifo(tx, productPool.products, parsedQuantity);
 
       return salesRecord;
     });
 
     const gross = result.quantitySold * result.sellingPrice;
-    const totalAmount = gross - gross * ((result.discount || 0) / 100);
+    const totalAmount = result.totalAmount ?? (gross - gross * ((result.discount || 0) / 100));
 
     return NextResponse.json(
       {

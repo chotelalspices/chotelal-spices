@@ -180,8 +180,7 @@ export const validateExcelRow = (
   const rate = row.rate ? parseFloat(row.rate.toString()) : 0;
   const amount = row.amount ? parseFloat(row.amount.toString()) : 0;
   const discount = row.discPercent ? parseFloat(row.discPercent.toString()) : 0;
-  const totalAmount = rate * quantity;
-  const finalAmount = totalAmount - (totalAmount * discount) / 100;
+  const finalAmount = amount;
   const isFree = finalAmount === 0;
   if (!isFree) {
     if (!row.rate || rate <= 0) errors.push('Invalid rate');

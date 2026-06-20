@@ -14,21 +14,37 @@ import { cn } from '@/libs/utils';
 
 export const RECORDS_PER_PAGE = 30;
 
+const itemIdentity = new WeakMap<object, number>();
+let nextItemIdentity = 1;
+
+function getItemsKey<T>(items: readonly T[]) {
+  return items.map((item) => {
+    if ((typeof item === "object" && item !== null) || typeof item === "function") {
+      const object = item as object;
+      let id = itemIdentity.get(object);
+      if (!id) { id = nextItemIdentity++; itemIdentity.set(object, id); }
+      return `o:${id}`;
+    }
+    return `${typeof item}:${String(item)}`;
+  }).join("|");
+}
+
 export function usePaginatedRecords<T>(items: readonly T[], pageSize = RECORDS_PER_PAGE) {
-  const [pageState, setPageState] = useState({ page: 1, items, pageSize });
-  const page = pageState.items === items && pageState.pageSize === pageSize ? pageState.page : 1;
+  const itemsKey = getItemsKey(items);
+  const [pageState, setPageState] = useState({ page: 1, itemsKey, pageSize });
+  const page = pageState.itemsKey === itemsKey && pageState.pageSize === pageSize ? pageState.page : 1;
   const setPage = useCallback(
     (nextPage: SetStateAction<number>) => {
       setPageState((current) => {
-        const currentPage = current.items === items && current.pageSize === pageSize ? current.page : 1;
+        const currentPage = current.itemsKey === itemsKey && current.pageSize === pageSize ? current.page : 1;
         return {
           page: typeof nextPage === 'function' ? nextPage(currentPage) : nextPage,
-          items,
+          itemsKey,
           pageSize,
         };
       });
     },
-    [items, pageSize],
+    [itemsKey, pageSize],
   );
   const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
   const currentPage = Math.min(page, pageCount);
