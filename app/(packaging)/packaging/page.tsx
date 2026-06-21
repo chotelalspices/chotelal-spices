@@ -257,21 +257,24 @@ const PackagingList = () => {
       displayWeightKg: number;
     };
     type BatchDetail = PackagingBatch & { packageBreakdown: PackageTotal[] };
-    const byMasala = new Map<string, {
+    type PackagingOverviewRow = {
       masalaName: string;
       totalQuantity: number;
       totalPackagedWeight: number;
+      displayPackagedWeight: number;
       totalPackagedPackets: number;
       semiPackagedPackets: number;
       remainingQuantity: number;
       batchCount: number;
       packageBreakdown: PackageTotal[];
       batches: BatchDetail[];
-    }>();
+    };
+
+    const byMasala = new Map<string, PackagingOverviewRow>();
 
     for (const batch of batches) {
       const key = batch.productName.trim().toLowerCase();
-      const row = byMasala.get(key) || {
+      const row: PackagingOverviewRow = byMasala.get(key) ?? {
         masalaName: batch.productName,
         totalQuantity: 0,
         totalPackagedWeight: 0,
@@ -294,6 +297,14 @@ const PackagingList = () => {
       const batchSemiPackages = (batch.semiPackagedProducts || [])
         .filter((product) => product.packets > 0)
         .sort((a, b) => a.name.localeCompare(b.name));
+
+      const batchPackageBreakdown: PackageTotal[] = batchPackages.map((product) => ({
+        name: product.name,
+        fullyPackagedPackets: product.packets,
+        semiPackagedPackets: 0,
+        totalWeight: product.totalWeight,
+        displayWeightKg: getPacketsWeightKg(product.name, product.packets, product.totalWeight),
+      }));
 
       for (const product of batchPackages) {
         const packageKey = product.name.trim().toLowerCase();
@@ -334,7 +345,18 @@ const PackagingList = () => {
       row.totalPackagedPackets += batch.totalPackagedPackets ?? batch.packagedProducts?.reduce((sum, product) => sum + product.packets, 0) ?? 0;
       row.semiPackagedPackets += row.packageBreakdown.reduce((sum, item) => sum + item.semiPackagedPackets, 0);
 
-      row.batches.push({ ...batch, packageBreakdown: batchPackages });
+      for (const product of batchSemiPackages) {
+        const semiKey = normalizeSearchString(product.name);
+        const existing = batchPackageBreakdown.find((item) => {
+          const packageKey = normalizeSearchString(item.name);
+          return packageKey.includes(semiKey) || semiKey.includes(packageKey);
+        });
+        if (existing) {
+          existing.semiPackagedPackets += product.packets;
+        }
+      }
+
+      row.batches.push({ ...batch, packageBreakdown: batchPackageBreakdown });
       byMasala.set(key, row);
     }
 
