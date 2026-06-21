@@ -51,6 +51,7 @@ import {
   Trash2,
   Loader2,
   User,
+  Download,
 } from 'lucide-react';
 
 import { toast } from 'sonner';
@@ -294,6 +295,15 @@ function enrichSessions(
   }));
 }
 
+function escapeExcelHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /* ================================================================
    COMPONENT
 ================================================================ */
@@ -414,6 +424,78 @@ export default function SalesUpload() {
   };
 
   const handleClearUpload = () => { setUploadedFile(null); setSessions([]); };
+
+  const handleExportPreview = () => {
+    const sessionTotalByRow = new Map<number, number>();
+    sessions.forEach((session) => {
+      session.products.forEach((row) => sessionTotalByRow.set(row.rowNumber, session.sessionTotal));
+    });
+
+    const headers = [
+      'Row', 'Client', 'Sale Date', 'Voucher Type', 'Voucher No.', 'Product',
+      'Packets', 'Available Packets', 'Price / Packet', 'Discount %',
+      'Line Total', 'Session Total', 'Production Cost', 'Profit / Loss',
+      'Type', 'Status', 'Errors',
+    ];
+
+    const rows = allRows.map((row) => {
+      const values = [
+        row.rowNumber,
+        row.clientName,
+        row.saleDate,
+        row.voucherType,
+        row.voucherNo,
+        row.productName,
+        row.numberOfPackets,
+        row.availableQuantity,
+        Number.isFinite(row.sellingPricePerPacket) ? row.sellingPricePerPacket : '',
+        row.discount,
+        Number.isFinite(row.finalAmount) ? row.finalAmount : '',
+        sessionTotalByRow.get(row.rowNumber) ?? '',
+        Number.isFinite(row.productionCost) ? row.productionCost : '',
+        Number.isFinite(row.profitLoss) ? row.profitLoss : '',
+        row.isFree ? 'FREE' : 'PAID',
+        row.status.toUpperCase(),
+        row.errors?.join('; ') || '',
+      ];
+      const rowClass = row.status === 'invalid' ? 'invalid-row' : 'valid-row';
+      return `<tr class="${rowClass}">${values.map((value) => `<td>${escapeExcelHtml(value)}</td>`).join('')}</tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+        <head>
+          <meta charset="UTF-8" />
+          <style>
+            body { font-family: Calibri, Arial, sans-serif; }
+            table { border-collapse: collapse; }
+            th, td { border: 1px solid #d6c8c1; padding: 6px 9px; white-space: nowrap; }
+            .title { background: #8b4a31; color: #ffffff; font-size: 16px; font-weight: bold; text-align: center; }
+            th { background: #a85d3d; color: #ffffff; font-weight: bold; text-align: center; }
+            .valid-row { background: #ffffff; color: #1f2937; }
+            .invalid-row { background: #fecaca; color: #991b1b; font-weight: 600; }
+          </style>
+        </head>
+        <body>
+          <table>
+            <tr><th class="title" colspan="${headers.length}">Sales Upload Preview — ${escapeExcelHtml(uploadedFile?.name || 'Excel Upload')}</th></tr>
+            <tr>${headers.map((header) => `<th>${escapeExcelHtml(header)}</th>`).join('')}</tr>
+            ${rows}
+          </table>
+        </body>
+      </html>`;
+
+    const blob = new Blob(['\ufeff', html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sales-upload-preview-${new Date().toISOString().slice(0, 10)}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${allRows.length} preview records`);
+  };
 
   /* ── import ── */
   const handleConfirmImport = async () => {
@@ -565,6 +647,10 @@ export default function SalesUpload() {
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">
+                    <Button variant="outline" onClick={handleExportPreview} disabled={isImporting || allRows.length === 0}>
+                      <Download className="h-4 w-4 mr-2" />
+                      Export Excel
+                    </Button>
                     <Button variant="outline" onClick={handleClearUpload} disabled={isImporting}>
                       <Trash2 className="h-4 w-4 mr-2" />
                       Clear

@@ -532,6 +532,40 @@ export default function PackagingEntry() {
     };
   };
 
+    // ─── Mark as finished ─────────────────────────────────────────────────────
+
+  const handleFinishBatch = async () => {
+    if (hasStockErrors) {
+      toast({ title: "Insufficient Stock", description: "Some labels don't have enough stock.", variant: "destructive" });
+      return;
+    }
+    setIsFinishing(true);
+    try {
+      const response = await fetch(
+        `/api/packaging/batches/${encodeURIComponent(batch!.batchNumber)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            date: new Date().toISOString(),
+            ...buildPayload(),
+            remarks: remarks || `Batch marked as finished. Remaining ${batch!.remainingQuantity.toFixed(3)} kg counted as loss.`,
+          }),
+        }
+      );
+      if (!response.ok) {
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.error || "Failed to mark batch as finished");
+      }
+      toast({ title: "Batch Finished", description: "Batch marked as finished and stock deducted." });
+      router.push(`/packaging/${encodeURIComponent(batch!.batchNumber)}/summary`);
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to finish batch.", variant: "destructive" });
+    } finally {
+      setIsFinishing(false);
+    }
+  };
+
   // ─── Save partial ─────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
@@ -570,40 +604,6 @@ export default function PackagingEntry() {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to save.", variant: "destructive" });
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  // ─── Mark as finished ─────────────────────────────────────────────────────
-
-  const handleFinishBatch = async () => {
-    if (hasStockErrors) {
-      toast({ title: "Insufficient Stock", description: "Some labels don't have enough stock.", variant: "destructive" });
-      return;
-    }
-    setIsFinishing(true);
-    try {
-      const response = await fetch(
-        `/api/packaging/batches/${encodeURIComponent(batch!.batchNumber)}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            date: new Date().toISOString(),
-            ...buildPayload(),
-            remarks: remarks || `Batch marked as finished. Remaining ${batch!.remainingQuantity.toFixed(3)} kg counted as loss.`,
-          }),
-        }
-      );
-      if (!response.ok) {
-        const err = await response.json().catch(() => null);
-        throw new Error(err?.error || "Failed to mark batch as finished");
-      }
-      toast({ title: "Batch Finished", description: "Batch marked as finished and stock deducted." });
-      router.push(`/packaging/${encodeURIComponent(batch!.batchNumber)}/summary`);
-    } catch (err) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to finish batch.", variant: "destructive" });
-    } finally {
-      setIsFinishing(false);
     }
   };
 
@@ -1269,12 +1269,11 @@ export default function PackagingEntry() {
               </div>
             )}
 
-            <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex flex-col sm:flex-row-reverse gap-3">
               {!isExactMatch && (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button
-                      variant="outline"
                       disabled={
                         (totalNewPackagedWeightKg <= 0 && currentSessionSemiWeightKg <= 0) ||
                         exceedsRemaining || isSubmitting || isFinishing || hasStockErrors
@@ -1304,15 +1303,13 @@ export default function PackagingEntry() {
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button
+                    variant="outline"
                     disabled={
                       exceedsRemaining || isSubmitting || isFinishing ||
                       (batch.remainingQuantity <= 0 && (batch.semiPackaged ?? 0) <= 0) ||
                       hasStockErrors
                     }
-                    className={cn(
-                      "flex-1",
-                      isExactMatch && totalNewPackagedWeightKg > 0 && !hasStockErrors && "bg-success hover:bg-success/90"
-                    )}
+                    className="flex-1 bg-white text-primary hover:bg-muted hover:text-primary"
                   >
                     {isFinishing
                       ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Finishing...</>

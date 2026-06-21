@@ -188,6 +188,14 @@ const parseProductsFromRemarks = (remarks?: string) => {
   return products;
 };
 
+const getPackagingRemark = (remarks?: string) => {
+  if (!remarks) return "";
+  return remarks
+    .split("Packaged:")[0]
+    .replace(/\s*Semi Packaging Session\s*$/i, "")
+    .trim();
+};
+
 const getBoxCount = (
   sessionLabels: SessionLabel[],
   labelType: string,
@@ -701,6 +709,15 @@ const PackagingSummary = () => {
                           </div>
                         </div>
 
+                        {getPackagingRemark(session.remarks) && (
+                          <div className="mt-3 rounded-lg border bg-background/80 p-3">
+                            <p className="text-xs font-medium text-muted-foreground">Remarks</p>
+                            <p className="mt-1 whitespace-pre-wrap text-sm">
+                              {getPackagingRemark(session.remarks)}
+                            </p>
+                          </div>
+                        )}
+
                         {/* Labels */}
                         <LabelsDisplay labels={session.labels} sessionType={sessionType} />
 
@@ -737,6 +754,7 @@ const PackagingSummary = () => {
                     <TableHead>Boxes Used</TableHead>
                     <TableHead className="text-right">Weight (kg)</TableHead>
                     <TableHead className="text-right">Loss (kg)</TableHead>
+                    <TableHead>Remarks</TableHead>
                     <TableHead>Performed By</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -905,6 +923,12 @@ const PackagingSummary = () => {
                         {/* Loss */}
                         <TableCell className="text-right text-amber-600 dark:text-amber-400">
                           {session.packagingLoss.toFixed(3)}
+                        </TableCell>
+
+                        <TableCell className="max-w-[260px] whitespace-pre-wrap text-sm">
+                          {getPackagingRemark(session.remarks) || (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </TableCell>
 
                         {/* Performer */}
