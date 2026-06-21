@@ -55,6 +55,8 @@ import {
 
 import { toast } from 'sonner';
 import { formatCurrency } from '@/data/salesData';
+import { reserveInventory } from '@/lib/sales-inventory';
+import { getUploadPriceError, isFreeUploadLine } from '@/lib/sales-values';
 
 /* ================================================================
    TYPES
@@ -72,6 +74,7 @@ export interface ParsedSaleRow {
   numberOfPackets: number;
   totalPrice: number;
   id: string;
+  inventoryPoolKey: string;
   availableQuantity: number;
   sellingPricePerPacket: number;
   discount: number;
@@ -97,6 +100,11 @@ interface ClientSession {
 interface FinishedProduct {
   id: string;
   name: string;
+  formulationId: string;
+  formulationName: string;
+  packetQuantity: number;
+  productUnit: 'kg' | 'gm';
+  inventoryPoolKey: string;
   availableQuantity: number;
   unit: 'packets';
   productionCostPerPacket: number;
@@ -179,12 +187,13 @@ async function parseExcelFile(
     // ── Product row
     // Excel format: Column C = packets (e.g., "100.00 PCS"), Column D = price per packet (e.g., "40.00/PCS")
     const numberOfPackets = Number(colC);  // Column C - packets/quantity
-    const pricePerUnit = Number(colD);     // Column D - price per packet
+    const pricePerUnit = colD === '' || colD === null || colD === undefined
+      ? Number.NaN
+      : Number(colD);                      // Column D - price per packet
     const totalPrice = colE === '' || colE === null || colE === undefined ? Number.NaN : Number(colE);
 
     if (
       colB &&
-      !isNaN(pricePerUnit) && pricePerUnit > 0 &&
       !isNaN(numberOfPackets) && numberOfPackets > 0
     ) {
       current.products.push({
@@ -199,6 +208,7 @@ async function parseExcelFile(
         numberOfPackets,
         totalPrice,
         id: '',
+        inventoryPoolKey: '',
         availableQuantity: 0,
         sellingPricePerPacket: pricePerUnit,
         discount: 0,
@@ -216,51 +226,71 @@ async function parseExcelFile(
   return { sessions, allRows };
 }
 
-function enrichRows(
-  rows: ParsedSaleRow[],
-  productMap: Map<string, FinishedProduct>
-): ParsedSaleRow[] {
-  return rows.map((row) => {
-    const errors: string[] = [];
-    const product = productMap.get(row.productName.trim().toLowerCase());
-    const qty = row.numberOfPackets;
-    const price = row.sellingPricePerPacket;
-    const discount = row.discount;
-    const finalAmount = row.totalPrice;
-    const isFree = finalAmount === 0;
-    const productionCost = product ? product.productionCostPerPacket * qty : 0;
-    const profitLoss = isFree ? 0 : finalAmount - productionCost;
-
-    if (!row.productName) errors.push('Product name is required');
-    if (!product) errors.push(`"${row.productName}" not found in system`);
-    if (qty <= 0) errors.push('Invalid quantity');
-    if (!isFree && price <= 0) errors.push('Invalid selling price');
-    if (!Number.isFinite(finalAmount) || finalAmount < 0) errors.push('Invalid Excel total amount');
-    if (product && qty > product.availableQuantity)
-      errors.push(`Insufficient stock (${product.availableQuantity} avail.)`);
-
-    return {
-      ...row,
-      id: product?.id ?? '',
-      availableQuantity: product?.availableQuantity ?? 0,
-      productionCost,
-      finalAmount,
-      profitLoss,
-      isFree,
-      status: errors.length === 0 ? 'valid' : 'invalid',
-      errors: errors.length > 0 ? errors : undefined,
-    };
-  });
-}
-
-// Re-apply enrichment into sessions structure
 function enrichSessions(
   sessions: ClientSession[],
-  productMap: Map<string, FinishedProduct>
+  products: FinishedProduct[]
 ): ClientSession[] {
-  return sessions.map((s) => ({
-    ...s,
-    products: enrichRows(s.products, productMap),
+  const productsById = new Map(products.map((product) => [product.id, product]));
+  const productsByName = new Map<string, FinishedProduct[]>();
+  const remainingByPool = new Map<string, number>();
+
+  for (const product of products) {
+    const nameKey = product.name.trim().toLowerCase();
+    if (!productsByName.has(nameKey)) productsByName.set(nameKey, []);
+    productsByName.get(nameKey)!.push(product);
+    remainingByPool.set(product.inventoryPoolKey, product.availableQuantity);
+  }
+
+  return sessions.map((session) => ({
+    ...session,
+    products: session.products.map((row) => {
+      const errors: string[] = [];
+      const candidates = productsByName.get(row.productName.trim().toLowerCase()) || [];
+      const product = row.id ? productsById.get(row.id) : candidates.length === 1 ? candidates[0] : undefined;
+      const qty = row.numberOfPackets;
+      const price = row.sellingPricePerPacket;
+      const finalAmount = row.totalPrice;
+      const isFree = isFreeUploadLine(price, finalAmount);
+
+      if (!row.productName) errors.push('Product name is required');
+      if (!row.id && candidates.length > 1) {
+        errors.push('Multiple products have this name. Select the correct formulation.');
+      } else if (!product) {
+        errors.push(`"${row.productName}" not found in system`);
+      }
+      if (!Number.isInteger(qty) || qty <= 0) errors.push('Quantity must be a positive whole number');
+      if (!Number.isFinite(finalAmount) || finalAmount < 0) errors.push('Invalid Excel total amount');
+      const priceError = getUploadPriceError(price, finalAmount);
+      if (priceError) errors.push(priceError);
+
+      if (product && errors.length === 0) {
+        const initialAvailable = product.availableQuantity;
+        const reservation = reserveInventory(remainingByPool, product.inventoryPoolKey, qty);
+        if (!reservation.valid) {
+          const previouslyReserved = initialAvailable - reservation.availableBefore;
+          errors.push(
+            `Insufficient cumulative stock: ${initialAvailable} total, ${previouslyReserved} reserved earlier, ${reservation.availableBefore} available for this row, ${qty} requested`,
+          );
+        }
+      }
+
+      const productionCost = product ? product.productionCostPerPacket * qty : 0;
+      const profitLoss = isFree ? 0 : finalAmount - productionCost;
+
+      return {
+        ...row,
+        id: product?.id ?? row.id,
+        productName: product?.name ?? row.productName,
+        inventoryPoolKey: product?.inventoryPoolKey ?? '',
+        availableQuantity: product?.availableQuantity ?? 0,
+        productionCost,
+        finalAmount,
+        profitLoss,
+        isFree,
+        status: errors.length === 0 ? 'valid' : 'invalid',
+        errors: errors.length > 0 ? errors : undefined,
+      };
+    }),
   }));
 }
 
@@ -298,14 +328,6 @@ export default function SalesUpload() {
     [paginatedRows]
   );
 
-  const productMap = useMemo(
-    () =>
-      new Map(
-        products.map((p) => [p.name.trim().toLowerCase(), p] as const)
-      ),
-    [products]
-  );
-
   const visibleSessions = useMemo(() => {
     if (paginatedRowNumbers.size === 0) return [];
     return sessions
@@ -340,7 +362,7 @@ export default function SalesUpload() {
       // Let loader paint before CPU-heavy parse starts.
       await new Promise((resolve) => setTimeout(resolve, 0));
       const { sessions: parsed } = await parseExcelFile(file);
-      const enriched = enrichSessions(parsed, productMap);
+      const enriched = enrichSessions(parsed, products);
       setUploadedFile(file);
       setSessions(enriched);
       const total = enriched.flatMap((s) => s.products).length;
@@ -368,8 +390,26 @@ export default function SalesUpload() {
             r.rowNumber === rowNumber ? { ...r, [field]: value } : r
           ),
         })),
-        productMap
+        products
       )
+    );
+  };
+
+  const handleProductChange = (rowNumber: number, productId: string) => {
+    const selectedProduct = products.find((product) => product.id === productId);
+    if (!selectedProduct) return;
+    setSessions((prev) =>
+      enrichSessions(
+        prev.map((session) => ({
+          ...session,
+          products: session.products.map((row) =>
+            row.rowNumber === rowNumber
+              ? { ...row, id: selectedProduct.id, productName: selectedProduct.name }
+              : row,
+          ),
+        })),
+        products,
+      ),
     );
   };
 
@@ -632,20 +672,18 @@ export default function SalesUpload() {
                                 {/* Product select */}
                                 <TableCell>
                                   <Select
-                                    value={row.productName}
-                                    onValueChange={(v) =>
-                                      handleUpdateRow(row.rowNumber, 'productName', v)
-                                    }
+                                    value={row.id}
+                                    onValueChange={(value) => handleProductChange(row.rowNumber, value)}
                                   >
                                     <SelectTrigger className="w-48 h-8 text-sm">
                                       <SelectValue placeholder="Select product" />
                                     </SelectTrigger>
                                     <SelectContent>
                                       {products.map((p) => (
-                                        <SelectItem key={p.id} value={p.name}>
+                                        <SelectItem key={p.id} value={p.id}>
                                           {p.name}
                                           <span className="text-muted-foreground text-xs ml-1">
-                                            ({p.availableQuantity} pkts)
+                                            ({p.formulationName} · {p.availableQuantity} pkts)
                                           </span>
                                         </SelectItem>
                                       ))}
@@ -670,9 +708,13 @@ export default function SalesUpload() {
                                 <TableCell className="text-right">
                                   <Input
                                     type="number"
-                                    value={row.sellingPricePerPacket}
+                                    value={Number.isFinite(row.sellingPricePerPacket) ? row.sellingPricePerPacket : ''}
                                     onChange={(e) =>
-                                      handleUpdateRow(row.rowNumber, 'sellingPricePerPacket', parseFloat(e.target.value) || 0)
+                                      handleUpdateRow(
+                                        row.rowNumber,
+                                        'sellingPricePerPacket',
+                                        e.target.value === '' ? Number.NaN : Number(e.target.value),
+                                      )
                                     }
                                     className="w-24 h-8 text-sm text-right ml-auto"
                                     min="0"

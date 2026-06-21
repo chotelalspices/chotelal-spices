@@ -8,3 +8,15 @@ export function parseAuthoritativeUploadAmount(value: unknown) {
   }
   return amount;
 }
+
+export function getUploadPriceError(price: number, totalAmount: number) {
+  if (!Number.isFinite(price) || price < 0) return "Invalid or missing selling price";
+  if (price === 0 && totalAmount > 0) {
+    return "A zero-price product must also have a zero total amount";
+  }
+  return null;
+}
+
+export function isFreeUploadLine(price: number, totalAmount: number) {
+  return price === 0 && totalAmount === 0;
+}

@@ -4,8 +4,17 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
-import { deductInventoryFifo } from "@/lib/sales-inventory";
-import { parseAuthoritativeUploadAmount } from "@/lib/sales-values";
+import {
+  deductInventoryFifo,
+  getInventoryPoolKey,
+  reserveInventory,
+  totalAvailableInventory,
+} from "@/lib/sales-inventory";
+import {
+  getUploadPriceError,
+  isFreeUploadLine,
+  parseAuthoritativeUploadAmount,
+} from "@/lib/sales-values";
 
 const CHUNK_SIZE = 100;
 
@@ -67,30 +76,43 @@ export async function POST(request: NextRequest) {
     const productIds = [...new Set(sales.map((s: any) => s.productId).filter(Boolean))];
     const products = await prisma.finishedProduct.findMany({
       where: { id: { in: productIds } },
-      select: { id: true, name: true, availableInventory: true },
+      select: {
+        id: true,
+        name: true,
+        formulationId: true,
+        quantity: true,
+        unit: true,
+        availableInventory: true,
+      },
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
-    const productNames = [...new Set(products.map((p) => p.name))];
+    const formulationIds = [...new Set(products.map((p) => p.formulationId))];
     const groupedInventoryProducts = await prisma.finishedProduct.findMany({
-      where: { name: { in: productNames } },
-      select: { id: true, name: true, availableInventory: true, createdAt: true },
+      where: { formulationId: { in: formulationIds } },
+      select: {
+        id: true,
+        name: true,
+        formulationId: true,
+        quantity: true,
+        unit: true,
+        availableInventory: true,
+        createdAt: true,
+      },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
-    const productsBySelectedId = new Map(
-      products.map((product) => [
-        product.id,
-        groupedInventoryProducts.filter((inventoryProduct) => inventoryProduct.name === product.name),
-      ])
+    const productPoolKey = new Map(
+      products.map((product) => [product.id, getInventoryPoolKey(product)]),
     );
-    const remainingStock = new Map(
-      products.map((product) => [
-        product.id,
-        (productsBySelectedId.get(product.id) || []).reduce(
-          (sum, inventoryProduct) => sum + (inventoryProduct.availableInventory || 0),
-          0
-        ),
-      ])
-    );
+    const productsByPool = new Map<string, typeof groupedInventoryProducts>();
+    for (const inventoryProduct of groupedInventoryProducts) {
+      const poolKey = getInventoryPoolKey(inventoryProduct);
+      if (!productsByPool.has(poolKey)) productsByPool.set(poolKey, []);
+      productsByPool.get(poolKey)!.push(inventoryProduct);
+    }
+    const remainingStock = new Map<string, number>();
+    for (const poolKey of new Set(productPoolKey.values())) {
+      remainingStock.set(poolKey, totalAvailableInventory(productsByPool.get(poolKey) || []));
+    }
 
     const validatedSales: Array<{
       productId: string;
@@ -103,6 +125,7 @@ export async function POST(request: NextRequest) {
       productionCost: number;
       profit: number;
       totalAmount: number;
+      inventoryPoolKey: string;
       remarks: string | null;
       saleDate: Date;
     }> = [];
@@ -115,16 +138,16 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const parsedQuantity = parseInt(String(sale.numberOfPackets), 10);
-      const parsedPrice = sale.sellingPricePerPacket ? parseFloat(String(sale.sellingPricePerPacket)) : 0;
+      const parsedQuantity = Number(sale.numberOfPackets);
+      const priceMissing =
+        sale.sellingPricePerPacket === undefined ||
+        sale.sellingPricePerPacket === null ||
+        sale.sellingPricePerPacket === "";
+      const parsedPrice = priceMissing ? Number.NaN : Number(sale.sellingPricePerPacket);
       const parsedDiscount = sale.discount ? parseFloat(String(sale.discount)) : 0;
 
       if (Number.isNaN(parsedQuantity) || parsedQuantity <= 0 || !Number.isInteger(parsedQuantity)) {
         errors.push({ row: i + 1, error: "Invalid quantity" });
-        continue;
-      }
-      if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
-        errors.push({ row: i + 1, error: "Invalid selling price (cannot be negative)" });
         continue;
       }
       if (Number.isNaN(parsedDiscount) || parsedDiscount < 0 || parsedDiscount > 100) {
@@ -138,17 +161,6 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const currentRemaining = remainingStock.get(product.id) ?? 0;
-      if (parsedQuantity > currentRemaining) {
-        errors.push({
-          row: i + 1,
-          error: `Insufficient stock. Available: ${currentRemaining}, Requested: ${parsedQuantity}`,
-        });
-        continue;
-      }
-
-      remainingStock.set(product.id, currentRemaining - parsedQuantity);
-
       let finalAmount: number;
       try {
         finalAmount = parseAuthoritativeUploadAmount(sale.totalAmount);
@@ -156,7 +168,22 @@ export async function POST(request: NextRequest) {
         errors.push({ row: i + 1, error: error instanceof Error ? error.message : "Invalid Excel total amount" });
         continue;
       }
-      const isFree = finalAmount === 0;
+      const priceError = getUploadPriceError(parsedPrice, finalAmount);
+      if (priceError) {
+        errors.push({ row: i + 1, error: priceError });
+        continue;
+      }
+
+      const poolKey = productPoolKey.get(product.id)!;
+      const reservation = reserveInventory(remainingStock, poolKey, parsedQuantity);
+      if (!reservation.valid) {
+        errors.push({
+          row: i + 1,
+          error: `Insufficient cumulative stock. Available for this row: ${reservation.availableBefore}, Requested: ${parsedQuantity}`,
+        });
+        continue;
+      }
+      const isFree = isFreeUploadLine(parsedPrice, finalAmount);
       const providedProductionCost = sale.productionCost ? parseFloat(String(sale.productionCost)) : 0;
       const productionCost = Number.isNaN(providedProductionCost) ? 0 : providedProductionCost;
       const profit = isFree ? 0 : finalAmount - productionCost;
@@ -172,6 +199,7 @@ export async function POST(request: NextRequest) {
         productionCost,
         profit,
         totalAmount: finalAmount,
+        inventoryPoolKey: poolKey,
         remarks: sale.remarks || null,
         saleDate: parseSaleDate(sale.saleDate),
       });
@@ -186,8 +214,8 @@ export async function POST(request: NextRequest) {
 
       for (const sale of chunk) {
         inventoryUpdates.set(
-          sale.productId,
-          (inventoryUpdates.get(sale.productId) || 0) + sale.quantitySold
+          sale.inventoryPoolKey,
+          (inventoryUpdates.get(sale.inventoryPoolKey) || 0) + sale.quantitySold
         );
       }
 
@@ -212,8 +240,8 @@ export async function POST(request: NextRequest) {
             })),
           });
 
-          for (const [productId, totalDeduction] of inventoryUpdates.entries()) {
-            await deductInventoryFifo(tx, productsBySelectedId.get(productId) || [], totalDeduction);
+          for (const [poolKey, totalDeduction] of inventoryUpdates.entries()) {
+            await deductInventoryFifo(tx, productsByPool.get(poolKey) || [], totalDeduction);
           }
 
           return createResult.count;

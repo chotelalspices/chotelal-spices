@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
+import { getInventoryPoolKey } from "@/lib/sales-inventory";
 
 export async function GET(request: NextRequest) {
   try {
@@ -130,6 +131,9 @@ export async function GET(request: NextRequest) {
         name: product.name,
         formulationId: product.formulationId,
         formulationName: product.formulation.name,
+        packetQuantity: product.quantity,
+        productUnit: product.unit,
+        inventoryPoolKey: getInventoryPoolKey(product),
         batchId: null, // Not applicable for finished products
         batchNumber: null, // Not applicable for finished products
         createdAt: product.createdAt.toISOString(),
@@ -144,13 +148,17 @@ export async function GET(request: NextRequest) {
           baseUnit: product.formulation.baseUnit,
           status: product.formulation.status
         },
-        batches: [], // Can be populated if needed from formulation batches
+        batches: [{
+          productId: product.id,
+          availableQuantity,
+          createdAt: product.createdAt.toISOString(),
+        }],
       };
     });
 
     const groupedProducts = Array.from(
       processedProducts.reduce((map, product) => {
-        const key = product.name.trim().toLowerCase();
+        const key = product.inventoryPoolKey;
         const existing = map.get(key);
 
         if (!existing) {
