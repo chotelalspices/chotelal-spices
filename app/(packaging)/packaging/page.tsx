@@ -38,6 +38,14 @@ interface PackagingBatch {
   sessions: unknown[];
   packagedProducts?: Array<{ name: string; packets: number; totalWeight: number }>;
   semiPackagedProducts?: Array<{ name: string; packets: number }>;
+  finishedProducts?: Array<{
+    id: string;
+    name: string;
+    quantity: number;
+    unit: "kg" | "gm";
+    availableInventory: number;
+    semiPackageable: boolean;
+  }>;
 }
 
 const ALL_STATUSES = ["Not Started", "Semi Packaged", "Partial", "Completed"] as const;
@@ -255,6 +263,8 @@ const PackagingList = () => {
       semiPackagedPackets: number;
       totalWeight: number;
       displayWeightKg: number;
+      availableInventory: number;
+      semiPackageable: boolean;
     };
     type BatchDetail = PackagingBatch & { packageBreakdown: PackageTotal[] };
     type PackagingOverviewRow = {
@@ -290,6 +300,19 @@ const PackagingList = () => {
       row.remainingQuantity += batch.remainingQuantity;
       row.batchCount += 1;
 
+      // Initialize packageBreakdown with all finished product sizes of the formulation if empty
+      if (row.packageBreakdown.length === 0 && batch.finishedProducts) {
+        row.packageBreakdown = batch.finishedProducts.map((fp) => ({
+          name: fp.name,
+          fullyPackagedPackets: 0,
+          semiPackagedPackets: 0,
+          totalWeight: 0,
+          displayWeightKg: 0,
+          availableInventory: fp.availableInventory,
+          semiPackageable: fp.semiPackageable,
+        }));
+      }
+
       const batchPackages = (batch.packagedProducts || [])
         .filter((product) => product.packets > 0 || product.totalWeight > 0)
         .sort((a, b) => a.name.localeCompare(b.name));
@@ -298,61 +321,92 @@ const PackagingList = () => {
         .filter((product) => product.packets > 0)
         .sort((a, b) => a.name.localeCompare(b.name));
 
-      const batchPackageBreakdown: PackageTotal[] = batchPackages.map((product) => ({
-        name: product.name,
-        fullyPackagedPackets: product.packets,
-        semiPackagedPackets: 0,
-        totalWeight: product.totalWeight,
-        displayWeightKg: getPacketsWeightKg(product.name, product.packets, product.totalWeight),
-      }));
+      const batchPackageBreakdown: PackageTotal[] = batchPackages.map((product) => {
+        const fp = (batch.finishedProducts || []).find(
+          (f) => f.name.trim().toLowerCase() === product.name.trim().toLowerCase()
+        );
+        return {
+          name: product.name,
+          fullyPackagedPackets: product.packets,
+          semiPackagedPackets: 0,
+          totalWeight: product.totalWeight,
+          displayWeightKg: getPacketsWeightKg(product.name, product.packets, product.totalWeight),
+          availableInventory: fp?.availableInventory ?? 0,
+          semiPackageable: fp?.semiPackageable ?? false,
+        };
+      });
 
       for (const product of batchPackages) {
         const packageKey = product.name.trim().toLowerCase();
-        const existing = row.packageBreakdown.find(
+        let existing = row.packageBreakdown.find(
           (item) => item.name.trim().toLowerCase() === packageKey,
         );
-        if (existing) {
-          existing.fullyPackagedPackets += product.packets;
-          existing.totalWeight += product.totalWeight;
-          existing.displayWeightKg += getPacketsWeightKg(product.name, product.packets, product.totalWeight);
-        } else {
-          row.packageBreakdown.push({
+        if (!existing) {
+          existing = {
             name: product.name,
-            fullyPackagedPackets: product.packets,
+            fullyPackagedPackets: 0,
             semiPackagedPackets: 0,
-            totalWeight: product.totalWeight,
-            displayWeightKg: getPacketsWeightKg(product.name, product.packets, product.totalWeight),
-          });
+            totalWeight: 0,
+            displayWeightKg: 0,
+            availableInventory: 0,
+            semiPackageable: false,
+          };
+          row.packageBreakdown.push(existing);
         }
+        existing.fullyPackagedPackets += product.packets;
+        existing.totalWeight += product.totalWeight;
+        existing.displayWeightKg += getPacketsWeightKg(product.name, product.packets, product.totalWeight);
+
         row.totalPackagedWeight += product.totalWeight;
         row.displayPackagedWeight += getPacketsWeightKg(product.name, product.packets, product.totalWeight);
       }
 
       for (const product of batchSemiPackages) {
         const semiKey = normalizeSearchString(product.name);
-        const existing = row.packageBreakdown.find((item) => {
+        let existing = row.packageBreakdown.find((item) => {
           const packageKey = normalizeSearchString(item.name);
           return packageKey.includes(semiKey) || semiKey.includes(packageKey);
         });
 
-        if (!existing) continue;
-
-        if (existing) {
-          existing.semiPackagedPackets += product.packets;
+        if (!existing) {
+          existing = {
+            name: product.name,
+            fullyPackagedPackets: 0,
+            semiPackagedPackets: 0,
+            totalWeight: 0,
+            displayWeightKg: 0,
+            availableInventory: 0,
+            semiPackageable: true,
+          };
+          row.packageBreakdown.push(existing);
         }
+        existing.semiPackagedPackets += product.packets;
       }
 
       row.totalPackagedPackets += batch.totalPackagedPackets ?? batch.packagedProducts?.reduce((sum, product) => sum + product.packets, 0) ?? 0;
-      row.semiPackagedPackets += row.packageBreakdown.reduce((sum, item) => sum + item.semiPackagedPackets, 0);
 
       for (const product of batchSemiPackages) {
         const semiKey = normalizeSearchString(product.name);
-        const existing = batchPackageBreakdown.find((item) => {
+        let existing = batchPackageBreakdown.find((item) => {
           const packageKey = normalizeSearchString(item.name);
           return packageKey.includes(semiKey) || semiKey.includes(packageKey);
         });
         if (existing) {
           existing.semiPackagedPackets += product.packets;
+        } else {
+          const fp = (batch.finishedProducts || []).find((f) => {
+            const fKey = normalizeSearchString(f.name);
+            return fKey.includes(semiKey) || semiKey.includes(fKey);
+          });
+          batchPackageBreakdown.push({
+            name: product.name,
+            fullyPackagedPackets: 0,
+            semiPackagedPackets: product.packets,
+            totalWeight: 0,
+            displayWeightKg: 0,
+            availableInventory: fp?.availableInventory ?? 0,
+            semiPackageable: fp?.semiPackageable ?? true,
+          });
         }
       }
 
@@ -363,11 +417,15 @@ const PackagingList = () => {
     const searchTokens = getSearchTokens(debouncedPackagingSearch);
 
     return Array.from(byMasala.values())
-      .map((row) => ({
-        ...row,
-        packageBreakdown: row.packageBreakdown.sort((a, b) => a.name.localeCompare(b.name)),
-        batches: row.batches.sort((a, b) => a.batchNumber.localeCompare(b.batchNumber)),
-      }))
+      .map((row) => {
+        const semiPackagedPackets = row.packageBreakdown.reduce((sum, item) => sum + item.semiPackagedPackets, 0);
+        return {
+          ...row,
+          semiPackagedPackets,
+          packageBreakdown: row.packageBreakdown.sort((a, b) => a.name.localeCompare(b.name)),
+          batches: row.batches.sort((a, b) => a.batchNumber.localeCompare(b.batchNumber)),
+        };
+      })
       .filter((row) => {
         if (searchTokens.length === 0) return true;
 
@@ -499,12 +557,14 @@ const PackagingList = () => {
                               </p>
                             </div>
                             <div className="flex flex-wrap gap-1.5">
-                              {row.packageBreakdown.length > 0 ? (
-                                row.packageBreakdown.map((item) => (
-                                  <Badge key={item.name} variant="secondary" className="font-normal">
-                                    {item.name}: {item.fullyPackagedPackets.toLocaleString("en-IN")} full / {item.semiPackagedPackets.toLocaleString("en-IN")} semi
-                                  </Badge>
-                                ))
+                              {row.packageBreakdown.filter(item => item.fullyPackagedPackets > 0 || item.semiPackagedPackets > 0).length > 0 ? (
+                                row.packageBreakdown
+                                  .filter(item => item.fullyPackagedPackets > 0 || item.semiPackagedPackets > 0)
+                                  .map((item) => (
+                                    <Badge key={item.name} variant="secondary" className="font-normal">
+                                      {item.name}: {item.fullyPackagedPackets.toLocaleString("en-IN")} full / {item.semiPackagedPackets.toLocaleString("en-IN")} semi
+                                    </Badge>
+                                  ))
                               ) : (
                                 <span className="text-sm text-muted-foreground">No retail packages recorded</span>
                               )}
@@ -517,7 +577,7 @@ const PackagingList = () => {
                               <p className="mt-1 text-xl font-bold">{row.displayPackagedWeight.toFixed(3)} kg</p>
                             </div>
                             <div className="rounded-lg border bg-background p-3">
-                              <p className="text-xs text-muted-foreground">Remaining</p>
+                              <p className="text-xs text-muted-foreground">Loose Masala</p>
                               <p className="mt-1 text-xl font-bold">{row.remainingQuantity.toFixed(3)} kg</p>
                             </div>
                             <div className="rounded-lg border bg-background p-3">
@@ -546,26 +606,47 @@ const PackagingList = () => {
                         {isExpanded && (
                           <div className="mt-4 space-y-4 border-t pt-4">
                             <div>
-                              <h4 className="mb-2 text-sm font-semibold">Package-size totals across all batches</h4>
+                              <h4 className="mb-3 text-sm font-semibold text-foreground">360° Inventory & Packaging Breakdown</h4>
                               {row.packageBreakdown.length > 0 ? (
-                                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                                  {row.packageBreakdown.map((item) => (
-                                    <div key={item.name} className="rounded-lg border bg-background p-3">
-                                      <p className="font-medium">{item.name}</p>
-                                      <div className="mt-2 space-y-1 text-sm">
-                                        <p>
-                                          <span className="font-semibold">Full:</span> {item.fullyPackagedPackets.toLocaleString("en-IN")} pcs
-                                        </p>
-                                        <p>
-                                          <span className="font-semibold">Semi:</span> {item.semiPackagedPackets.toLocaleString("en-IN")} pcs
-                                        </p>
-                                        <p className="text-xs text-muted-foreground">{item.displayWeightKg.toFixed(3)} kg packed</p>
-                                      </div>
-                                    </div>
-                                  ))}
+                                <div className="overflow-x-auto rounded-md border bg-muted/20">
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow className="bg-muted/40">
+                                        <TableHead className="font-semibold text-foreground">Retail Size</TableHead>
+                                        <TableHead className="text-right font-semibold text-foreground">Fully Packaged (For Sale)</TableHead>
+                                        <TableHead className="text-right font-semibold text-foreground">Already Semi-Packaged (Pending Conversion)</TableHead>
+                                        <TableHead className="text-right font-semibold text-foreground">Can Be Semi-Packaged (From Loose Masala)</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {row.packageBreakdown.map((item) => {
+                                        const sizeKg = parsePackageSizeKg(item.name) || 0;
+                                        const canBeSemiPackaged = sizeKg && item.semiPackageable ? Math.floor(row.remainingQuantity / sizeKg) : 0;
+                                        
+                                        return (
+                                          <TableRow key={item.name} className="hover:bg-muted/30">
+                                            <TableCell className="font-medium text-foreground">{item.name}</TableCell>
+                                            <TableCell className="text-right text-green-600 dark:text-green-400 font-semibold">
+                                              {item.availableInventory.toLocaleString("en-IN")} pkts
+                                            </TableCell>
+                                            <TableCell className="text-right text-amber-600 dark:text-amber-400 font-semibold">
+                                              {item.semiPackagedPackets.toLocaleString("en-IN")} pkts
+                                            </TableCell>
+                                            <TableCell className="text-right text-blue-600 dark:text-blue-400 font-medium">
+                                              {item.semiPackageable ? (
+                                                `${canBeSemiPackaged.toLocaleString("en-IN")} pkts`
+                                              ) : (
+                                                <span className="text-muted-foreground text-xs font-normal">Not Semi-Packageable</span>
+                                              )}
+                                            </TableCell>
+                                          </TableRow>
+                                        );
+                                      })}
+                                    </TableBody>
+                                  </Table>
                                 </div>
                               ) : (
-                                <p className="text-sm text-muted-foreground">No fully packaged retail sizes have been recorded.</p>
+                                <p className="text-sm text-muted-foreground">No retail package sizes recorded for this masala.</p>
                               )}
                             </div>
                           </div>

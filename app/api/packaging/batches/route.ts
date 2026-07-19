@@ -105,16 +105,36 @@ export async function GET(request: NextRequest) {
         );
       }, 0);
 
-      const semiPackagedPackets = batch.packagingSessions.reduce((sum, session) => {
-        return (
-          sum +
-          session.sessionLabels.reduce((sessionSum, label) => {
-            if (!label.semiPackaged) return sessionSum;
-            if (!semiPackageableLabelNames.has(label.type.trim().toLowerCase())) return sessionSum;
-            return sessionSum + label.quantity;
-          }, 0)
-        );
-      }, 0);
+      const semiPackagedProductTotals = new Map<string, { packets: number }>();
+
+      batch.packagingSessions.forEach((session) => {
+        session.sessionLabels.forEach((label) => {
+          if (label.semiPackaged && semiPackageableLabelNames.has(label.type.trim().toLowerCase())) {
+            const current = semiPackagedProductTotals.get(label.type) || { packets: 0 };
+            semiPackagedProductTotals.set(label.type, {
+              packets: current.packets + label.quantity,
+            });
+          }
+        });
+      });
+
+      batch.packagingSessions.forEach((session) => {
+        if (session.remarks && session.remarks.includes("(conversion)")) {
+          session.sessionLabels.forEach((label) => {
+            if (!label.semiPackaged && semiPackagedProductTotals.has(label.type)) {
+              const current = semiPackagedProductTotals.get(label.type)!;
+              semiPackagedProductTotals.set(label.type, {
+                packets: Math.max(0, current.packets - label.quantity),
+              });
+            }
+          });
+        }
+      });
+
+      const semiPackagedPackets = Array.from(semiPackagedProductTotals.values()).reduce(
+        (sum, item) => sum + item.packets,
+        0
+      );
 
       const totalLoss = batch.packagingSessions.reduce(
         (sum, session) => sum + session.packagingLoss,
@@ -128,19 +148,6 @@ export async function GET(request: NextRequest) {
           packagedProductTotals.set(product.name, {
             packets: current.packets + product.packets,
             totalWeight: current.totalWeight + product.weight,
-          });
-        });
-      });
-
-      const semiPackagedProductTotals = new Map<string, { packets: number }>();
-
-      batch.packagingSessions.forEach((session) => {
-        session.sessionLabels.forEach((label) => {
-          if (!label.semiPackaged) return;
-          if (!semiPackageableLabelNames.has(label.type.trim().toLowerCase())) return;
-          const current = semiPackagedProductTotals.get(label.type) || { packets: 0 };
-          semiPackagedProductTotals.set(label.type, {
-            packets: current.packets + label.quantity,
           });
         });
       });
@@ -205,10 +212,12 @@ export async function GET(request: NextRequest) {
           packets: total.packets,
           totalWeight: total.totalWeight,
         })),
-        semiPackagedProducts: Array.from(semiPackagedProductTotals.entries()).map(([name, total]) => ({
-          name,
-          packets: total.packets,
-        })),
+        semiPackagedProducts: Array.from(semiPackagedProductTotals.entries())
+          .filter(([, total]) => total.packets > 0)
+          .map(([name, total]) => ({
+            name,
+            packets: total.packets,
+          })),
         totalPackagedPackets,
         semiPackagedPackets,
         totalLoss,
@@ -216,6 +225,14 @@ export async function GET(request: NextRequest) {
         semiPackaged: batchSemiPackagedKg,
         status,
         sessions,
+        finishedProducts: batch.formulation.finishedProducts.map((fp) => ({
+          id: fp.id,
+          name: fp.name,
+          quantity: fp.quantity,
+          unit: fp.unit,
+          availableInventory: fp.availableInventory ?? 0,
+          semiPackageable: fp.productLabels.some((pl) => pl.semiPackageable),
+        })),
       };
     });
 
