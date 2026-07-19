@@ -545,6 +545,21 @@ const PackagingList = () => {
               <div className="space-y-3">
                 {overviewPagination.paginatedRecords.map((row) => {
                   const isExpanded = expandedMasalas.has(row.masalaName);
+
+                  // Filter breakdown items if search is active
+                  const searchTokens = getSearchTokens(debouncedPackagingSearch);
+                  const filteredBreakdown = row.packageBreakdown.filter((item) => {
+                    if (searchTokens.length === 0) return true;
+                    return searchTokens.every((token) =>
+                      normalizeSearchString(item.name).includes(token)
+                    );
+                  });
+
+                  const displayedPackedWeight = filteredBreakdown.reduce(
+                    (sum, item) => sum + item.displayWeightKg,
+                    0
+                  );
+
                   return (
                     <Card key={row.masalaName} className="overflow-hidden">
                       <CardContent className="p-4 sm:p-5">
@@ -557,8 +572,8 @@ const PackagingList = () => {
                               </p>
                             </div>
                             <div className="flex flex-wrap gap-1.5">
-                              {row.packageBreakdown.filter(item => item.fullyPackagedPackets > 0 || item.semiPackagedPackets > 0).length > 0 ? (
-                                row.packageBreakdown
+                              {filteredBreakdown.filter(item => item.fullyPackagedPackets > 0 || item.semiPackagedPackets > 0).length > 0 ? (
+                                filteredBreakdown
                                   .filter(item => item.fullyPackagedPackets > 0 || item.semiPackagedPackets > 0)
                                   .map((item) => (
                                     <Badge key={item.name} variant="secondary" className="font-normal">
@@ -574,7 +589,7 @@ const PackagingList = () => {
                           <div className="grid gap-2 sm:grid-cols-3 lg:min-w-[360px] lg:grid-cols-3">
                             <div className="rounded-lg border bg-background p-3">
                               <p className="text-xs text-muted-foreground">Packed Weight</p>
-                              <p className="mt-1 text-xl font-bold">{row.displayPackagedWeight.toFixed(3)} kg</p>
+                              <p className="mt-1 text-xl font-bold">{displayedPackedWeight.toFixed(3)} kg</p>
                             </div>
                             <div className="rounded-lg border bg-background p-3">
                               <p className="text-xs text-muted-foreground">Loose Masala</p>
@@ -607,7 +622,7 @@ const PackagingList = () => {
                           <div className="mt-4 space-y-4 border-t pt-4">
                             <div>
                               <h4 className="mb-3 text-sm font-semibold text-foreground">360° Inventory & Packaging Breakdown</h4>
-                              {row.packageBreakdown.length > 0 ? (
+                              {filteredBreakdown.length > 0 ? (
                                 <div className="overflow-x-auto rounded-md border bg-muted/20">
                                   <Table>
                                     <TableHeader>
@@ -616,13 +631,22 @@ const PackagingList = () => {
                                         <TableHead className="text-right font-semibold text-foreground">Fully Packaged (For Sale)</TableHead>
                                         <TableHead className="text-right font-semibold text-foreground">Already Semi-Packaged (Pending Conversion)</TableHead>
                                         <TableHead className="text-right font-semibold text-foreground">Can Be Semi-Packaged (From Loose Masala)</TableHead>
+                                        <TableHead className="text-right font-semibold text-foreground">Can Be Fully Packaged (From Loose Masala)</TableHead>
                                       </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                      {row.packageBreakdown.map((item) => {
+                                      {filteredBreakdown.map((item) => {
                                         const sizeKg = parsePackageSizeKg(item.name) || 0;
-                                        const canBeSemiPackaged = sizeKg && item.semiPackageable ? Math.floor(row.remainingQuantity / sizeKg) : 0;
                                         
+                                        // Calculate batch-by-batch sum of maximum packets that can be packaged from remaining loose masala
+                                        const canBeSemiPackaged = sizeKg && item.semiPackageable
+                                          ? row.batches.reduce((sum, b) => sum + Math.floor(b.remainingQuantity / sizeKg), 0)
+                                          : 0;
+
+                                        const canBeFullyPackaged = sizeKg
+                                          ? row.batches.reduce((sum, b) => sum + Math.floor(b.remainingQuantity / sizeKg), 0)
+                                          : 0;
+
                                         return (
                                           <TableRow key={item.name} className="hover:bg-muted/30">
                                             <TableCell className="font-medium text-foreground">{item.name}</TableCell>
@@ -639,6 +663,9 @@ const PackagingList = () => {
                                                 <span className="text-muted-foreground text-xs font-normal">Not Semi-Packageable</span>
                                               )}
                                             </TableCell>
+                                            <TableCell className="text-right text-indigo-600 dark:text-indigo-400 font-medium">
+                                              {canBeFullyPackaged.toLocaleString("en-IN")} pkts
+                                            </TableCell>
                                           </TableRow>
                                         );
                                       })}
@@ -646,7 +673,7 @@ const PackagingList = () => {
                                   </Table>
                                 </div>
                               ) : (
-                                <p className="text-sm text-muted-foreground">No retail package sizes recorded for this masala.</p>
+                                <p className="text-sm text-muted-foreground">No retail package sizes matched your search.</p>
                               )}
                             </div>
                           </div>
