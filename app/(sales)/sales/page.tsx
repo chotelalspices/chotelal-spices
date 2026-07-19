@@ -822,6 +822,17 @@ export default function SalesSummary() {
   }, []);
   useEffect(() => { fetchClientMetas(); }, [fetchClientMetas]);
 
+  const [allClients, setAllClients] = useState<string[]>([]);
+  const fetchAllClients = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sales/clients');
+      if (res.ok) setAllClients(await res.json());
+    } catch { }
+  }, []);
+  useEffect(() => {
+    fetchAllClients();
+  }, [fetchAllClients]);
+
   // ── Available years ───────────────────────────────────────────────────────
   const availableYears = useMemo(() => {
     const years = new Set<number>();
@@ -837,10 +848,6 @@ export default function SalesSummary() {
   const uniqueClients = useMemo(
     () => [...new Set(salesRecords.map((r) => r.clientName?.trim()).filter((c): c is string => !!c))].sort(),
     [salesRecords],
-  );
-  const allClientNames = useMemo(
-    () => [...new Set(clientMetas.map((m) => m.clientName.trim()))].sort(),
-    [clientMetas],
   );
   const uniqueCities = useMemo(
     () => [...new Set(clientMetas.map((m) => m.city).filter((c): c is string => !!c))].sort(),
@@ -1003,6 +1010,7 @@ export default function SalesSummary() {
       if (!res.ok) throw new Error();
       toast.success(`Saved for ${maintClient}`);
       await fetchClientMetas();
+      await fetchAllClients();
       setMaintClient(''); setMaintCity(''); setMaintSalesman('');
     } catch { toast.error('Failed to save'); }
     finally { setIsSavingMaint(false); }
@@ -1015,6 +1023,7 @@ export default function SalesSummary() {
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to delete');
       toast.success('Sales record deleted');
       fetchRecords();
+      fetchAllClients();
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to delete'); }
   };
 
@@ -1029,6 +1038,7 @@ export default function SalesSummary() {
       }
       toast.success(`Deleted ${group.records.length} item${group.records.length !== 1 ? 's' : ''} for ${group.clientName}`);
       fetchRecords();
+      fetchAllClients();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete client record');
     }
@@ -2156,7 +2166,7 @@ export default function SalesSummary() {
                 <ClientCombobox
                   value={annualReportClient}
                   onChange={setAnnualReportClient}
-                  options={allClientNames}
+                  options={allClients}
                 />
               </div>
             </div>
