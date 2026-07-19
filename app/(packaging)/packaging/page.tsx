@@ -323,7 +323,7 @@ const PackagingList = () => {
 
       const batchPackageBreakdown: PackageTotal[] = batchPackages.map((product) => {
         const fp = (batch.finishedProducts || []).find(
-          (f) => f.name.trim().toLowerCase() === product.name.trim().toLowerCase()
+          (f) => normalizeSearchString(f.name) === normalizeSearchString(product.name)
         );
         return {
           name: product.name,
@@ -337,9 +337,9 @@ const PackagingList = () => {
       });
 
       for (const product of batchPackages) {
-        const packageKey = product.name.trim().toLowerCase();
+        const packageKey = normalizeSearchString(product.name);
         let existing = row.packageBreakdown.find(
-          (item) => item.name.trim().toLowerCase() === packageKey,
+          (item) => normalizeSearchString(item.name) === packageKey,
         );
         if (!existing) {
           existing = {
