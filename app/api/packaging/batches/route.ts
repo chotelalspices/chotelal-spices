@@ -23,6 +23,10 @@ function parsePackagedProducts(remarks: string | null) {
   return products;
 }
 
+const normalizeLabelType = (type: string) => {
+  return type.toLowerCase().trim().replace(/[^a-z0-9]+/g, "");
+};
+
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -105,13 +109,15 @@ export async function GET(request: NextRequest) {
         );
       }, 0);
 
-      const semiPackagedProductTotals = new Map<string, { packets: number }>();
+      const semiPackagedProductTotals = new Map<string, { name: string; packets: number }>();
 
       batch.packagingSessions.forEach((session) => {
         session.sessionLabels.forEach((label) => {
           if (label.semiPackaged && semiPackageableLabelNames.has(label.type.trim().toLowerCase())) {
-            const current = semiPackagedProductTotals.get(label.type) || { packets: 0 };
-            semiPackagedProductTotals.set(label.type, {
+            const key = normalizeLabelType(label.type);
+            const current = semiPackagedProductTotals.get(key) || { name: label.type, packets: 0 };
+            semiPackagedProductTotals.set(key, {
+              name: current.name,
               packets: current.packets + label.quantity,
             });
           }
@@ -121,11 +127,15 @@ export async function GET(request: NextRequest) {
       batch.packagingSessions.forEach((session) => {
         if (session.remarks && session.remarks.includes("(conversion)")) {
           session.sessionLabels.forEach((label) => {
-            if (!label.semiPackaged && semiPackagedProductTotals.has(label.type)) {
-              const current = semiPackagedProductTotals.get(label.type)!;
-              semiPackagedProductTotals.set(label.type, {
-                packets: Math.max(0, current.packets - label.quantity),
-              });
+            if (!label.semiPackaged) {
+              const key = normalizeLabelType(label.type);
+              if (semiPackagedProductTotals.has(key)) {
+                const current = semiPackagedProductTotals.get(key)!;
+                semiPackagedProductTotals.set(key, {
+                  name: current.name,
+                  packets: Math.max(0, current.packets - label.quantity),
+                });
+              }
             }
           });
         }
@@ -212,10 +222,10 @@ export async function GET(request: NextRequest) {
           packets: total.packets,
           totalWeight: total.totalWeight,
         })),
-        semiPackagedProducts: Array.from(semiPackagedProductTotals.entries())
-          .filter(([, total]) => total.packets > 0)
-          .map(([name, total]) => ({
-            name,
+        semiPackagedProducts: Array.from(semiPackagedProductTotals.values())
+          .filter((total) => total.packets > 0)
+          .map((total) => ({
+            name: total.name,
             packets: total.packets,
           })),
         totalPackagedPackets,
