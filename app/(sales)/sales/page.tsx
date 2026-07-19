@@ -789,6 +789,11 @@ export default function SalesSummary() {
   const [paymentNote, setPaymentNote] = useState('');
   const [isSavingPayment, setIsSavingPayment] = useState(false);
 
+  // ── Annual Sales modal ────────────────────────────────────────────────────
+  const [isAnnualSalesOpen, setIsAnnualSalesOpen] = useState(false);
+  const [annualReportClient, setAnnualReportClient] = useState('');
+  const [downloadingAnnual, setDownloadingAnnual] = useState(false);
+
   // ── Fetch records ─────────────────────────────────────────────────────────
   const fetchRecords = useCallback(async () => {
     try {
@@ -832,6 +837,10 @@ export default function SalesSummary() {
   const uniqueClients = useMemo(
     () => [...new Set(salesRecords.map((r) => r.clientName?.trim()).filter((c): c is string => !!c))].sort(),
     [salesRecords],
+  );
+  const allClientNames = useMemo(
+    () => [...new Set(clientMetas.map((m) => m.clientName.trim()))].sort(),
+    [clientMetas],
   );
   const uniqueCities = useMemo(
     () => [...new Set(clientMetas.map((m) => m.city).filter((c): c is string => !!c))].sort(),
@@ -1269,6 +1278,41 @@ export default function SalesSummary() {
     setTimeout(() => { win.print(); win.close(); }, 300);
   };
 
+  const handleDownloadAnnualSales = async () => {
+    if (!annualReportClient) {
+      toast.error('Please select a client.');
+      return;
+    }
+    try {
+      setDownloadingAnnual(true);
+      const params = new URLSearchParams();
+      params.set('clientName', annualReportClient);
+
+      const res = await fetch(`/api/sales/annual-report?${params.toString()}`);
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || 'Failed to download report.');
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${annualReportClient.replace(/[^a-zA-Z0-9]/g, '_')}_ANNUAL_SALES.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Annual sales report downloaded successfully.');
+      setIsAnnualSalesOpen(false);
+      setAnnualReportClient('');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to download annual sales report.');
+    } finally {
+      setDownloadingAnnual(false);
+    }
+  };
+
   const totalColSpan = 5 + (isAdmin ? 2 : 0) + (isAdmin ? 1 : 0) + (isAdmin ? 1 : 0);
 
   const FilterIconPopover = ({
@@ -1405,6 +1449,9 @@ export default function SalesSummary() {
           <div className="flex items-center gap-2 shrink-0 whitespace-nowrap">
             <Button variant="outline" onClick={() => router.push('/sales/history')} className="gap-2 shrink-0">
               <History className="h-4 w-4" />Sales History
+            </Button>
+            <Button variant="outline" onClick={() => setIsAnnualSalesOpen(true)} className="gap-2 shrink-0">
+              <Download className="h-4 w-4" />Annual Sales
             </Button>
             <Button variant="outline" onClick={openMaintenance} className="gap-2 shrink-0">
               <Settings2 className="h-4 w-4" />Sales Maintenance
@@ -2086,6 +2133,53 @@ export default function SalesSummary() {
                   `Record ${additionalAmount && !isNaN(parseFloat(additionalAmount)) && parseFloat(additionalAmount) > 0
                     ? formatCurrency(parseFloat(additionalAmount))
                     : 'Payment'}`
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── Annual Sales modal ── */}
+        <Dialog open={isAnnualSalesOpen} onOpenChange={setIsAnnualSalesOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Download className="h-5 w-5" />Annual Sales Report
+              </DialogTitle>
+              <DialogDescription>
+                Download annual sales Excel report for a selected client.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Select Client *</Label>
+                <ClientCombobox
+                  value={annualReportClient}
+                  onChange={setAnnualReportClient}
+                  options={allClientNames}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsAnnualSalesOpen(false);
+                  setAnnualReportClient('');
+                }}
+                disabled={downloadingAnnual}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleDownloadAnnualSales}
+                disabled={downloadingAnnual || !annualReportClient}
+                className="gap-2"
+              >
+                {downloadingAnnual ? (
+                  <><Loader2 className="h-4 w-4 animate-spin" />Downloading...</>
+                ) : (
+                  <><Download className="h-4 w-4" />Download Excel</>
                 )}
               </Button>
             </DialogFooter>
