@@ -520,7 +520,12 @@ function ClientCombobox({
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[380px] p-0" align="start" sideOffset={4}>
+      <PopoverContent 
+        className="w-[380px] p-0 pointer-events-auto" 
+        align="start" 
+        sideOffset={4}
+        onWheel={(e) => e.stopPropagation()}
+      >
         <Command>
           <CommandInput placeholder="Search client..." />
           <CommandList className="max-h-[200px]">
