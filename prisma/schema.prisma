@@ -117,6 +117,16 @@ model ProductionBatch {
   formulation       Formulation        @relation(fields: [formulationId], references: [id])
 }
 
+// Tracks the last allocated batch sequence number per year so that
+// batch numbers (BATCH-<year>-<sequence>) can be allocated atomically
+// via a single INSERT ... ON CONFLICT DO UPDATE, avoiding the race
+// condition (and string-vs-numeric ordering bug) of computing
+// "last batch + 1" in application code.
+model ProductionBatchCounter {
+  year       Int @id
+  lastNumber Int @default(0)
+}
+
 model MaterialUsage {
   id            String          @id @default(uuid())
   batchId       String

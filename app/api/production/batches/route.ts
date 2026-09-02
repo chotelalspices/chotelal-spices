@@ -1,6 +1,7 @@
 export const runtime = "nodejs";
 
 import prisma from "@/lib/prisma";
+import { allocateBatchNumber } from "@/lib/production-batch";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
@@ -166,19 +167,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Formulation not found" }, { status: 404 });
     }
 
-    // Generate batch number
-    const year = new Date().getFullYear();
-    const existingBatches = await prisma.productionBatch.findMany({
-      where: { batchNumber: { startsWith: `BATCH-${year}-` } },
-      orderBy: { batchNumber: "desc" },
-      take: 1,
-    });
-    let nextNumber = 1;
-    if (existingBatches.length > 0) {
-      const match = existingBatches[0].batchNumber.match(/BATCH-\d{4}-(\d{3})/);
-      if (match) nextNumber = parseInt(match[1], 10) + 1;
-    }
-    const batchNumber = `BATCH-${year}-${String(nextNumber).padStart(3, "0")}`;
     const finalOutput = parseFloat(finalQuantity.toString());
     const dbStatus = isDraft ? "draft" : "ready_for_packaging";
 
@@ -203,6 +191,12 @@ export async function POST(request: NextRequest) {
     // ── Transaction with increased timeout ────────────────────────────────────
     const result = await prisma.$transaction(
       async (tx) => {
+        // Allocated atomically from ProductionBatchCounter (see
+        // lib/production-batch.ts) so concurrent requests can never be
+        // handed the same batch number, and rolls back with the rest of
+        // the transaction if batch creation fails below.
+        const batchNumber = await allocateBatchNumber(tx, new Date().getFullYear());
+
         const batch = await tx.productionBatch.create({
           data: {
             batchNumber,
@@ -281,6 +275,12 @@ export async function POST(request: NextRequest) {
     console.error("Error creating production batch:", error);
     if (error instanceof Error && error.message.includes("not found")) {
       return NextResponse.json({ error: error.message }, { status: 404 });
+    }
+    if ((error as { code?: string })?.code === "P2002") {
+      return NextResponse.json(
+        { error: "Could not generate a unique batch number. Please try again." },
+        { status: 409 }
+      );
     }
     return NextResponse.json({ error: "Failed to create production batch" }, { status: 500 });
   }
